@@ -2,13 +2,30 @@
 
 Aktualizacja: 05.11.2026.
 
-- Samodzielna gra rozwijana w repozytorium `pgaszczyk-ctrl/ropexpanse`.
-- Punkt startowy: gałąź `geohorde` repozytorium `pgaszczyk-ctrl/exp-lore`, commit `00ae76cbae9351a142b7a8ff5cdcc359bf738245`.
-- Stos: Three.js, TypeScript, Vite. Działa lokalny fragment Lublina z OSM, proceduralne bryły budynków, postać, wilki i walka czasu rzeczywistego.
-- Modele postaci i wilków są składane z brył w kodzie; ten prototyp nie używa dla nich GLB.
-- ROPExpanse i erpeg pozostają niezależnymi grami. Z erpeg można w przyszłości skopiować mechanizm pobierania i przygotowania danych mapy; nie przenosimy questów, ekwipunku, kont ani systemu walki.
-- Mapa całego świata i doczytywanie obszarów nie zostały jeszcze wdrożone. Obecny przelicznik mapy: 0,18 jednostki sceny na metr.
-- Aktualny podgląd gry pozostaje osobnym wdrożeniem; samo skopiowanie kodu nie zmienia hostingu.
-- Weryfikacja przed przeniesieniem: `npm run build` i `npm test` zakończone powodzeniem. Test na fizycznym telefonie pozostaje do wykonania.
+Samodzielna gra w `pgaszczyk-ctrl/ropexpanse`. Three.js, TypeScript, Vite; bez zależności od erpeg i bez zaplecza kont.
 
-Czytaj również README.md, docs/ARCHITECTURE.md i docs/DATA.md. Starszy plan w docs/NEXT_STEPS.md jest punktem odniesienia; nowe ustalenia właściciela mają pierwszeństwo.
+## Nowa pętla
+
+- Obóz: namiot, tablica i palik. Jedno menu: rozciągnij linę, skarbiec, rekrutuj.
+- Lina prowadzona przez postać, trasa po narożnikach obrysów, odwijanie i wizualny zwis. Nowy obóz kosztuje 30 zł, wymaga odstępu 18 jednostek, miejsca o promieniu 3,6 jednostki i braku walki. Długość liny 65 jednostek. Esc anuluje; E/LPM wbija palik. Poza liną LPM nadal atakuje lub otwiera kliknięty obóz.
+- 24 miejsca w plecaku, broń/zbroja/hełm/buty, realny loot i wspólny skarbiec (przedmioty oraz złoto).
+- Oferty rekrutacyjne rezerwują zasoby. Po pięciu minutach czasu rzeczywistego powstają zapisani, deterministyczni kandydaci. Jedna oferta zatrudnia jedną postać; anulowanie zwraca zasoby do skarbca.
+- Wiele postaci ma oddzielne XP, HP, plecaki, wyposażenie, położenie i cooldowny. Zmiana przez górne menu jest dostępna w obozie, poza walką i bez prowadzonej liny. Nieaktywne postacie czekają; nie walczą automatycznie.
+- Rosnąca krzywa XP. Pięć zachowań przeciwników: wilk, napastnik, łucznik, mag, ciężki. Warianty ubiorów, włosów i skóry. Poziom wrogów zależy od dystansu do korzenia wyprawy; kolejne połączone obozy nie obniżają go. Daleko od dowolnego obozu rośnie udział elit.
+- Joystick odsunięty od lewej krawędzi. Ekwipunek z delikatną sylwetką, jasną siatką i szczegółami po wybraniu przedmiotu.
+
+## Świat
+
+Strumieniowanie geograficznych kafli OSM w dowolnym miejscu Ziemi, obsługa południka 180°, szerokości geograficznych i przesuwania początku współrzędnych. W pamięci pozostaje sąsiedztwo do dziewięciu kafli, w IndexedDB do 96. Nie pobieramy planety naraz. Geometria budynków, dróg, wód i zieleni pochodzi z OSM, a nie z wymyślonych zamienników. Nie ma modelu wysokości terenu ani kompletnej warstwy oceanów/wybrzeży.
+
+Startowy Lublin jest dołączony i działa offline. Poza nim wymagane są dane z Overpass. Brak danych blokuje przejście, pokazuje stan i pozwala ponowić. Menu Świat pozwala wybrać miasto lub współrzędne; obecnie to beta narzędzie przeniesienia aktywnej postaci i założenia korzenia wyprawy, bez kosztu podróży. Nie jest to ukończony system transportu.
+
+Zapis `ropexpanse:campaign:v2`, walidacja własności przedmiotów, migracja pojedynczej postaci z `exp-lore:combat3d:v1`. Nadal lokalnie w przeglądarce, bez synchronizacji między urządzeniami.
+
+## Weryfikacja i ograniczenia
+
+Testy reguł obejmują ekwipunek, escrow, kandydatów, zatrudnianie, wycofanie, zapis, XP, trasę liny, projekcję, multipoligony i obsługę błędów strumieniowania. UI ekwipunku sprawdzono osobno w przeglądarce bez WebGL.
+
+Pełny test gry 3D i fizycznego telefonu pozostaje otwarty: przeglądarka tej sesji nie tworzy kontekstu WebGL, a instalator Chromium do Playwright otrzymał niepoprawne archiwum. Nie przedstawiać tego jako zaliczonego testu 3D. Próby rzeczywistego pobrania Overpass w środowisku wykonawczym zakończyły się HTTP 406 / timeout; ścieżkę sieciową sprawdzono deterministycznie na kontrolowanych odpowiedziach, nie na działającym publicznym serwerze.
+
+Publiczny Overpass nie daje gwarancji dostępności. Przed szerokim udostępnieniem globalnej gry potrzebny jest kontrolowany dostawca danych lub własny cache serwerowy. Obecna wersja jest lokalną betą, nie ukończonym globalnym zapleczem produkcyjnym.

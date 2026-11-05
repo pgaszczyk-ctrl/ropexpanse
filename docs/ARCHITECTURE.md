@@ -44,3 +44,13 @@ Parametr qa=1 udostępnia window.__combat3d z kontrolowanymi scenariuszami testo
 `hud.ts` zawiera własne wektorowe ikony instrumentów i walki. CSS korzysta z palety starego `erpeg/src/ui/hudTeleskop.ts` i `hud.ts`: ciepły mosiądz, ciemne szkło, oprawy portretu, nity i łączniki. Interfejs powstał w HTML/CSS/SVG, bez przenoszenia zależności starego HUD-u. Portret jest umownym wektorowym wizerunkiem obecnego modelu, nie kreatorem postaci.
 
 HP jest stale widoczne i czerwone; XP ma bursztynowy pasek oraz pierścień przy portrecie. Wybór broni ma stan aria-pressed, paski zdrowia i XP opisane wartości dostępności. Nie dodano pozornie działających przycisków plecaka, aparatu czy pojazdu, których ten prototyp jeszcze nie obsługuje. Na telefonie GUI ma mniejsze panele i zachowuje dolne strefy sterowania.
+
+## Rozszerzenie obozów i świata (05.11.2026)
+
+- `campaign.ts`: własność przedmiotów, postacie, obozy, oferty, rezerwacje, kandydaci, rosnące progi XP i walidacja zapisu. BALANCE zbiera koszty i limity. Przedmiot jest w dokładnie jednym plecaku, slocie sprzętu, skarbcu lub ofercie.
+- `rope.ts`: niezależna od Three.js geometria odcinków, trasa liny, narożniki i odwijanie. Wizualny zwis nie zmienia reguł kolizji ani długości.
+- `world.ts`: projekcja geograficzna, pasy kafli z szerokością zależną od szerokości geograficznej, konwersja OSM z łączeniem pierścieni relacji, IndexedDB oraz kolejka pojedynczych zapytań. Wersja generatora i geograficzne identyfikatory stabilizują spotkania. Pamięć aktywna jest ograniczona sąsiedztwem; cache trwały do 96 kafli.
+- `expedition.ts`: prezentacja obozów, liny i wspólnego komponentu siatki oraz obsługa menu/postaci/ofert. HTML dialog przejmuje fokus; stan symulacji jest zatrzymany podczas panelu. Rekrutacja korzysta z zegara ściennego, więc upływa także przy otwartym panelu i po zamknięciu gry.
+- `main.ts`: integracja tych reguł z istniejącą walką. Teren jest w osobnej grupie, usuwane geometrie zwalniane, odlegli przeciwnicy usuwani. Zmiana mapy pobiera dane przed zmianą zapisanej kampanii. Brak kafla jest przeszkodą, nie pustą mapą.
+
+Zapis v2 zachowuje położenia wszystkich postaci i obozów względem zapisanego origin. Rebase przelicza całą kampanię, w tym trasy połączeń; nie zapisuje współrzędnych ekranu. Stare v1 jest tylko źródłem migracji, nie współdzielonym zapisem z erpeg. Zapis nie jest usługą kont ani zabezpieczeniem przed modyfikacją lokalnych danych.

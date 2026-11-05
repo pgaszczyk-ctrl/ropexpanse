@@ -82,15 +82,25 @@ try {
     );
     assert((await snap()).map.buildings > 100);
     assert.equal(await page.locator("#attack-symbol svg").count(), 1);
-    assert.equal(await page.locator('.health').getAttribute('aria-valuenow'), '100');
-    const panels = await page.evaluate(() => ['.objective', '.loadout', '.vitals'].map(selector => {
-      const r = document.querySelector(selector).getBoundingClientRect();
-      return {x: r.x, y: r.y, right: r.right, bottom: r.bottom};
-    }));
-    for (let i = 0; i < panels.length; i++) for (let j = i + 1; j < panels.length; j++) {
-      const a = panels[i], b = panels[j];
-      assert(!(a.x < b.right && a.right > b.x && a.y < b.bottom && a.bottom > b.y), 'HUD panels must not overlap');
-    }
+    assert.equal(
+      await page.locator(".health").getAttribute("aria-valuenow"),
+      "100",
+    );
+    const panels = await page.evaluate(() =>
+      ["#expedition-tools", ".loadout", ".vitals"].map((selector) => {
+        const r = document.querySelector(selector).getBoundingClientRect();
+        return { x: r.x, y: r.y, right: r.right, bottom: r.bottom };
+      }),
+    );
+    for (let i = 0; i < panels.length; i++)
+      for (let j = i + 1; j < panels.length; j++) {
+        const a = panels[i],
+          b = panels[j];
+        assert(
+          !(a.x < b.right && a.right > b.x && a.y < b.bottom && a.bottom > b.y),
+          "HUD panels must not overlap",
+        );
+      }
     await page.screenshot({ path: `work/combat3d/${tag}-city.png` });
     await fixture("target");
     await attack();
@@ -227,6 +237,41 @@ try {
       );
     }
     console.log(`PASS ${tag}: movement and input cleanup`);
+    // Exercise the public UI with only time/gold/location arranged by QA.
+    await page.evaluate(() => window.__combat3d.camp());
+    await gameWait(0.3);
+    await page.click("#inventory");
+    assert.equal(await page.locator(".item-slot").count(), 24);
+    const itemCount = (await snap()).campaign.characters[0].bag.length;
+    await page.locator(".item-slot:not(:disabled)").first().click();
+    await page.getByRole("button", { name: "Załóż", exact: true }).click();
+    assert.equal(
+      (await snap()).campaign.characters[0].bag.length,
+      itemCount - 1,
+    );
+    await page.click("#panel-close");
+    await page.evaluate(() => window.__combat3d.grantGold(1000));
+    await page.click("#action");
+    await page.getByRole("button", { name: "Rekrutuj", exact: true }).click();
+    await page.getByLabel("Złoto w ofercie").fill("500");
+    await page.getByRole("button", { name: "Wystaw", exact: true }).click();
+    assert.equal((await snap()).campaign.offers.length, 1);
+    assert.equal((await snap()).player.coins, 500);
+    await page.evaluate(() => window.__combat3d.advanceOffers());
+    await page.waitForSelector(".candidate");
+    await page.locator(".candidate").first().click();
+    assert.equal((await snap()).campaign.characters.length, 2);
+    assert.equal((await snap()).campaign.offers.length, 0);
+    await page.click("#panel-close");
+    await page.click("#characters");
+    await page.locator(".character-choice").nth(1).click();
+    assert.equal(
+      (await snap()).campaign.activeId,
+      (await snap()).campaign.characters[1].id,
+    );
+    console.log(
+      `PASS ${tag}: inventory, equipment, escrow, recruitment and character switch`,
+    );
     await fixture("death");
     await gameWait(1.3);
     const restored = await snap();

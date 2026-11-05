@@ -10,7 +10,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --experimental-strip-types --no-warnings scripts/tests/combat3d-rules.mjs",
+    "test": "node --experimental-strip-types --no-warnings scripts/tests/combat3d-rules.mjs && node --experimental-strip-types --no-warnings scripts/tests/expedition.mjs",
     "test:browser": "node scripts/tests/browser-combat3d.mjs",
     "export:offline": "node scripts/export-combat3d.mjs",
     "map:import": "node scripts/build-combat3d-map.mjs"

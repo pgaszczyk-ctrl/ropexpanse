@@ -31,3 +31,7 @@ Przekazane wcześniej symulowane odpowiedzi ankietowe nie są badaniem prawdziwy
 ## Pomysły odłożone
 
 Globalna kampania po trzech miastach kraju, kupowanie miast, kopalnie i tartaki idle, ich obrona, gospodarka między graczami, płatności i premium. Nie są wymaganiami pierwszego etapu. Model roguelike z resetem postaci po każdej śmierci nie jest obecnym kierunkiem.
+
+## Zatwierdzona rozbudowa — 05.11.2026
+
+Właściciel zatwierdził sieć obozów (namiot/tablica/palik), linę reagującą na budynki, przedmioty, skarbiec, rekrutację za ofertę oraz przełączanie rozwijanych niezależnie postaci. Zakres geograficzny ma obejmować cały świat, generowany fragmentami według spójnych reguł. Nowe połączone obozy nie obniżają poziomu regionu. Limity kosztów, długości liny i tempo XP są wartościami startowymi do balansu.

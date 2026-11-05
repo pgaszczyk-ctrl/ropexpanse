@@ -10,11 +10,11 @@
     <title>ROPExpanse</title>
   </head>
   <body>
-    <canvas id="world" aria-label="Trójwymiarowa mapa Lublina i walka"></canvas>
+    <canvas id="world" aria-label="Świat ROPExpanse"></canvas>
     <header class="topbar">
       <a class="brand" href="./"
         ><span class="emblem" data-icon="goggles"></span
-        ><span>ROPExpanse<small>LUBLIN · STARY GRÓD</small></span></a
+        ><span>ROPExpanse</span></a
       ><button id="pause" class="plain" aria-label="Pauza">Ⅱ</button>
     </header>
     <section class="vitals" aria-label="Stan postaci">
@@ -31,11 +31,6 @@
         </div>
         <div class="xp" role="progressbar" aria-label="Doświadczenie do następnego poziomu" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="xp-fill"></i></div>
       </div>
-    </section>
-    <section class="objective">
-      <span class="eyebrow">KONTRAKT / 001</span
-      ><strong id="goal">Opuść schronienie i pokonaj 6 przeciwników</strong
-      ><span id="progress">0 / 6 · idź za bursztynowym znacznikiem</span>
     </section>
     <nav class="loadout" aria-label="Wyposażenie testowe">
       <button id="fullscreen" aria-label="Pełny ekran" title="Pełny ekran">
@@ -83,11 +78,11 @@
     </footer>
     <div id="loading" class="overlay">
       <div class="sheet">
-        <span class="eyebrow">ROPExpanse / NOWA WYPRAWA</span>
-        <h1>Świat czeka<br />za bramą.</h1>
+
+        <h1>ROPExpanse</h1>
         <p id="loading-text">Przygotowuję fragment prawdziwego Lublina…</p>
-        <button id="start" hidden>Wyrusz — pełny ekran →</button>
-        <p class="muted">Lublin · walka w czasie rzeczywistym · zapis lokalny.</p>
+        <button id="start" hidden>Wyrusz</button>
+
       </div>
     </div>
     <div id="help" class="overlay" hidden>
@@ -100,7 +95,7 @@
         </p>
         <p>
           <b>Komputer:</b> WASD / strzałki — ruch. Mysz — kierunek, klik /
-          spacja — atak. Q — sweep, H — mikstura. 1 / 2 — miecz / magia. P —
+          spacja — atak. E — akcja, I — ekwipunek. Q — cięcie, H — mikstura. 1 / 2 — miecz / magia. P —
           pauza.
         </p>
         <p>

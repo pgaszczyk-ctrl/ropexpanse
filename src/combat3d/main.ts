@@ -1,4 +1,29 @@
 import "./style.css";
+import {
+  BALANCE,
+  newCampaign,
+  parseCampaign,
+  activeCharacter,
+  nearCamp,
+  levelOf,
+  xpShare,
+  loseXp,
+  maxHealth,
+  attackPower,
+  armorPower,
+  makeItem,
+  type Character,
+} from "./campaign";
+import { Expedition } from "./expedition";
+import {
+  WorldStream,
+  project,
+  unproject,
+  encounterCells,
+  findLanding,
+  type MapData,
+  type Geo,
+} from "./world";
 import { mountHud, hudIcon } from "./hud";
 mountHud();
 import * as T from "three";
@@ -12,32 +37,18 @@ import {
   inPolygon,
   circleBlocked,
   segmentHitsCircle,
-  deathExperience,
   type Point,
 } from "./rules";
 
-type Building = {
-  rings: number[][][];
-  height: number;
-  name: string;
-  address: string;
-};
-type Road = { pts: number[][]; width: number; path: boolean; name: string };
-type MapData = {
-  origin: { lat: number; lon: number };
-  scale: number;
-  radius: number;
-  buildings: Building[];
-  roads: Road[];
-  areas: { rings: number[][][]; water: boolean; name: string }[];
-};
 type Enemy = {
   id: number;
   rig: Rig;
   spawn: Point;
   hp: number;
   maxHp: number;
-  kind: "wolf" | "archer";
+  kind: "wolf" | "archer" | "mage" | "raider" | "heavy";
+  tier: number;
+  key: string;
   elite: boolean;
   state: "idle" | "windup" | "strike" | "recover" | "dead";
   timer: number;
@@ -63,20 +74,23 @@ type Particle = {
   life: number;
   total: number;
 };
-type Save = {
-  v: 1;
-  x: number;
-  z: number;
-  exp: number;
-  fragments: number;
-  kills: number;
-  hp: number;
-  weapon: "sword" | "magic";
-  coins: number;
-};
 const $ = <E extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as E;
-const SAVE_KEY = "exp-lore:combat3d:v1";
+const SAVE_KEY = "ropexpanse:campaign:v2";
+const LEGACY_KEY = "exp-lore:combat3d:v1";
+const DEFAULT_ORIGIN = { lat: 51.2482, lon: 22.5681 };
+let savedCampaign: ReturnType<typeof parseCampaign> = null;
+try {
+  const raw = localStorage.getItem(SAVE_KEY);
+  if (raw) savedCampaign = parseCampaign(raw);
+} catch {}
+const campaign =
+  savedCampaign ?? newCampaign({ x: 15, z: -13 }, DEFAULT_ORIGIN);
+let expedition: Expedition;
+let worldStream: WorldStream;
+const terrain = new T.Group();
+let worldClock = 0;
+
 const scene = new T.Scene();
 scene.background = new T.Color(0xcbd5b8);
 scene.fog = new T.Fog(0xcbd5b8, 55, 115);
@@ -157,9 +171,12 @@ function checkDrawingBuffer() {
     );
 }
 const camera = new T.OrthographicCamera(-25, 25, 25, -25, 0.1, 220);
-const hero = person(),
-  player = { x: 0, z: 0, hp: 100, exp: 0, kills: 0, fragments: 0, coins: 40 };
-const maxHp = () => 100 + Math.floor(player.exp / 60) * 8;
+let player = activeCharacter(campaign);
+let hero = person(
+  player.role === "archer" ? "archer" : "hero",
+  player.appearance,
+);
+const maxHp = () => maxHealth(player);
 let weapon: "sword" | "magic" = "sword",
   map: MapData,
   home: Point = { x: 0, z: 0 },
@@ -204,7 +221,7 @@ const enemies: Enemy[] = [],
     total: number;
   }[] = [];
 const buildingViews: {
-  data: Building;
+  data: MapData["buildings"][number];
   node: T.Mesh;
   materials: T.Material[];
   box: { x0: number; x1: number; z0: number; z1: number };
@@ -220,11 +237,6 @@ const aimView = sector(R.reach, R.halfArc, 0xffe6a3, 0.23);
 aimView.position.y = 0.065;
 scene.add(aimView);
 aimView.visible = false;
-const targetArrow = new T.Mesh(
-  new T.ConeGeometry(0.33, 0.65, 3),
-  material(0xf2bb55),
-);
-scene.add(targetArrow);
 // Sound uses a small oscillator, no downloaded audio assets.
 let audioContext: AudioContext | undefined,
   soundOn = false;
@@ -268,43 +280,42 @@ function enableAudio() {
 function persist() {
   if (!ready || deathUntil > time) return;
   try {
-    const save: Save = {
-      v: 1,
-      x: player.x,
-      z: player.z,
-      exp: player.exp,
-      kills: player.kills,
-      fragments: player.fragments,
-      hp: player.hp,
-      weapon,
-      coins: player.coins,
-    };
-    localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+    player.weapon = weapon;
+    player.sweepReady = Math.max(0, sweepReady - time);
+    player.potionReady = Math.max(0, potionReady - time);
+    for (const key in campaign.encounters)
+      if (campaign.encounters[key] < Date.now())
+        delete campaign.encounters[key];
+    localStorage.setItem(SAVE_KEY, JSON.stringify(campaign));
   } catch {
-    /* Private browsers may disable storage. */
+    if (time - toastUntil > 10)
+      notify("Nie można zapisać postępu w tej przeglądarce");
   }
 }
 function loadSave() {
-  try {
-    const s = JSON.parse(
-      localStorage.getItem(SAVE_KEY) || "null",
-    ) as Save | null;
-    if (!s || s.v !== 1) return;
-    for (const key of ["exp", "kills", "fragments", "coins"] as const)
-      if (Number.isFinite(s[key])) player[key] = clamp(s[key], 0, 1e7);
-    if (Number.isFinite(s.hp)) player.hp = clamp(s.hp, 1, maxHp());
-    if (
-      Number.isFinite(s.x) &&
-      Number.isFinite(s.z) &&
-      !blocked(s.x, s.z, R.radius)
-    ) {
-      player.x = s.x;
-      player.z = s.z;
-    }
-    weapon = s.weapon === "magic" ? "magic" : "sword";
-  } catch {
-    /* A corrupt lab save never affects a real character. */
+  if (!savedCampaign) {
+    try {
+      const legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || "null");
+      if (legacy?.v === 1) {
+        for (const key of ["exp", "kills", "fragments", "coins"] as const)
+          if (Number.isFinite(legacy[key]))
+            player[key] = Math.max(0, legacy[key]);
+        if (
+          Number.isFinite(legacy.x) &&
+          Number.isFinite(legacy.z) &&
+          !blocked(legacy.x, legacy.z, R.radius)
+        ) {
+          player.x = legacy.x;
+          player.z = legacy.z;
+        }
+        player.hp = Math.max(1, Math.min(maxHp(), Number(legacy.hp) || 100));
+        player.weapon = legacy.weapon === "magic" ? "magic" : "sword";
+      }
+    } catch {}
   }
+  weapon = player.weapon;
+  sweepReady = time + (player.sweepReady ?? 0);
+  potionReady = time + (player.potionReady ?? 0);
 }
 function polyShape(rings: number[][][]) {
   const shape = new T.Shape(rings[0].map(([x, z]) => new T.Vector2(x, -z)));
@@ -313,7 +324,12 @@ function polyShape(rings: number[][][]) {
   return shape;
 }
 function blocked(x: number, z: number, r = 0.4) {
-  if (!map || Math.abs(x) > map.radius - 2 || Math.abs(z) > map.radius - 2)
+  if (
+    !map ||
+    (worldStream
+      ? !worldStream.contains({ x, z }, r + 1)
+      : Math.abs(x) > map.radius - 2 || Math.abs(z) > map.radius - 2)
+  )
     return true;
   for (const b of obstacleCells.get(cellKey(x, z)) ?? []) {
     const q = b.box;
@@ -330,21 +346,24 @@ function lineClear(a: Point, b: Point) {
   return true;
 }
 function slide(p: Point, dx: number, dz: number, r: number) {
-  if (!blocked(p.x + dx, p.z, r)) p.x += dx;
-  if (!blocked(p.x, p.z + dz, r)) p.z += dz;
+  const allow = (next: Point) =>
+    !blocked(next.x, next.z, r) &&
+    (p !== player || !expedition || expedition.moveAllowed(next));
+  if (allow({ x: p.x + dx, z: p.z })) p.x += dx;
+  if (allow({ x: p.x, z: p.z + dz })) p.z += dz;
 }
 function safe(p: Point) {
-  return distance(p, home) < R.safeRadius;
+  return !!nearCamp(campaign, p);
 }
-function findFree(wanted: Point) {
-  if (!blocked(wanted.x, wanted.z, 0.7)) return { ...wanted };
+function findFree(wanted: Point, clearance = 0.75) {
+  if (!blocked(wanted.x, wanted.z, clearance)) return { ...wanted };
   for (let r = 0.5; r < 30; r += 0.65)
     for (let a = 0; a < Math.PI * 2; a += 0.32) {
       const p = {
         x: wanted.x + Math.sin(a) * r,
         z: wanted.z + Math.cos(a) * r,
       };
-      if (!blocked(p.x, p.z, 0.75)) return p;
+      if (!blocked(p.x, p.z, clearance)) return p;
     }
   throw new Error("Nie znaleziono przejścia na mapie");
 }
@@ -378,13 +397,38 @@ function buildWorld() {
   sun.shadow.bias = -0.0002;
   scene.add(sun, sun.target);
   scene.add(new T.HemisphereLight(0xe5f2df, 0x6b7557, 2));
-  const land = new T.Mesh(
-    new T.PlaneGeometry(map.radius * 2.2, map.radius * 2.2),
-    material(0xb8c397),
-  );
+  scene.add(terrain);
+  renderTerrain();
+  if (!savedCampaign) {
+    home = findFree({ x: 15, z: -13 }, 3.6);
+    Object.assign(campaign.camps[0], home);
+    Object.assign(player, home);
+  } else
+    home =
+      campaign.camps.find((c) => c.id === player.campId) ?? campaign.camps[0];
+  scene.add(hero.root);
+  addBlobShadow(hero);
+  loadSave();
+  populateEncounters();
+  selectWeapon(weapon);
+  cameraTarget.set(player.x, 0, player.z);
+}
+function disposeTerrain() {
+  for (const b of buildingViews) for (const m of b.materials) m.dispose();
+  terrain.traverse((o) => {
+    if (o instanceof T.Mesh) o.geometry.dispose();
+  });
+  terrain.clear();
+  buildingViews.length = 0;
+  obstacleCells.clear();
+}
+function renderTerrain() {
+  disposeTerrain();
+  const land = new T.Mesh(new T.PlaneGeometry(1400, 1400), material(0xb8c397));
   land.rotation.x = -Math.PI / 2;
+  land.position.set(player.x, 0, player.z);
   land.receiveShadow = true;
-  scene.add(land);
+  terrain.add(land);
   for (const area of map.areas) {
     const m = new T.Mesh(
       new T.ShapeGeometry(polyShape(area.rings)),
@@ -393,7 +437,7 @@ function buildWorld() {
     m.rotation.x = -Math.PI / 2;
     m.position.y = 0.014;
     m.receiveShadow = true;
-    scene.add(m);
+    terrain.add(m);
   }
   const roadGeos: T.BufferGeometry[] = [],
     pathGeos: T.BufferGeometry[] = [];
@@ -420,7 +464,7 @@ function buildWorld() {
     if (merged) {
       const m = new T.Mesh(merged, material(color));
       m.receiveShadow = true;
-      scene.add(m);
+      terrain.add(m);
     }
     geos.forEach((g) => g.dispose());
   }
@@ -439,7 +483,7 @@ function buildWorld() {
     const node = new T.Mesh(g, mats);
     node.castShadow = true;
     node.receiveShadow = true;
-    scene.add(node);
+    terrain.add(node);
     const xs = b.rings[0].map((p) => p[0]),
       zs = b.rings[0].map((p) => p[1]);
     buildingViews.push({
@@ -479,8 +523,8 @@ function buildWorld() {
   };
   const trees: Point[] = [];
   for (let i = 0; i < 1900 && trees.length < 240; i++) {
-    const x = (rand() * 2 - 1) * map.radius,
-      z = (rand() * 2 - 1) * map.radius;
+    const x = player.x + (rand() * 2 - 1) * 95,
+      z = player.z + (rand() * 2 - 1) * 95;
     if (
       !map.areas.some((a) => !a.water && inPolygon(x, z, a.rings)) ||
       blocked(x, z, 0.9)
@@ -529,72 +573,157 @@ function buildWorld() {
   });
   crowns.castShadow = true;
   trunks.castShadow = true;
-  scene.add(trunks, crowns);
-  home = findFree({ x: 15, z: -13 });
-  player.x = home.x;
-  player.z = home.z;
-  const safeDisc = new T.Mesh(
-    new T.CircleGeometry(R.safeRadius, 64),
-    new T.MeshBasicMaterial({
-      color: 0x6ebcc1,
-      transparent: true,
-      opacity: 0.11,
-      depthWrite: false,
-    }),
-  );
-  safeDisc.rotation.x = -Math.PI / 2;
-  safeDisc.position.set(home.x, 0.05, home.z);
-  scene.add(safeDisc);
-  const safeRing = new T.Mesh(
-    new T.RingGeometry(R.safeRadius - 0.055, R.safeRadius + 0.055, 64),
-    new T.MeshBasicMaterial({
-      color: 0xeff8d9,
-      transparent: true,
-      opacity: 0.8,
-      side: T.DoubleSide,
-    }),
-  );
-  safeRing.rotation.x = -Math.PI / 2;
-  safeRing.position.copy(safeDisc.position);
-  scene.add(safeRing);
-  // The refuge is a prototype gameplay zone, not a claim about real-world safety.
-  const beacon = new T.Mesh(
-    new T.CylinderGeometry(0.23, 0.4, 2.8, 8),
-    material(0x50766f),
-  );
-  beacon.position.set(home.x - 1.4, 1.4, home.z);
-  beacon.castShadow = true;
-  scene.add(beacon);
-  const lamp = new T.Mesh(
-    new T.IcosahedronGeometry(0.44, 1),
-    new T.MeshStandardMaterial({
-      color: 0xffd38b,
-      emissive: 0xe7a847,
-      emissiveIntensity: 1,
-    }),
-  );
-  lamp.position.set(home.x - 1.4, 3, home.z);
-  scene.add(lamp);
+  terrain.add(trunks, crowns);
+
+  if (renderer) {
+    renderer.shadowMap.needsUpdate = true;
+  }
+}
+function resolveForQA() {
+  for (const o of campaign.offers) o.readyAt = 0;
+}
+async function switchCharacter(c: Character) {
+  let terrainChanged = false;
+  if (!worldStream.contains(c)) {
+    const next = new WorldStream(campaign.origin);
+    await next.load(c);
+    worldStream = next;
+    map = next.snapshot();
+    terrainChanged = true;
+  }
+  if (c !== player) {
+    player.weapon = weapon;
+    player.sweepReady = Math.max(0, sweepReady - time);
+    player.potionReady = Math.max(0, potionReady - time);
+  }
+  player = c;
+  if (terrainChanged) renderTerrain();
+  home = campaign.camps.find((v) => v.id === c.campId) ?? campaign.camps[0];
+  scene.remove(hero.root);
+  hero.root.traverse((o) => {
+    if (o instanceof T.Mesh) o.geometry.dispose();
+  });
+  hero = person(c.role === "archer" ? "archer" : "hero", c.appearance);
   scene.add(hero.root);
   addBlobShadow(hero);
-  // Fixed deterministic encounters on traversable ground close to the refuge.
-  const spots: Point[] = [];
-  for (let radius = 12; radius < 37 && spots.length < 9; radius += 4)
-    for (let a = 0.3; a < Math.PI * 2 && spots.length < 9; a += 0.68) {
-      const p = {
-        x: home.x + Math.sin(a) * radius,
-        z: home.z + Math.cos(a) * radius,
-      };
-      if (blocked(p.x, p.z, 1.3) || spots.some((s) => distance(s, p) < 5))
-        continue;
-      spots.push(p);
-    }
-  spots.forEach((p, i) => spawnEnemy(p, i));
-  if (!enemies.length)
-    throw new Error("Brak miejsca na przeciwników w tym wycinku");
-  loadSave();
+  weapon = c.weapon;
+  sweepReady = time + (c.sweepReady ?? 0);
+  potionReady = time + (c.potionReady ?? 0);
+  attack = null;
+  resetInput();
+  for (const s of shots) {
+    scene.remove(s.node);
+    s.node.geometry.dispose();
+    (s.node.material as T.Material).dispose();
+  }
+  shots.length = 0;
+  invincibleUntil = time + 1;
+  lastCombat = time - 10;
+  cameraTarget.set(c.x, 0, c.z);
+  hero.root.position.set(c.x, 0, c.z);
   selectWeapon(weapon);
-  cameraTarget.set(player.x, 0, player.z);
+  populateEncounters();
+}
+function removeEnemy(e: Enemy) {
+  scene.remove(e.rig.root, e.bar, e.warning);
+  e.rig.root.traverse((o) => {
+    if (o instanceof T.Mesh) o.geometry.dispose();
+  });
+  e.bar.traverse((o) => {
+    if (o instanceof T.Mesh) {
+      o.geometry.dispose();
+      (o.material as T.Material).dispose();
+    }
+  });
+  e.warning.geometry.dispose();
+  (e.warning.material as T.Material).dispose();
+}
+function populateEncounters() {
+  if (!worldStream) return;
+  for (let i = enemies.length - 1; i >= 0; i--)
+    if (distance(enemies[i].spawn, player) > 85) {
+      removeEnemy(enemies[i]);
+      enemies.splice(i, 1);
+    }
+  // Geographic cells are stable across rebases and reloads; camps never set enemy tiers.
+  const cells = encounterCells(unproject(player, campaign.origin))
+    .map((c) => ({ ...c, p: project(c.geo, campaign.origin) }))
+    .filter((c) => distance(c.p, player) < 70)
+    .sort((a, b) => distance(a.p, player) - distance(b.p, player));
+  for (const { key, seed, p } of cells) {
+    if (enemies.length >= (compatibility ? 22 : 32)) break;
+    if (
+      enemies.some((e) => e.key === key) ||
+      seed % 4 === 0 ||
+      (campaign.encounters[key] ?? 0) > Date.now() ||
+      blocked(p.x, p.z, 1.2) ||
+      safe(p)
+    )
+      continue;
+    spawnEnemy(p, seed, key);
+  }
+}
+async function travelTo(geo: Geo) {
+  const next = new WorldStream(geo);
+  await next.load({ x: 0, z: 0 });
+  const nextMap = next.snapshot();
+  const destination = findLanding(nextMap, (p) => next.contains(p, 4.6));
+  const oldOrigin = campaign.origin;
+  expedition.reproject((p) => project(unproject(p, oldOrigin), geo));
+  campaign.origin = geo;
+  worldStream = next;
+  map = nextMap;
+  for (const e of enemies) removeEnemy(e);
+  enemies.length = 0;
+  renderTerrain();
+  player.x = destination.x;
+  player.z = destination.z;
+  const camp = {
+    ...destination,
+    id: `camp-${++campaign.serial}`,
+    route: [] as Point[],
+    buildings: 0,
+  };
+  campaign.camps.push(camp);
+  player.campId = camp.id;
+  home = camp;
+  await switchCharacter(player);
+  expedition.countBuildings();
+  expedition.refreshWorld();
+  persist();
+}
+function updateWorld(dt: number) {
+  worldClock += dt;
+  if (worldClock < 0.5) return;
+  worldClock = 0;
+  if (Math.hypot(player.x, player.z) > 1500 && !expedition.rope) {
+    const oldOrigin = campaign.origin,
+      nextOrigin = unproject(player, oldOrigin);
+    expedition.reproject((p) => project(unproject(p, oldOrigin), nextOrigin));
+    campaign.origin = nextOrigin;
+    worldStream.rebase(nextOrigin);
+    for (const e of enemies) removeEnemy(e);
+    enemies.length = 0;
+    home = campaign.camps.find((c) => c.id === player.campId)!;
+    cameraTarget.set(player.x, 0, player.z);
+    persist();
+  }
+  // The bundled Lublin fragment works offline; fetch geography before its edge.
+  if (
+    !savedCampaign &&
+    worldStream.tiles.size === 0 &&
+    Math.abs(player.x) < 55 &&
+    Math.abs(player.z) < 55
+  )
+    return;
+  worldStream.request(player);
+  if (worldStream.changed) {
+    map = worldStream.snapshot();
+    renderTerrain();
+    expedition.countBuildings();
+    expedition.refreshWorld();
+  }
+  populateEncounters();
 }
 function addBlobShadow(rig: Rig) {
   rig.root.traverse((o) => {
@@ -613,10 +742,33 @@ function addBlobShadow(rig: Rig) {
   m.position.y = 0.045;
   rig.root.add(m);
 }
-function spawnEnemy(p: Point, id: number) {
-  const kind = id % 3 === 2 ? "archer" : "wolf",
-    elite = id === 8,
-    rig = kind === "wolf" ? wolf() : person("archer");
+function spawnEnemy(p: Point, id: number, key = `legacy-${id}`) {
+  const kind = (["wolf", "raider", "archer", "mage", "heavy"] as const)[id % 5],
+    elite =
+      id % 11 === 0 ||
+      (Math.min(...campaign.camps.map((c) => distance(p, c))) > 40 &&
+        id % 7 === 0),
+    tier =
+      1 +
+      Math.min(
+        8,
+        Math.floor(
+          Math.min(
+            ...campaign.camps
+              .filter((c) => !c.parentId)
+              .map((c) => distance(p, c)),
+          ) / 55,
+        ),
+      ),
+    rig =
+      kind === "wolf"
+        ? wolf()
+        : person(kind === "archer" ? "archer" : "hero", id % 10000);
+  if (kind !== "wolf") {
+    rig.sword.visible = kind === "raider" || kind === "heavy";
+    rig.wand.visible = !rig.sword.visible;
+  }
+  if (kind === "heavy") rig.root.scale.setScalar(1.15);
   rig.root.position.set(p.x, 0, p.z);
   if (elite) rig.root.scale.setScalar(1.25);
   scene.add(rig.root);
@@ -627,7 +779,7 @@ function spawnEnemy(p: Point, id: number) {
   );
   scene.add(bar);
   const warning =
-    kind === "wolf"
+    kind === "wolf" || kind === "raider" || kind === "heavy"
       ? sector(elite ? 5 : 3.5, 0.38, 0xe66c43, 0.4)
       : sector(11, 0.08, 0xe66c43, 0.3);
   warning.position.y = 0.07;
@@ -635,10 +787,16 @@ function spawnEnemy(p: Point, id: number) {
   scene.add(warning);
   enemies.push({
     id,
+    key,
+    tier,
     rig,
     spawn: { ...p },
-    hp: elite ? 120 : kind === "wolf" ? 40 : 32,
-    maxHp: elite ? 120 : kind === "wolf" ? 40 : 32,
+    hp:
+      (elite ? 120 : kind === "heavy" ? 85 : kind === "wolf" ? 40 : 36) *
+      (1 + (tier - 1) * 0.35),
+    maxHp:
+      (elite ? 120 : kind === "heavy" ? 85 : kind === "wolf" ? 40 : 36) *
+      (1 + (tier - 1) * 0.35),
     kind,
     elite,
     state: "idle",
@@ -657,13 +815,11 @@ function selectWeapon(w: "sword" | "magic") {
   hero.sword.visible = w === "sword";
   hero.wand.visible = w === "magic";
   $("attack-symbol").innerHTML = hudIcon(w);
-  document
-    .querySelectorAll<HTMLButtonElement>("[data-weapon]")
-    .forEach((b) => {
-      const selected = b.dataset.weapon === w;
-      b.classList.toggle("selected", selected);
-      b.setAttribute("aria-pressed", String(selected));
-    });
+  document.querySelectorAll<HTMLButtonElement>("[data-weapon]").forEach((b) => {
+    const selected = b.dataset.weapon === w;
+    b.classList.toggle("selected", selected);
+    b.setAttribute("aria-pressed", String(selected));
+  });
   persist();
 }
 function floatingText(text: string, p: Point, color = "#fff1c8") {
@@ -711,23 +867,30 @@ function hurtEnemy(e: Enemy, damage: number) {
     e.bar.visible = false;
     e.respawn = 30;
     player.kills++;
-    player.exp += e.elite ? 32 : 12;
+    const earned = Math.max(
+      1,
+      Math.round(
+        ((e.elite ? 24 : 8) * (1 + (e.tier - 1) * 0.3)) /
+          (1 + Math.max(0, levelOf(player.exp) - e.tier - 2) * 0.6),
+      ),
+    );
+    player.exp += earned;
+    player.coins += e.elite ? 35 : 5 + e.tier * 2;
+    campaign.encounters[e.key] = Date.now() + 45_000;
+    if (
+      player.bag.length < BALANCE.slots &&
+      (player.kills % 3 === 0 || e.elite)
+    )
+      player.bag.push(makeItem(campaign, e.id % 7, e.tier));
     player.fragments += e.elite ? 5 : 1;
     sound(640, 0.13, "sine");
-    floatingText(
-      e.elite ? "+32 EXP · 5 odłamków" : "+12 EXP",
-      e.rig.root.position,
-      "#e6f3be",
-    );
-    if (player.kills === 6)
-      notify(
-        "Wyprawa ukończona! Sprawdź magię lub poszukaj silniejszego przeciwnika.",
-      );
+    floatingText(`+${earned} XP`, e.rig.root.position, "#e6f3be");
     persist();
   }
 }
 function hurtPlayer(damage: number) {
   if (time < invincibleUntil || time < deathUntil || safe(player)) return;
+  damage = Math.max(1, Math.round(damage - armorPower(player) * 0.45));
   player.hp = Math.max(0, player.hp - damage);
   invincibleUntil = time + 0.35;
   lastCombat = time;
@@ -737,7 +900,8 @@ function hurtPlayer(damage: number) {
   sound(95, 0.11, "sawtooth", 0.04);
   if (player.hp <= 0) {
     deathUntil = time + 1.1;
-    player.exp = deathExperience(player.exp);
+    player.exp = loseXp(player.exp);
+    expedition?.cancelRope();
     player.coins = 0;
     attack = null;
     resetInput();
@@ -808,7 +972,7 @@ function fire(p: Point, dir: number, fromEnemy: boolean) {
     vx: Math.sin(dir) * speed,
     vz: Math.cos(dir) * speed,
     life: fromEnemy ? 2.2 : 1.1,
-    damage: fromEnemy ? 13 : 18 + Math.floor(player.exp / 60),
+    damage: fromEnemy ? 13 : 18 + attackPower(player),
   });
 }
 function usePotion() {
@@ -838,7 +1002,7 @@ function updateEnemies(dt: number) {
         (e.elite ? 1.25 : 1) * Math.max(0, 1 - Math.max(0, e.timer - 0.6) * 2),
       );
       e.respawn -= dt;
-      if (e.respawn <= 0 && distance(player, e.spawn) > 10) {
+      if (e.respawn <= 0 && distance(player, e.spawn) > 10 && !safe(e.spawn)) {
         e.state = "idle";
         e.hp = e.maxHp;
         e.timer = 0;
@@ -853,7 +1017,7 @@ function updateEnemies(dt: number) {
     let moving = false;
     e.timer -= dt;
     if (e.state === "idle") {
-      if (distance(p, e.spawn) > 13 || safe(player) || d > 17) {
+      if (distance(p, e.spawn) > 20 || safe(player) || safe(p) || d > 17) {
         if (distance(p, e.spawn) > 0.5) {
           const a = Math.atan2(e.spawn.x - p.x, e.spawn.z - p.z);
           slide(p, Math.sin(a) * 2 * dt, Math.cos(a) * 2 * dt, 0.48);
@@ -861,9 +1025,20 @@ function updateEnemies(dt: number) {
           moving = true;
         }
         if (d > 20) e.hp = Math.min(e.maxHp, e.hp + dt * 6);
-      } else if (d < (e.kind === "wolf" ? 3.6 : 10) && lineClear(p, player)) {
+      } else if (
+        d <
+          (e.kind === "wolf" || e.kind === "raider" || e.kind === "heavy"
+            ? 3.6
+            : 10) &&
+        lineClear(p, player)
+      ) {
         e.state = "windup";
-        e.timer = e.kind === "wolf" ? 0.65 : 0.85;
+        e.timer =
+          e.kind === "heavy"
+            ? 1.1
+            : e.kind === "wolf" || e.kind === "raider"
+              ? 0.65
+              : 0.85;
         e.heading = Math.atan2(player.x - p.x, player.z - p.z);
         e.hit = false;
       } else {
@@ -872,18 +1047,32 @@ function updateEnemies(dt: number) {
         const sign = e.kind === "archer" && d < 5 ? -1 : 1;
         slide(
           p,
-          Math.sin(a) * 2.5 * dt * sign,
-          Math.cos(a) * 2.5 * dt * sign,
+          Math.sin(a) *
+            (e.kind === "heavy" ? 1.7 : e.kind === "wolf" ? 3.1 : 2.5) *
+            dt *
+            sign,
+          Math.cos(a) *
+            (e.kind === "heavy" ? 1.7 : e.kind === "wolf" ? 3.1 : 2.5) *
+            dt *
+            sign,
           0.48,
         );
         moving = true;
       }
     } else if (e.state === "windup" && e.timer <= 0) {
       e.state = "strike";
-      e.timer = e.kind === "wolf" ? 0.32 : 0.12;
-      if (e.kind === "archer") fire(p, e.heading, true);
+      e.timer =
+        e.kind === "wolf" || e.kind === "raider" || e.kind === "heavy"
+          ? 0.32
+          : 0.12;
+      if (e.kind === "archer" || e.kind === "mage") {
+        fire(p, e.heading, true);
+        shots[shots.length - 1].damage = Math.round(
+          (e.kind === "mage" ? 17 : 13) * (1 + (e.tier - 1) * 0.22),
+        );
+      }
     } else if (e.state === "strike") {
-      if (e.kind === "wolf") {
+      if (e.kind === "wolf" || e.kind === "raider" || e.kind === "heavy") {
         const before = { x: p.x, z: p.z };
         slide(
           p,
@@ -892,7 +1081,12 @@ function updateEnemies(dt: number) {
           0.48,
         );
         if (!e.hit && segmentHitsCircle(before, p, player, 0.95)) {
-          hurtPlayer(e.elite ? 25 : 15);
+          hurtPlayer(
+            Math.round(
+              (e.elite ? 25 : e.kind === "heavy" ? 24 : 15) *
+                (1 + (e.tier - 1) * 0.22),
+            ),
+          );
           e.hit = true;
         }
       }
@@ -944,7 +1138,7 @@ function updateAttack(dt: number) {
           ) &&
           lineClear(player, e.rig.root.position)
         ) {
-          hurtEnemy(e, (attack.sweep ? 24 : 16) + Math.floor(player.exp / 60));
+          hurtEnemy(e, (attack.sweep ? 24 : 16) + attackPower(player));
           hit = true;
         }
       if (hit && attack.sweep) {
@@ -1024,30 +1218,29 @@ function updateEffects(dt: number) {
 function updateHud() {
   const hp = clamp(player.hp / maxHp(), 0, 1);
   $("hp-fill").style.width = `${hp * 100}%`;
-  document.querySelector(".health")?.setAttribute("aria-valuenow", String(Math.round(hp * 100)));
-  const xpShare = (player.exp % 60) / 60;
-  document.querySelector<HTMLElement>(".avatar")?.style.setProperty("--xp", `${xpShare * 360}deg`);
-  document.querySelector(".xp")?.setAttribute("aria-valuenow", String(Math.round(xpShare * 100)));
+  document
+    .querySelector(".health")
+    ?.setAttribute("aria-valuenow", String(Math.round(hp * 100)));
+  const share = xpShare(player.exp);
+  document
+    .querySelector<HTMLElement>(".avatar")
+    ?.style.setProperty("--xp", `${share * 360}deg`);
+  document
+    .querySelector(".xp")
+    ?.setAttribute("aria-valuenow", String(Math.round(share * 100)));
   document.querySelector(".vitals")?.classList.toggle("low-health", hp < 0.3);
   $("hp-label").textContent = `${Math.ceil(player.hp)} / ${maxHp()}`;
-  $("level").textContent = String(1 + Math.floor(player.exp / 60));
-  $("xp-fill").style.width = `${((player.exp % 60) / 60) * 100}%`;
-  const count = Math.min(6, player.kills);
-  $("progress").textContent =
-    count < 6
-      ? `${count} / 6 · bursztynowy znacznik prowadzi do wroga`
-      : "6 / 6 · eksploruj, ćwicz i porównaj bronie";
-  $("goal").textContent =
-    count < 6
-      ? "Opuść schronienie i pokonaj 6 przeciwników"
-      : "Pierwsza wyprawa ukończona";
+  $("level").textContent = String(levelOf(player.exp));
+  const nameNode = document.querySelector(".hero-name")?.firstChild;
+  if (nameNode) nameNode.textContent = `${player.name} `;
+  $("xp-fill").style.width = `${share * 100}%`;
   const inSafe = safe(player);
   $("zone").className = `zone ${inSafe ? "safe" : "danger"}`;
   $("zone").textContent = inSafe
-    ? "SCHRONIENIE · regeneracja"
+    ? "Obóz"
     : time - lastCombat < R.regenDelay
-      ? "DZICZ · walka"
-      : "DZICZ · poza walką";
+      ? "Walka"
+      : "Poza obozem";
   $("loot").textContent =
     `${player.fragments} odłamków · ${player.coins} złota`;
   const sweepLeft = Math.max(0, sweepReady - time),
@@ -1156,6 +1349,7 @@ function bindControls() {
       )
     )
       e.preventDefault();
+    if (e.code === "Escape" && e.defaultPrevented) return;
     if (e.code === "KeyP" || e.code === "Escape") {
       if (!e.repeat && !helpOpen) setPause(!paused);
       return;
@@ -1179,12 +1373,14 @@ function bindControls() {
   });
   canvas.addEventListener("pointermove", (e) => {
     if (e.pointerType === "mouse" && !paused && !helpOpen) {
+      canvas.dataset.interaction = expedition?.selected ? "camp" : "";
       mouseAim = { x: e.clientX, y: e.clientY };
       pointerAim(e.clientX, e.clientY);
     }
   });
   canvas.addEventListener("pointerdown", (e) => {
     if (e.pointerType !== "mouse" || e.button !== 0) return;
+    if (expedition.click(e.clientX, e.clientY)) return;
     pointerAim(e.clientX, e.clientY);
     beginAttack();
   });
@@ -1218,6 +1414,7 @@ function bindControls() {
   $("reset").onclick = () => {
     try {
       localStorage.removeItem(SAVE_KEY);
+      localStorage.removeItem(LEGACY_KEY);
     } catch {}
     location.reload();
   };
@@ -1339,6 +1536,14 @@ function tick() {
       )
         player.hp = Math.min(maxHp(), player.hp + dt * (safe(player) ? 22 : 4));
     }
+    updateWorld(dt);
+    if (safe(player)) {
+      const camp = nearCamp(campaign, player);
+      if (camp) {
+        player.campId = camp.id;
+        home = camp;
+      }
+    }
     updateEnemies(dt);
     updateShots(dt);
     updateEffects(dt);
@@ -1352,6 +1557,7 @@ function tick() {
       lastSave = time;
     }
   }
+  if (ready && started) expedition.tick(dt, time);
   if (!ready || contextLost || rendererFault) return;
   cameraTarget.lerp(
     new T.Vector3(player.x, 0, player.z),
@@ -1375,25 +1581,6 @@ function tick() {
   (aimView.material as T.MeshBasicMaterial).opacity = activeAttack
     ? 0.35
     : 0.18;
-  const target = enemies
-    .filter((e) => e.state !== "dead")
-    .sort(
-      (a, b) =>
-        distance(player, a.rig.root.position) -
-        distance(player, b.rig.root.position),
-    )[0];
-  targetArrow.visible = !!target && player.kills < 6;
-  if (target) {
-    const p = target.rig.root.position,
-      d = distance(player, p),
-      k = Math.min(1, 6 / (d || 1));
-    targetArrow.position.set(
-      player.x + (p.x - player.x) * k,
-      3.3 + Math.sin(time * 3) * 0.15,
-      player.z + (p.z - player.z) * k,
-    );
-    targetArrow.rotation.z = Math.PI;
-  }
   occlusionClock += dt;
   if (occlusionClock > 0.1) {
     occlusionClock = 0;
@@ -1497,7 +1684,56 @@ async function init() {
     const response = await fetch("combat3d/lublin.json");
     if (!response.ok) throw new Error(`Mapa: HTTP ${response.status}`);
     map = (await response.json()) as MapData;
+    if (
+      savedCampaign &&
+      Math.hypot(
+        map.origin.lat - campaign.origin.lat,
+        map.origin.lon - campaign.origin.lon,
+      ) > 0.000001
+    ) {
+      worldStream = new WorldStream(campaign.origin);
+      await worldStream.load(player);
+      map = worldStream.snapshot();
+    } else {
+      worldStream = new WorldStream(campaign.origin, map);
+      if (!worldStream.contains(player)) {
+        await worldStream.load(player);
+        map = worldStream.snapshot();
+      }
+    }
     buildWorld();
+    expedition = new Expedition({
+      scene,
+      camera,
+      state: campaign,
+      blocked: (p, r) => blocked(p.x, p.z, r),
+      obstacles: () => map.buildings,
+      contains: (p) => worldStream.contains(p),
+      combat: () => time - lastCombat < 5 || !!attack,
+      canAct: () =>
+        ready &&
+        started &&
+        !paused &&
+        !helpOpen &&
+        !orientationHeld &&
+        !contextLost &&
+        !rendererFault &&
+        deathUntil <= time,
+      notify,
+      save: persist,
+      switch: switchCharacter,
+      panel: (open) => {
+        helpOpen = open;
+        resetInput();
+      },
+      travel: travelTo,
+      retry: () => worldStream.retry(),
+      worldStatus: () => ({
+        loading: worldStream.loading,
+        error: worldStream.error,
+      }),
+    });
+    expedition.countBuildings();
     if (safeGraphics) {
       const replacements = new Map<T.Material, T.Material>();
       const flat = (m: T.Material): T.Material => {
@@ -1533,8 +1769,7 @@ async function init() {
     resize();
     window.addEventListener("resize", resize);
     ready = true;
-    $("loading-text").textContent =
-      "Prawdziwy układ Starego Miasta. Nowy bohater, miecz, magia i sweep. Sprawdź, czy walka daje frajdę.";
+    $("loading-text").textContent = "";
     $("start").hidden = false;
     updateHud();
     tick();
@@ -1557,6 +1792,14 @@ async function init() {
           player: { ...player },
           home: { ...home },
           weapon,
+          campaign: JSON.parse(JSON.stringify(campaign)),
+          rope: expedition.rope,
+          world: {
+            origin: campaign.origin,
+            tiles: worldStream.tiles.size,
+            loading: worldStream.loading,
+            error: worldStream.error,
+          },
           sweepReady,
           potionReady,
           attack: attack ? { ...attack } : null,
@@ -1640,6 +1883,26 @@ async function init() {
                 }
                 return { x: player.x, z: player.z };
               },
+              camp: () => {
+                player.x = home.x;
+                player.z = home.z;
+                lastCombat = time - 10;
+                cameraTarget.set(player.x, 0, player.z);
+              },
+              advanceOffers: () => {
+                for (const o of campaign.offers) o.readyAt = Date.now() - 1;
+                resolveForQA();
+              },
+              grantGold: (n: number) => {
+                player.coins = n;
+              },
+              moveTo: (x: number, z: number) => {
+                if (!blocked(x, z, R.radius)) {
+                  player.x = x;
+                  player.z = z;
+                  lastCombat = time - 10;
+                }
+              },
               hurt: (n: number) => hurtPlayer(n),
               attack: (s = false) => beginAttack(s, true),
               potion: usePotion,
@@ -1651,7 +1914,11 @@ async function init() {
     });
   } catch (error) {
     $("loading-text").textContent =
-      `Nie udało się uruchomić próby: ${error instanceof Error ? error.message : String(error)}. Wymagana jest przeglądarka z WebGL 2.`;
+      `Nie udało się uruchomić gry: ${error instanceof Error ? error.message : String(error)}`;
+    const retry = document.createElement("button");
+    retry.textContent = "Spróbuj ponownie";
+    retry.onclick = () => location.reload();
+    $("loading-text").after(retry);
     console.error(error);
   }
 }
