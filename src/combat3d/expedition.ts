@@ -1,4 +1,5 @@
 import * as T from "three";
+import { territoryModel } from "./territory";
 import { person, material, type Rig } from "./models";
 import {
   BALANCE,
@@ -119,32 +120,6 @@ function campModel(c: Camp) {
   highlight.visible = false;
   g.add(highlight);
   g.userData.highlight = highlight;
-  const ring = mesh(
-    g,
-    new T.RingGeometry(
-      BALANCE.safeRadius - 0.035,
-      BALANCE.safeRadius + 0.035,
-      64,
-    ),
-    0xb8c69e,
-    0,
-    0.055,
-    0,
-  );
-  ring.rotation.x = -Math.PI / 2;
-  (ring.material as T.Material).transparent = true; // shared material opacity stays unchanged
-  const disc = new T.Mesh(
-    new T.CircleGeometry(BALANCE.safeRadius, 48),
-    new T.MeshBasicMaterial({
-      color: 0x91bba3,
-      transparent: true,
-      opacity: 0.09,
-      depthWrite: false,
-    }),
-  );
-  disc.rotation.x = -Math.PI / 2;
-  disc.position.y = 0.04;
-  g.add(disc);
   return g;
 }
 function ropeLine(points: Point[], time: number, live: boolean) {
@@ -175,6 +150,7 @@ export class Expedition {
   group = new T.Group();
   campViews = new Map<string, T.Group>();
   waiting = new Map<string, Rig>();
+  private territory = new T.Group();
   private liveLine = new T.Line(
     new T.BufferGeometry(),
     new T.LineBasicMaterial({ color: 0x795437 }),
@@ -207,7 +183,7 @@ export class Expedition {
   private noticeClock = 0;
   constructor(h: Hooks) {
     this.h = h;
-    h.scene.add(this.group, this.liveLine, this.connections, this.marker);
+    h.scene.add(this.group, this.liveLine, this.connections, this.marker, this.territory);
     this.marker.rotation.x = -Math.PI / 2;
     this.marker.visible = false;
     document.body.insertAdjacentHTML(
@@ -746,6 +722,10 @@ export class Expedition {
     }
   }
   refreshWorld() {
+    this.h.scene.remove(this.territory);
+    this.disposeGeometry(this.territory);
+    this.territory = territoryModel(this.h.state, this.h.contains);
+    this.h.scene.add(this.territory);
     for (const v of this.campViews.values()) {
       this.group.remove(v);
       this.disposeGeometry(v);

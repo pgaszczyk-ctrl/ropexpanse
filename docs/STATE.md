@@ -36,3 +36,9 @@ Publiczny Overpass nie daje gwarancji dostępności. Przed szerokim udostępnien
 Zapisane połączenia między obozami chronią pas po 3 metry od liny, według skali mapy (0,54 jednostki w obecnej skali). Ochrona obejmuje zakręty i końce, regenerację, odporność na obrażenia oraz przerwanie ataku wrogów. Prowadzona, niezatwierdzona lina nie tworzy ruchomej strefy ochronnej. HUD odróżnia obóz od bezpiecznej liny. Wrogowie losują krótkie trasy i postoje wokół miejsca pojawienia także podczas odpoczynku gracza. Omijają bezpieczne obszary; przeciwnik objęty nowym połączeniem może z niego wyjść.
 
 Build i testy reguł zaliczone; dodano test patrolowania w przeglądarce. Pełny test przeglądarkowy nadal wymaga dostępnego Chromium.
+
+## Czytelność bezpiecznego terenu (05.11.2026)
+
+`territory.ts` rysuje wspólny obrys kół obozów i pasów ukończonej liny: ciemna podkładka, jasny turkusowy rdzeń oraz szersza poświata. Podłoże jest zabarwione. Obrys jest geometrią powierzchniową, więc zachowuje szerokość także na telefonach ograniczających linie WebGL do jednego piksela. Wewnętrzne granice nachodzących stref są wycinane; geometria jest przebudowywana przy zmianie obozów/mapy, nie co klatkę. Używa tych samych promieni co ochrona. Prowadzona lina nie wyznacza bezpiecznego terenu.
+
+Build i testy reguł zaliczone. Test przeglądarkowy uruchomiony, ale zablokowany brakiem Chromium; instalator ponownie otrzymał uszkodzone archiwum. Ocena rzeczywistego obrazu 3D pozostaje niepotwierdzona.
