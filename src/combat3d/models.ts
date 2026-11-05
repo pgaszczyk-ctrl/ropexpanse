@@ -98,7 +98,7 @@ export type Rig = {
   kind: "hero" | "wolf" | "archer";
   phase: number;
 };
-export function person(kind: "hero" | "archer" = "hero"): Rig {
+export function person(kind: "hero" | "archer" = "hero", appearance = 0): Rig {
   const root = new T.Group(),
     body = new T.Group(),
     head = new T.Group(),
@@ -110,8 +110,16 @@ export function person(kind: "hero" | "archer" = "hero"): Rig {
     wand = new T.Group();
   root.add(body);
   body.position.y = 0.98;
-  const coat = kind === "hero" ? 0x345e70 : 0x8d563c,
-    skin = 0xe8b987,
+  const coat = appearance
+      ? [0x345e70, 0x755579, 0x537048, 0x9b623d, 0x435b8b, 0x9a7846][
+          appearance % 6
+        ]
+      : kind === "hero"
+        ? 0x345e70
+        : 0x8d563c,
+    skin = [0xe8b987, 0xa97450, 0xd59a72, 0x784d39][
+      Math.floor(appearance / 6) % 4
+    ],
     leather = 0x483e32,
     gold = 0xc99a51;
   box(body, coat, [0.88, 0.9, 0.5], [0, 0.33, 0]);
@@ -121,7 +129,18 @@ export function person(kind: "hero" | "archer" = "hero"): Rig {
   body.add(head);
   head.position.y = 1.07;
   ball(head, skin, 0.37, [0, 0, 0.025], [1, 1.1, 0.93]);
-  box(head, 0x4b3b2f, [0.65, 0.17, 0.58], [0, 0.26, -0.04]);
+  const hair = [0x4b3b2f, 0xc49447, 0x9c4930, 0x292c32, 0xc4c3b1][
+    Math.floor(appearance / 24) % 5
+  ];
+  box(
+    head,
+    hair,
+    [0.65, 0.17 + (appearance % 3) * 0.05, 0.58],
+    [0, 0.26, -0.04],
+  );
+  if (appearance % 3 === 1)
+    box(head, hair, [0.22, 0.5, 0.3], [0.3, 0.08, -0.2]);
+  if (appearance % 3 === 2) ball(head, hair, 0.23, [0, 0.35, -0.2]);
   box(head, leather, [0.64, 0.12, 0.075], [0, 0.08, 0.335]);
   for (const x of [-0.19, 0.19]) {
     ball(head, gold, 0.12, [x, 0.08, 0.37], [1, 1, 0.5]);
@@ -163,8 +182,28 @@ export function person(kind: "hero" | "archer" = "hero"): Rig {
   tip.rotation.z = Math.PI / 4;
   tip.position.set(0, 0, 1.61);
   sword.add(tip);
-  box(wand, leather, [0.11, 0.12, 0.85], [0, 0, 0.35]);
-  ball(wand, 0x72e4ed, 0.19, [0, 0, 0.85]);
+  if (kind === "archer") {
+    const curve = new T.CatmullRomCurve3([
+      new T.Vector3(-0.55, 0, 0.4),
+      new T.Vector3(0, 0, 0.8),
+      new T.Vector3(0.55, 0, 0.4),
+    ]);
+    const bow = new T.Mesh(
+      new T.TubeGeometry(curve, 12, 0.055, 5, false),
+      material(0x94683e),
+    );
+    wand.add(bow);
+    const string = new T.Mesh(
+      new T.CylinderGeometry(0.012, 0.012, 1.1, 4),
+      material(0xd6c7a5),
+    );
+    string.rotation.z = Math.PI / 2;
+    string.position.z = 0.4;
+    wand.add(string);
+  } else {
+    box(wand, leather, [0.11, 0.12, 0.85], [0, 0, 0.35]);
+    ball(wand, 0x72e4ed, 0.19, [0, 0, 0.85]);
+  }
   wand.visible = false;
   batchRig(root);
   return {

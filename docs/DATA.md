@@ -26,3 +26,9 @@ Importer ma ustalony origin i promień lokalnej próby; nie jest jeszcze generat
 Wybrane pliki prototypu pochodzą z pgaszczyk-ctrl/erpeg, commit 97cdb24; skopiowano kod, nie historię repo. Modele w models.ts są proceduralne. Projekt nie otrzymuje w tym etapie licencji open source. Three.js, Vite, TypeScript i Playwright mają własne licencje dystrybuowane z pakietami npm.
 
 CSS korzysta opcjonalnie z Google Fonts. Eksport jednoplikowy usuwa import zewnętrznych fontów. Do docelowej wersji prywatnej lub offline można dołączyć font lokalnie wraz z jego licencją.
+
+## Strumieniowanie świata
+
+`src/combat3d/world.ts` pobiera ograniczone fragmenty przez `https://overpass.private.coffee/api/interpreter`, publiczny endpoint wymieniony w dokumentacji OSM: https://wiki.openstreetmap.org/wiki/Overpass_API . Zapytania są sekwencyjne, oddalone o co najmniej trzy sekundy, obejmują budynki, drogi oraz wybrane obszary wód/zieleni. Dane trafiają do IndexedDB; ponownie odwiedzane zapisane kafle nie wymagają ponownego pobrania. Błędy mają opóźnienie ponawiania, częściowe odpowiedzi z remark nie są przyjmowane.
+
+To integracja prototypu, bez gwarantowanej dostępności usługi publicznej. Przed szeroką dystrybucją wdrożyć własny provider/cache; nie zwiększać obciążenia publicznych instancji przez równoległy masowy import. Cała Ziemia nie jest dołączana do repo. Dane nadal podlegają ODbL i wymagają widocznej atrybucji.

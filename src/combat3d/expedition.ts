@@ -1,0 +1,901 @@
+import * as T from "three";
+import { territoryModel } from "./territory";
+import { completedRoutes, invalidateTerritory } from "./territory-rules";
+import { recruitmentProfile } from "./recruitment";
+import { person, material, type Rig } from "./models";
+import {
+  BALANCE,
+  activeCharacter,
+  nearCamp,
+  levelOf,
+  maxHealth,
+  roleName,
+  equip,
+  transfer,
+  postOffer,
+  resolveOffers,
+  hire,
+  cancelOffer,
+  nextId,
+  connectCamps,
+  type Campaign,
+  type Camp,
+  type Character,
+  type Item,
+} from "./campaign";
+import { updateRope, routeLength, type Obstacle } from "./rope";
+import { distance, type Point } from "./rules";
+import type { Geo } from "./world";
+type Hooks = {
+  scene: T.Scene;
+  camera: T.Camera;
+  state: Campaign;
+  blocked: (p: Point, r: number) => boolean;
+  obstacles: () => Obstacle[];
+  contains: (p: Point) => boolean;
+  combat: () => boolean;
+  canAct: () => boolean;
+  notify: (s: string) => void;
+  save: () => void;
+  switch: (c: Character) => void | Promise<void>;
+  panel: (open: boolean) => void;
+  travel: (geo: Geo) => Promise<void>;
+  retry: () => void;
+  worldStatus: () => { loading: boolean; error: string };
+};
+const el = <T extends HTMLElement = HTMLElement>(id: string) =>
+  document.getElementById(id) as T;
+function node<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  text = "",
+  cls = "",
+) {
+  const e = document.createElement(tag);
+  e.textContent = text;
+  e.className = cls;
+  return e;
+}
+function button(text: string, click: () => void, cls = "") {
+  const b = node("button", text, cls);
+  b.type = "button";
+  b.onclick = click;
+  return b;
+}
+const paths: Record<string, string> = {
+  sword:
+    '<path fill="#a8b5ba" d="m40 5 7 2-2 8-23 25-8-8Z"/><path stroke="#4c5b60" stroke-width="5" d="m10 29 17 15M17 36 8 47"/>',
+  staff:
+    '<path stroke="#8b5c31" stroke-width="7" stroke-linecap="round" d="m14 47 20-34 8-4"/><path fill="#70c9e3" d="m33 5 10 1 5 10-11 4-8-7Z"/>',
+  armor:
+    '<path fill="#668b94" stroke="#3e5860" stroke-width="2" d="m15 10 9 5h8l9-5 9 14-8 7-3-5v23H17V26l-3 5-8-7Z"/><path stroke="#d4b575" stroke-width="3" d="M17 36h22"/>',
+  helmet:
+    '<path fill="#99a8ab" stroke="#53696f" stroke-width="2" d="M11 38V27a17 17 0 0 1 34 0v11l-10 8V29H21v17Z"/><path stroke="#d0aa63" stroke-width="4" d="M9 28h38"/>',
+  boots:
+    '<path fill="#8e643f" stroke="#5d452f" stroke-width="2" d="m15 8 17 2-3 22 14 9v8H10V34Z"/><path stroke="#d4b575" stroke-width="3" d="M14 18h17"/>',
+};
+export function itemIcon(item: Item) {
+  return `<svg viewBox="0 0 56 56" aria-hidden="true">${paths[item.icon] ?? paths.sword}</svg>`;
+}
+function mesh(
+  group: T.Group,
+  g: T.BufferGeometry,
+  color: number,
+  x: number,
+  y: number,
+  z: number,
+) {
+  const m = new T.Mesh(g, material(color));
+  m.position.set(x, y, z);
+  group.add(m);
+  return m;
+}
+function campModel(c: Camp) {
+  const g = new T.Group();
+  g.position.set(c.x, 0, c.z);
+  g.userData.campId = c.id;
+  const tent = mesh(
+    g,
+    new T.CylinderGeometry(0, 1.8, 2.2, 4, 1, false, Math.PI / 4),
+    0xbd9b65,
+    -1.6,
+    1.1,
+    -1.2,
+  );
+  tent.scale.z = 0.8;
+  mesh(g, new T.PlaneGeometry(0.7, 1.25), 0x4c5142, -1.6, 0.65, 0.12);
+  mesh(g, new T.CylinderGeometry(0.13, 0.18, 1.7, 7), 0x82623d, 1.2, 0.85, 0.5);
+  mesh(g, new T.BoxGeometry(1.5, 1.1, 0.14), 0x87643c, 1.2, 1.8, 0.5);
+  mesh(g, new T.PlaneGeometry(0.62, 0.72), 0xe9d8b0, 1, 1.8, 0.58);
+  mesh(g, new T.PlaneGeometry(0.4, 0.5), 0xdcc38f, 1.62, 1.9, 0.59);
+  mesh(g, new T.CylinderGeometry(0.12, 0.16, 0.85, 7), 0x755235, 0, 0.43, 1.7);
+  mesh(g, new T.TorusGeometry(0.18, 0.05, 6, 10), 0xc5a15c, 0, 0.75, 1.7);
+  const highlight = new T.Mesh(
+    new T.RingGeometry(2.7, 2.85, 40),
+    new T.MeshBasicMaterial({
+      color: 0xe6bb62,
+      transparent: true,
+      opacity: 0.65,
+      depthWrite: false,
+    }),
+  );
+  highlight.rotation.x = -Math.PI / 2;
+  highlight.position.y = 0.08;
+  highlight.visible = false;
+  g.add(highlight);
+  g.userData.highlight = highlight;
+  return g;
+}
+function ropeLine(points: Point[], time: number, live: boolean) {
+  const out: T.Vector3[] = [];
+  for (let j = 1; j < points.length; j++) {
+    const a = points[j - 1],
+      b = points[j],
+      d = distance(a, b),
+      count = Math.max(2, Math.ceil(d * 2));
+    for (let i = 0; i <= count; i++) {
+      const t = i / count;
+      out.push(
+        new T.Vector3(
+          a.x + (b.x - a.x) * t,
+          Math.max(
+            0.12,
+            0.8 - Math.sin(Math.PI * t) * Math.min(0.65, d * 0.055),
+          ) + (live ? Math.sin(time * 3 + t * 7) * 0.025 : 0),
+          a.z + (b.z - a.z) * t,
+        ),
+      );
+    }
+  }
+  return out;
+}
+export class Expedition {
+  h: Hooks;
+  group = new T.Group();
+  campViews = new Map<string, T.Group>();
+  waiting = new Map<string, Rig>();
+  private territory = new T.Group();
+  private liveLine = new T.Line(
+    new T.BufferGeometry(),
+    new T.LineBasicMaterial({ color: 0x795437 }),
+  );
+  private connections = new T.LineSegments(
+    new T.BufferGeometry(),
+    new T.LineBasicMaterial({ color: 0x886d49 }),
+  );
+  private marker = new T.Mesh(
+    new T.RingGeometry(3.5, 3.6, 32),
+    new T.MeshBasicMaterial({
+      color: 0xd3b36b,
+      transparent: true,
+      opacity: 0.8,
+      depthTest: false,
+    }),
+  );
+  rope: { campId: string; points: Point[] } | null = null;
+  selected: Camp | undefined;
+  private menuCamp: Camp | undefined;
+  private dialog: HTMLDialogElement;
+  private body: HTMLElement;
+  private title: HTMLElement;
+  private previousFocus: HTMLElement | null = null;
+  private selectedItem: string | null = null;
+  private view = "";
+  private offerItems = new Set<string>();
+  private offerGold = 0;
+  private clock = 0;
+  private noticeClock = 0;
+  constructor(h: Hooks) {
+    this.h = h;
+    h.scene.add(this.group, this.liveLine, this.connections, this.marker, this.territory);
+    this.marker.rotation.x = -Math.PI / 2;
+    this.marker.visible = false;
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<button id="action" class="context-action" aria-label="Akcja"><span>⚑</span><small id="action-label">Akcja</small></button><nav id="camp-menu" hidden aria-label="Obóz"></nav><dialog id="expedition-panel"><div class="panel-heading"><h2 id="panel-title"></h2><button id="panel-close" aria-label="Zamknij">×</button></div><div id="panel-body"></div></dialog><nav id="expedition-tools" aria-label="Wyprawa"><button id="characters">Wędrowiec ▾</button><button id="inventory" aria-label="Ekwipunek">▦</button><button id="world-map" aria-label="Świat">◎</button></nav><button id="world-state" hidden></button>`,
+    );
+    this.dialog = el<HTMLDialogElement>("expedition-panel");
+    this.body = el("panel-body");
+    this.title = el("panel-title");
+    el("panel-close").onclick = () => this.close();
+    this.dialog.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      this.close();
+    });
+    this.dialog.addEventListener("click", (e) => {
+      if (e.target === this.dialog) {
+        const b = this.dialog.getBoundingClientRect();
+        const m = e as MouseEvent;
+        if (
+          m.clientX < b.left ||
+          m.clientX > b.right ||
+          m.clientY < b.top ||
+          m.clientY > b.bottom
+        )
+          this.close();
+      }
+    });
+    el("action").onclick = () => this.action();
+    el("inventory").onclick = () => this.open("inventory");
+    el("characters").onclick = () => this.open("characters");
+    el("world-map").onclick = () => this.open("world");
+    el("world-state").onclick = () => h.retry();
+    document.addEventListener("pointerdown", (e) => {
+      if (!(e.target as HTMLElement).closest("#camp-menu,#world"))
+        this.hideMenu();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (
+        e.code === "Escape" &&
+        !this.dialog.open &&
+        (this.rope || !el("camp-menu").hidden)
+      ) {
+        e.preventDefault();
+        this.rope = null;
+        this.hideMenu();
+      }
+      if (e.code === "KeyE" && !this.dialog.open && !e.repeat) {
+        e.preventDefault();
+        this.action();
+      }
+      if (e.code === "KeyI" && !this.dialog.open) {
+        e.preventDefault();
+        this.open("inventory");
+      }
+    });
+    this.refreshWorld();
+  }
+  close() {
+    this.dialog.close();
+    this.h.panel(false);
+    this.previousFocus?.focus();
+    this.view = "";
+    this.selectedItem = null;
+    this.h.save();
+  }
+  private open(view: string) {
+    if (!this.h.canAct() && !this.dialog.open) return;
+    this.hideMenu();
+    this.view = view;
+    this.selectedItem = null;
+    if (!this.dialog.open) {
+      this.previousFocus = document.activeElement as HTMLElement;
+      this.dialog.showModal();
+      this.h.panel(true);
+    }
+    this.render();
+  }
+  private render() {
+    this.body.replaceChildren();
+    const s = this.h.state,
+      c = activeCharacter(s);
+    el("characters").textContent = `${c.name} ▾`;
+    if (this.view === "characters") {
+      this.title.textContent = "Postacie";
+      for (const v of s.characters) {
+        const b = button(
+          `${v.name} · ${roleName(v.role)} · ${levelOf(v.exp)}`,
+          async () => {
+            if (v.id === c.id) return;
+            if (this.rope || !nearCamp(s, c) || this.h.combat()) {
+              this.h.notify("Wróć do obozu");
+              return;
+            }
+            this.h.save();
+            try {
+              await this.h.switch(v);
+              s.activeId = v.id;
+              this.refreshWorld();
+              this.close();
+            } catch {
+              this.h.notify("Mapa tej postaci jest niedostępna");
+            }
+          },
+          "character-choice",
+        );
+        b.classList.toggle("selected", v.id === c.id);
+        b.style.setProperty(
+          "--portrait-color",
+          `hsl(${v.appearance % 360} 25% 47%)`,
+        );
+        this.body.append(b);
+      }
+      return;
+    }
+    if (this.view === "world") {
+      this.title.textContent = "Świat";
+      const form = node("form");
+      const lat = node("input"),
+        lon = node("input");
+      lat.type = lon.type = "number";
+      lat.step = lon.step = "any";
+      lat.required = lon.required = true;
+      lat.min = "-90";
+      lat.max = "90";
+      lon.min = "-180";
+      lon.max = "180";
+      lat.placeholder = "Szerokość";
+      lon.placeholder = "Długość";
+      lat.setAttribute("aria-label", "Szerokość geograficzna");
+      lon.setAttribute("aria-label", "Długość geograficzna");
+      const go = button("Wyrusz", () => {});
+      go.type = "submit";
+      form.append(lat, lon, go);
+      form.onsubmit = (e) => {
+        e.preventDefault();
+        void this.travel({ lat: Number(lat.value), lon: Number(lon.value) });
+      };
+      this.body.append(form);
+      const places = [
+        ["Lublin", 51.2482, 22.5681],
+        ["Warszawa", 52.2297, 21.0122],
+        ["Stambuł", 41.0082, 28.9784],
+        ["Singapur", 1.3521, 103.8198],
+        ["Nowy Jork", 40.7128, -74.006],
+      ] as const;
+      for (const [name, latitude, longitude] of places)
+        this.body.append(
+          button(
+            name,
+            () => void this.travel({ lat: latitude, lon: longitude }),
+            "place-choice",
+          ),
+        );
+      return;
+    }
+    if (this.view === "recruit") {
+      this.recruit();
+      return;
+    }
+    const vault = this.view === "vault";
+    this.title.textContent = vault ? "Skarbiec" : "Ekwipunek";
+    const layout = node("div", "", "inventory-layout");
+    const col = node("div", "", "inventory-column");
+    const count = node(
+      "span",
+      `${vault ? s.vault.length : c.bag.length} / ${vault ? "∞" : BALANCE.slots}`,
+      "slot-count",
+    );
+    this.title.append(count);
+    const gold = node("div", `${vault ? s.bank : c.coins} zł`, "gold-line");
+    if (vault) {
+      gold.append(
+        button("Wpłać", () => {
+          s.bank += c.coins;
+          c.coins = 0;
+          this.h.save();
+          this.render();
+        }),
+        button("Wypłać", () => {
+          c.coins += s.bank;
+          s.bank = 0;
+          this.h.save();
+          this.render();
+        }),
+      );
+    }
+    col.append(gold);
+    const items = vault ? s.vault : c.bag,
+      grid = node("div", "", "item-grid");
+    const slots = vault
+      ? Math.max(24, Math.ceil((items.length + 1) / 4) * 4)
+      : BALANCE.slots;
+    for (let i = 0; i < slots; i++) {
+      const item = items[i],
+        b = button(
+          "",
+          () => {
+            this.selectedItem = item?.id ?? null;
+            this.render();
+          },
+          "item-slot",
+        );
+      if (item) {
+        b.innerHTML = itemIcon(item);
+        b.setAttribute("aria-label", item.name);
+        b.title = item.name;
+        b.classList.toggle("selected", this.selectedItem === item.id);
+      } else {
+        b.disabled = true;
+        b.setAttribute("aria-label", "Puste pole");
+      }
+      grid.append(b);
+    }
+    col.append(grid);
+    layout.append(col);
+    const side = node("aside", "", "equipment");
+    if (!vault) {
+      for (const [slot, label] of [
+        ["weapon", "Broń"],
+        ["armor", "Zbroja"],
+        ["helmet", "Hełm"],
+        ["boots", "Buty"],
+      ] as const) {
+        const item = c.equipment[slot];
+        const b = button(
+          item ? `${item.name} · ${item.power}` : label,
+          () => {
+            if (item && c.bag.length < BALANCE.slots) {
+              delete c.equipment[slot];
+              c.bag.push(item);
+              c.hp = Math.min(c.hp, maxHealth(c));
+              this.h.save();
+              this.render();
+            }
+          },
+          "equipment-slot",
+        );
+        side.append(b);
+      }
+    }
+    const item = items.find((i) => i.id === this.selectedItem);
+    if (item) {
+      side.append(
+        node("h3", item.name),
+        node("p", `${item.slot === "weapon" ? "Atak" : "Armor"} ${item.power}`),
+      );
+      if (!vault && item.slot !== "material")
+        side.append(
+          button("Załóż", () => {
+            equip(c, item.id);
+            this.h.switch(c);
+            this.h.save();
+            this.render();
+          }),
+        );
+      if (nearCamp(s, c))
+        side.append(
+          button(vault ? "Do plecaka" : "Do skarbca", () => {
+            if (
+              !transfer(
+                items,
+                vault ? c.bag : s.vault,
+                item.id,
+                vault ? BALANCE.slots : Infinity,
+              )
+            )
+              this.h.notify("Plecak jest pełny");
+            this.h.save();
+            this.render();
+          }),
+        );
+    }
+    layout.append(side);
+    this.body.append(layout);
+  }
+  private async travel(geo: Geo) {
+    if (
+      !nearCamp(this.h.state, activeCharacter(this.h.state)) ||
+      this.h.combat() ||
+      this.rope
+    ) {
+      this.h.notify("Wróć do obozu");
+      return;
+    }
+    if (
+      !Number.isFinite(geo.lat) ||
+      Math.abs(geo.lat) > 90 ||
+      !Number.isFinite(geo.lon) ||
+      Math.abs(geo.lon) > 180
+    )
+      return;
+    this.body.replaceChildren(node("p", "Wczytywanie mapy…"));
+    try {
+      await this.h.travel(geo);
+      this.close();
+      this.refreshWorld();
+    } catch {
+      this.body.replaceChildren(
+        node("p", "Mapa jest niedostępna"),
+        button("Spróbuj ponownie", () => void this.travel(geo)),
+        button("Wróć", () => this.render()),
+      );
+    }
+  }
+  private recruit() {
+    const s = this.h.state,
+      c = activeCharacter(s),
+      camp = this.menuCamp ?? nearCamp(s, c);
+    this.title.textContent = "Twoja oferta";
+    if (!camp || distance(camp, c) > BALANCE.safeRadius) {
+      this.body.append(node("p", "Wróć do obozu"));
+      return;
+    }
+    const o = s.offers.find((v) => v.campId === camp.id);
+    if (o) {
+      this.body.append(node("p", `${o.gold} zł · ${o.items.length} przedm.`));
+      if (o.candidates !== null) {
+        this.title.textContent = o.candidates.length ? "Zgłoszenia" : "Brak zgłoszeń";
+        for (const v of o.candidates)
+          this.body.append(
+            button(
+              `${v.name} · ${roleName(v.role)} · ${v.level} — Zatrudnij`,
+              () => {
+                const hired = hire(s, o.id, v.id);
+                if (hired) {
+                  this.h.save();
+                  this.refreshWorld();
+                  this.render();
+                }
+              },
+              "candidate",
+            ),
+          );
+      } else {
+        const remaining = Math.max(
+          0,
+          Math.ceil((o.readyAt - Date.now()) / 1000),
+        );
+        const timer = node(
+          "p",
+          `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`,
+          "offer-timer",
+        );
+        timer.id = "offer-timer";
+        this.body.append(timer);
+      }
+      this.body.append(
+        button(o.candidates?.length === 0 ? "Odbierz ofertę" : "Wycofaj ofertę", () => {
+          cancelOffer(s, o.id);
+          this.h.save();
+          this.render();
+        }),
+      );
+      return;
+    }
+    const form = node("form");
+    const gold = node("input");
+    gold.type = "number";
+    gold.min = "0";
+    gold.max = String(c.coins);
+    gold.step = "1";
+    gold.value = String(this.offerGold);
+    gold.setAttribute("aria-label", "Złoto w ofercie");
+    gold.oninput = () => { this.offerGold = Number(gold.value); updateProfile(); };
+    form.append(node("label", `Złoto · ${c.coins}`), gold);
+    const grid = node("div", "", "offer-grid");
+    for (const item of c.bag) {
+      const b = button(
+        "",
+        () => {
+          if (this.offerItems.has(item.id)) this.offerItems.delete(item.id);
+          else this.offerItems.add(item.id);
+          this.render();
+        },
+        "item-slot",
+      );
+      b.innerHTML = itemIcon(item);
+      b.setAttribute("aria-label", item.name);
+      b.setAttribute("aria-pressed", String(this.offerItems.has(item.id)));
+      b.classList.toggle("selected", this.offerItems.has(item.id));
+      grid.append(b);
+    }
+    form.append(grid);
+    const submit = button("Wystaw", () => {});
+    submit.type = "submit";
+    const summary = node("div", "", "recruitment-profile");
+    const updateProfile = () => {
+      const profile = recruitmentProfile({ gold: this.offerGold, items: c.bag.filter(i => this.offerItems.has(i.id)), ceiling: levelOf(c.exp) }, camp.buildings);
+      submit.disabled = !Number.isSafeInteger(this.offerGold) || this.offerGold < 0 || this.offerGold > c.coins || !profile.chance;
+      summary.replaceChildren(
+        node("p", `Szansa zgłoszenia: ${Math.round(profile.chance * 100)}%`),
+        node("p", `Wojownik ${Math.round(profile.roles.warrior * 100)}% · Mag ${Math.round(profile.roles.mage * 100)}% · Łucznik ${Math.round(profile.roles.archer * 100)}%`),
+        node("p", `Poziom: ${profile.minLevel === profile.maxLevel ? profile.maxLevel : `${profile.minLevel}–${profile.maxLevel}`}`),
+      );
+    };
+    updateProfile();
+    form.append(summary);
+    form.append(submit);
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const o = postOffer(s, camp.id, this.offerGold, [...this.offerItems]);
+      if (!o) {
+        this.h.notify("Dodaj złoto lub przedmiot");
+        return;
+      }
+      this.offerGold = 0;
+      this.offerItems.clear();
+      this.h.save();
+      this.render();
+    };
+    this.body.append(form);
+  }
+  private hideMenu() {
+    el("camp-menu").hidden = true;
+  }
+  private menu(camp: Camp) {
+    this.menuCamp = camp;
+    const menu = el("camp-menu");
+    menu.replaceChildren(
+      button("Rozciągnij linę", () => {
+        this.rope = {
+          campId: camp.id,
+          points: [
+            { x: camp.x, z: camp.z },
+            { ...activeCharacter(this.h.state) },
+          ],
+        };
+        this.hideMenu();
+      }),
+      button("Skarbiec", () => this.open("vault")),
+      button("Rekrutuj", () => {
+        this.offerGold = 0;
+        this.offerItems.clear();
+        this.open("recruit");
+      }),
+    );
+    menu.hidden = false;
+    this.positionMenu();
+  }
+  private positionMenu() {
+    if (!this.menuCamp) return;
+    const p = new T.Vector3(this.menuCamp.x, 2.6, this.menuCamp.z).project(
+        this.h.camera,
+      ),
+      menu = el("camp-menu");
+    menu.style.left = `${Math.max(10, Math.min(innerWidth - 195, ((p.x + 1) * innerWidth) / 2 + 30))}px`;
+    menu.style.top = `${Math.max(10, Math.min(innerHeight - 160, ((1 - p.y) * innerHeight) / 2 - 40))}px`;
+  }
+  action() {
+    if (!this.h.canAct()) return;
+    if (this.rope) {
+      this.place();
+      return;
+    }
+    if (this.selected) this.menu(this.selected);
+  }
+  click(clientX: number, clientY: number) {
+    if (!this.h.canAct()) return false;
+    if (this.rope) {
+      this.place();
+      return true;
+    }
+    const v = new T.Vector2(
+        (clientX / innerWidth) * 2 - 1,
+        (-clientY / innerHeight) * 2 + 1,
+      ),
+      ray = new T.Raycaster();
+    ray.setFromCamera(v, this.h.camera);
+    const hits = ray.intersectObjects([...this.campViews.values()], true);
+    if (hits.length) {
+      let object: T.Object3D | null = hits[0].object;
+      while (object && !object.userData.campId) object = object.parent;
+      const camp = this.h.state.camps.find(
+        (c) => c.id === object?.userData.campId,
+      );
+      if (camp) {
+        if (distance(camp, activeCharacter(this.h.state)) > BALANCE.safeRadius)
+          this.h.notify("Podejdź do obozu");
+        else this.menu(camp);
+        return true;
+      }
+    }
+    this.hideMenu();
+    return false;
+  }
+  private connectionTarget() {
+    if (!this.rope) return undefined;
+    const c = activeCharacter(this.h.state);
+    return this.h.state.camps.filter(camp => camp.id !== this.rope!.campId && distance(camp, c) <= 2.4).sort((a, b) => distance(a, c) - distance(b, c))[0];
+  }
+  private connectingRoute() {
+    const target = this.connectionTarget();
+    return target && this.rope ? updateRope(this.rope.points, target, this.h.obstacles()) : null;
+  }
+  private placementError() {
+    const c = activeCharacter(this.h.state);
+    if (!this.rope) return "";
+    if (this.h.combat()) return "Najpierw zakończ walkę";
+    const target = this.connectionTarget();
+    if (target) {
+      const route = this.connectingRoute();
+      if (!route || routeLength(route) > BALANCE.ropeLength) return "Lina nie sięga obozu";
+      const from = this.rope.campId, to = target.id, s = this.h.state;
+      if (s.camps.some(camp => camp.id === from && camp.parentId === to || camp.id === to && camp.parentId === from) || s.connections?.some(link => link.from === from && link.to === to || link.from === to && link.to === from)) return "Obozy są już połączone";
+      return "";
+    }
+    if (!this.h.contains(c)) return "Mapa jeszcze się wczytuje";
+    if (
+      this.h.state.camps.some((v) => distance(v, c) < BALANCE.minCampDistance)
+    )
+      return "Za blisko obozu";
+    if (c.coins < BALANCE.campCost)
+      return `Potrzebujesz ${BALANCE.campCost} zł`;
+    if (routeLength(this.rope.points) > BALANCE.ropeLength)
+      return "Lina jest za krótka";
+    if (this.h.blocked(c, 3.6)) return "Brak miejsca na obóz";
+    return "";
+  }
+  private place() {
+    const reason = this.placementError();
+    if (reason) {
+      this.h.notify(reason);
+      return;
+    }
+    const c = activeCharacter(this.h.state),
+      s = this.h.state;
+    const target = this.connectionTarget();
+    if (target) {
+      const route = this.connectingRoute();
+      if (route && connectCamps(s, this.rope!.campId, target.id, route)) {
+        this.rope = null;
+        this.refreshWorld();
+        this.h.save();
+        this.h.notify("Obozy połączone");
+      }
+      return;
+    }
+    const camp: Camp = {
+      id: nextId(s, "camp"),
+      x: c.x,
+      z: c.z,
+      parentId: this.rope!.campId,
+      route: this.rope!.points.map((p) => ({ x: p.x, z: p.z })),
+      buildings: 0,
+    };
+    s.camps.push(camp);
+    c.campId = camp.id;
+    c.coins -= BALANCE.campCost;
+    this.rope = null;
+    this.countBuildings();
+    this.refreshWorld();
+    this.h.save();
+  }
+  moveAllowed(next: Point) {
+    if (!this.rope) return true;
+    const points = updateRope(this.rope.points, next, this.h.obstacles());
+    if (!points || routeLength(points) > BALANCE.ropeLength) return false;
+    this.rope.points = points;
+    return true;
+  }
+  cancelRope() {
+    this.rope = null;
+  }
+  countBuildings() {
+    for (const c of this.h.state.camps) {
+      if (!this.h.contains(c)) continue;
+      const ids = new Set<string>();
+      this.h.obstacles().forEach((b, i) => {
+        const ring = b.rings[0],
+          x = ring.reduce((n, v) => n + v[0], 0) / ring.length,
+          z = ring.reduce((n, v) => n + v[1], 0) / ring.length;
+        if (distance(c, { x, z }) < BALANCE.safeRadius)
+          ids.add((b as { id?: string }).id ?? `building-${i}`);
+      });
+      c.buildings = ids.size;
+    }
+  }
+  refreshWorld() {
+    invalidateTerritory(this.h.state);
+    this.h.scene.remove(this.territory);
+    this.disposeGeometry(this.territory);
+    this.territory = territoryModel(this.h.state, this.h.contains);
+    this.h.scene.add(this.territory);
+    for (const v of this.campViews.values()) {
+      this.group.remove(v);
+      this.disposeGeometry(v);
+    }
+    this.campViews.clear();
+    for (const c of this.h.state.camps) {
+      if (!this.h.contains(c)) continue;
+      const g = campModel(c);
+      this.campViews.set(c.id, g);
+      this.group.add(g);
+    }
+    for (const rig of this.waiting.values()) {
+      this.group.remove(rig.root);
+      this.disposeGeometry(rig.root);
+    }
+    this.waiting.clear();
+    for (const c of this.h.state.characters) {
+      if (c.id === this.h.state.activeId || !this.h.contains(c)) continue;
+      const rig = person(
+        c.role === "warrior" ? "hero" : "archer",
+        c.appearance,
+      );
+      rig.root.position.set(c.x + 2.4, 0, c.z);
+      rig.sword.visible = c.weapon === "sword";
+      rig.wand.visible = c.weapon === "magic";
+      this.waiting.set(c.id, rig);
+      this.group.add(rig.root);
+    }
+    const points: T.Vector3[] = [];
+    for (const route of completedRoutes(this.h.state)) {
+      const list = ropeLine(route, 0, false);
+      for (let i = 1; i < list.length; i++)
+        if (this.h.contains(list[i]) && this.h.contains(list[i - 1]))
+          points.push(list[i - 1], list[i]);
+    }
+    this.connections.geometry.dispose();
+    this.connections.geometry = new T.BufferGeometry().setFromPoints(points);
+    el("characters").textContent = `${activeCharacter(this.h.state).name} ▾`;
+  }
+  private disposeGeometry(root: T.Object3D) {
+    root.traverse((o) => {
+      if (o instanceof T.Mesh) o.geometry.dispose();
+    });
+  }
+  tick(dt: number, time: number) {
+    this.clock += dt;
+    const s = this.h.state,
+      c = activeCharacter(s);
+    this.selected = nearCamp(s, c);
+    el("action-label").textContent = this.rope
+      ? this.connectionTarget() ? "Połącz obozy" : "Wbij palik"
+      : this.selected
+        ? "Obóz"
+        : "Akcja";
+    el<HTMLButtonElement>("action").disabled = !this.rope && !this.selected;
+    el("action").classList.toggle("active", !!this.rope || !!this.selected);
+    for (const [id, g] of this.campViews) {
+      const highlight = g.userData.highlight as T.Mesh;
+      highlight.visible = id === this.selected?.id;
+      (highlight.material as T.MeshBasicMaterial).opacity =
+        0.45 + Math.sin(time * 3) * 0.15;
+    }
+    this.marker.visible = !!this.rope;
+    if (this.rope) {
+      const target = this.connectionTarget() ?? c;
+      this.marker.position.set(target.x, 0.09, target.z);
+      (this.marker.material as T.MeshBasicMaterial).color.set(
+        this.placementError() ? 0xb57b69 : 0xe3c574,
+      );
+      if (this.clock > 0.05) {
+        this.liveLine.geometry.dispose();
+        this.liveLine.geometry = new T.BufferGeometry().setFromPoints(
+          ropeLine(this.rope.points, time, true),
+        );
+      }
+    }
+    this.liveLine.visible = !!this.rope;
+    if (this.clock > 0.25) {
+      this.clock = 0;
+      this.noticeClock += 0.25;
+      this.positionMenu();
+      const pending = s.offers.filter(o => o.candidates === null && Date.now() >= o.readyAt);
+      const changed = resolveOffers(s);
+      if (changed) {
+        this.h.save();
+        this.h.notify(pending.some(o => o.candidates?.length) ? "Nowe zgłoszenia do rekrutacji" : "Brak zgłoszeń do rekrutacji");
+        if (this.view === "recruit") this.render();
+      } else if (
+        this.view === "recruit" &&
+        s.offers.some(
+          (o) => o.campId === (this.menuCamp ?? nearCamp(s, c))?.id,
+        ) &&
+        this.noticeClock >= 1
+      ) {
+        this.noticeClock = 0;
+        const o = s.offers.find((o) => o.campId === this.menuCamp?.id);
+        const timer = document.getElementById("offer-timer");
+        if (o && timer) {
+          const remaining = Math.max(
+            0,
+            Math.ceil((o.readyAt - Date.now()) / 1000),
+          );
+          timer.textContent = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`;
+        }
+      }
+      const status = this.h.worldStatus(),
+        b = el("world-state");
+      b.hidden = !status.error && !status.loading;
+      b.textContent = status.error
+        ? "Mapa niedostępna · ponów"
+        : "Wczytywanie mapy…";
+      el("characters").classList.toggle(
+        "has-candidates",
+        s.offers.some((o) => !!o.candidates?.length),
+      );
+    }
+  }
+  // Reproject persisted camp routes and character coordinates together.
+  reproject(convert: (p: Point) => Point) {
+    for (const c of this.h.state.characters) Object.assign(c, convert(c));
+    for (const c of this.h.state.camps) {
+      Object.assign(c, convert(c));
+      c.route = c.route.map(convert);
+    }
+    for (const link of this.h.state.connections ?? []) link.route = link.route.map(convert);
+    invalidateTerritory(this.h.state);
+    this.cancelRope();
+  }
+}
