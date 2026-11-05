@@ -1,6 +1,6 @@
-# EXP-LORE — nowa baza 3D
+# ROPExpanse — samodzielna gra 3D
 
-Samodzielny prototyp RPG fantasy/steampunk na rzeczywistej mapie. Gracz porusza postacią na telefonie lub komputerze — fizyczne chodzenie i GPS nie są wymagane. Repozytorium jest nowym projektem, bez historii i zaplecza starej gry.
+Samodzielny prototyp RPG fantasy/steampunk na rzeczywistej mapie. Gracz porusza postacią na telefonie lub komputerze — fizyczne chodzenie i GPS nie są wymagane. Repozytorium `pgaszczyk-ctrl/ropexpanse` rozwija ROPExpanse niezależnie od erpeg. Punkt startowy: `pgaszczyk-ctrl/exp-lore`, gałąź `geohorde`, commit `00ae76cbae9351a142b7a8ff5cdcc359bf738245`. Nie przeniesiono historii ani zaplecza starej gry.
 
 ## Uruchomienie
 
