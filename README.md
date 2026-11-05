@@ -51,3 +51,6 @@ Kod wybrano z prototypu w `pgaszczyk-ctrl/erpeg`, commit `97cdb24`. Nie przenies
 E / przycisk flagi — akcja; I — ekwipunek; spacja — atak także podczas prowadzenia liny; Esc — anulowanie liny. Górny wybór postaci działa w bezpiecznym obozie. Menu Świat otwiera wybór miasta lub współrzędnych (beta narzędzie zmiany regionu). Nowe dane wymagają internetu i odpowiedzi Overpass; startowy fragment Lublina pozostaje offline.
 
 Testy jednostkowe i build są odrębne od pełnej próby renderowania. Aktualne ograniczenia weryfikacji 3D i publicznej sieci opisuje docs/STATE.md.
+
+
+Lina chroni pas po 10 m z obu stron. Doprowadź ją do istniejącego obozu i użyj **Połącz obozy**, aby domknąć bezpieczne wnętrze pętli. Ogłoszenie rekrutacyjne pokazuje szansę zgłoszenia, rozkład klas i poziom; wynik może być pusty, a oferta jest wtedy do odebrania do skarbca. Obecne reguły pogranicza i bossów opisuje docs/STATE.md.

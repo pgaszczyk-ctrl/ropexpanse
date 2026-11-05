@@ -16,6 +16,7 @@ import {
   type Character,
 } from "./campaign";
 import { Expedition } from "./expedition";
+import { encounterAllowed, encounterProfile } from "./encounters";
 import {
   WorldStream,
   project,
@@ -53,6 +54,7 @@ type Enemy = {
   tier: number;
   key: string;
   elite: boolean;
+  boss: boolean;
   state: "idle" | "windup" | "strike" | "recover" | "dead";
   timer: number;
   heading: number;
@@ -93,6 +95,7 @@ let expedition: Expedition;
 let worldStream: WorldStream;
 const terrain = new T.Group();
 let worldClock = 0;
+let qaFixtureActive = false;
 
 const scene = new T.Scene();
 scene.background = new T.Color(0xcbd5b8);
@@ -684,13 +687,13 @@ function removeEnemy(e: Enemy) {
   (e.warning.material as T.Material).dispose();
 }
 function populateEncounters() {
-  if (!worldStream) return;
+  if (!worldStream || qaFixtureActive) return;
   for (let i = enemies.length - 1; i >= 0; i--)
-    if (distance(enemies[i].spawn, player) > 85) {
+    if (distance(enemies[i].spawn, player) > 85 || !encounterAllowed(campaign, enemies[i].spawn, enemies[i].key, map.scale)) {
       removeEnemy(enemies[i]);
       enemies.splice(i, 1);
     }
-  // Geographic cells are stable across rebases and reloads; camps never set enemy tiers.
+  // Stable geographic rolls; a settled frontier reduces density and softens threat.
   const cells = encounterCells(unproject(player, campaign.origin))
     .map((c) => ({ ...c, p: project(c.geo, campaign.origin) }))
     .filter((c) => distance(c.p, player) < 70)
@@ -702,7 +705,7 @@ function populateEncounters() {
       seed % 4 === 0 ||
       (campaign.encounters[key] ?? 0) > Date.now() ||
       blocked(p.x, p.z, 1.2) ||
-      safe(p)
+      !encounterAllowed(campaign, p, key, map.scale)
     )
       continue;
     spawnEnemy(p, seed, key);
@@ -759,8 +762,10 @@ function updateWorld(dt: number) {
     worldStream.tiles.size === 0 &&
     Math.abs(player.x) < 55 &&
     Math.abs(player.z) < 55
-  )
+  ) {
+    populateEncounters();
     return;
+  }
   worldStream.request(player);
   if (worldStream.changed) {
     map = worldStream.snapshot();
@@ -789,22 +794,7 @@ function addBlobShadow(rig: Rig) {
 }
 function spawnEnemy(p: Point, id: number, key = `legacy-${id}`) {
   const kind = (["wolf", "raider", "archer", "mage", "heavy"] as const)[id % 5],
-    elite =
-      id % 11 === 0 ||
-      (Math.min(...campaign.camps.map((c) => distance(p, c))) > 40 &&
-        id % 7 === 0),
-    tier =
-      1 +
-      Math.min(
-        8,
-        Math.floor(
-          Math.min(
-            ...campaign.camps
-              .filter((c) => !c.parentId)
-              .map((c) => distance(p, c)),
-          ) / 55,
-        ),
-      ),
+    { elite, boss, tier } = encounterProfile(campaign, p, key, map.scale),
     rig =
       kind === "wolf"
         ? wolf()
@@ -815,12 +805,12 @@ function spawnEnemy(p: Point, id: number, key = `legacy-${id}`) {
   }
   if (kind === "heavy") rig.root.scale.setScalar(1.15);
   rig.root.position.set(p.x, 0, p.z);
-  if (elite) rig.root.scale.setScalar(1.25);
+  if (elite) rig.root.scale.setScalar(boss ? 1.65 : 1.25);
   scene.add(rig.root);
   addBlobShadow(rig);
   const { group: bar, fill } = healthBar(
-    elite ? 1.8 : 1.15,
-    elite ? 0xf2bc68 : 0xd9a27e,
+    boss ? 2.4 : elite ? 1.8 : 1.15,
+    boss ? 0xe57975 : elite ? 0xf2bc68 : 0xd9a27e,
   );
   scene.add(bar);
   const warning =
@@ -834,15 +824,16 @@ function spawnEnemy(p: Point, id: number, key = `legacy-${id}`) {
     id,
     key,
     tier,
+    boss,
     rig,
     spawn: { ...p },
     wanderTarget: null,
     wanderWait: Math.random() * 2,
     hp:
-      (elite ? 120 : kind === "heavy" ? 85 : kind === "wolf" ? 40 : 36) *
+      (boss ? 320 : elite ? 120 : kind === "heavy" ? 85 : kind === "wolf" ? 40 : 36) *
       (1 + (tier - 1) * 0.35),
     maxHp:
-      (elite ? 120 : kind === "heavy" ? 85 : kind === "wolf" ? 40 : 36) *
+      (boss ? 320 : elite ? 120 : kind === "heavy" ? 85 : kind === "wolf" ? 40 : 36) *
       (1 + (tier - 1) * 0.35),
     kind,
     elite,
@@ -917,12 +908,12 @@ function hurtEnemy(e: Enemy, damage: number) {
     const earned = Math.max(
       1,
       Math.round(
-        ((e.elite ? 24 : 8) * (1 + (e.tier - 1) * 0.3)) /
+        ((e.boss ? 80 : e.elite ? 24 : 8) * (1 + (e.tier - 1) * 0.3)) /
           (1 + Math.max(0, levelOf(player.exp) - e.tier - 2) * 0.6),
       ),
     );
     player.exp += earned;
-    player.coins += e.elite ? 35 : 5 + e.tier * 2;
+    player.coins += e.boss ? 100 : e.elite ? 35 : 5 + e.tier * 2;
     campaign.encounters[e.key] = Date.now() + 45_000;
     if (
       player.bag.length < BALANCE.slots &&
@@ -1046,16 +1037,19 @@ function updateEnemies(dt: number) {
       e.timer += dt;
       e.rig.root.rotation.z = Math.min(1, e.timer * 5) * Math.PI * 0.45;
       e.rig.root.scale.setScalar(
-        (e.elite ? 1.25 : 1) * Math.max(0, 1 - Math.max(0, e.timer - 0.6) * 2),
+        (e.boss ? 1.65 : e.elite ? 1.25 : e.kind === "heavy" ? 1.15 : 1) * Math.max(0, 1 - Math.max(0, e.timer - 0.6) * 2),
       );
       e.respawn -= dt;
       if (e.respawn <= 0 && distance(player, e.spawn) > 10 && !safe(e.spawn)) {
+        const profile = encounterProfile(campaign, e.spawn, e.key, map.scale);
+        e.tier = profile.tier; e.boss = profile.boss; e.elite = profile.elite;
+        e.maxHp = (e.boss ? 320 : e.elite ? 120 : e.kind === "heavy" ? 85 : e.kind === "wolf" ? 40 : 36) * (1 + (e.tier - 1) * 0.35);
         e.state = "idle";
         e.hp = e.maxHp;
         e.timer = 0;
         e.rig.root.position.set(e.spawn.x, 0, e.spawn.z);
         e.rig.root.rotation.z = 0;
-        e.rig.root.scale.setScalar(e.elite ? 1.25 : 1);
+        e.rig.root.scale.setScalar(e.boss ? 1.65 : e.elite ? 1.25 : e.kind === "heavy" ? 1.15 : 1);
       }
       continue;
     }
@@ -1115,7 +1109,7 @@ function updateEnemies(dt: number) {
       if (e.kind === "archer" || e.kind === "mage") {
         fire(p, e.heading, true);
         shots[shots.length - 1].damage = Math.round(
-          (e.kind === "mage" ? 17 : 13) * (1 + (e.tier - 1) * 0.22),
+          (e.kind === "mage" ? 17 : 13) * (e.boss ? 1.6 : e.elite ? 1.15 : 1) * (1 + (e.tier - 1) * 0.22),
         );
       }
     } else if (e.state === "strike") {
@@ -1129,7 +1123,7 @@ function updateEnemies(dt: number) {
         if (!e.hit && segmentHitsCircle(before, p, player, 0.95)) {
           hurtPlayer(
             Math.round(
-              (e.elite ? 25 : e.kind === "heavy" ? 24 : 15) *
+              (e.boss ? 38 : e.elite ? 25 : e.kind === "heavy" ? 24 : 15) *
                 (1 + (e.tier - 1) * 0.22),
             ),
           );
@@ -1856,6 +1850,8 @@ async function init() {
             hp: e.hp,
             state: e.state,
             kind: e.kind,
+            tier: e.tier,
+            boss: e.boss,
           })),
           map: {
             buildings: map.buildings.length,
@@ -1867,6 +1863,7 @@ async function init() {
         ...(new URLSearchParams(location.search).has("qa")
           ? {
               fixture: (name: string) => {
+                qaFixtureActive = true;
                 resetInput();
                 attack = null;
                 shots.forEach((s) => scene.remove(s.node));
@@ -1945,8 +1942,11 @@ async function init() {
                 lastCombat = time - 10;
                 cameraTarget.set(player.x, 0, player.z);
               },
-              advanceOffers: () => {
-                for (const o of campaign.offers) o.readyAt = Date.now() - 1;
+              advanceOffers: (seed?: number) => {
+                for (const o of campaign.offers) {
+                  o.readyAt = Date.now() - 1;
+                  if (seed !== undefined) o.seed = seed;
+                }
                 resolveForQA();
               },
               grantGold: (n: number) => {

@@ -1,16 +1,17 @@
 import * as T from "three";
-import { BALANCE, type Campaign } from "./campaign";
-import { pointSegment } from "./rope";
-import { distance, type Point } from "./rules";
-import { SCALE } from "./world";
+import { BALANCE, type Campaign } from "./campaign.ts";
+import { pointSegment } from "./rope.ts";
+import { distance, type Point } from "./rules.ts";
+import { SCALE } from "./world.ts";
+import { completedRoutes, enclosedAreas, insideArea } from "./territory-rules.ts";
 
 type Capsule = { a: Point; b: Point; r: number };
 // The visual footprint uses exactly the same circles and swept rope segments as protection.
 export function territoryFootprint(state: Campaign): Capsule[] {
   const shapes: Capsule[] = state.camps.map(c => ({ a: c, b: c, r: BALANCE.safeRadius }));
-  for (const c of state.camps) if (c.parentId)
-    for (let i = 1; i < c.route.length; i++)
-      shapes.push({ a: c.route[i - 1], b: c.route[i], r: BALANCE.ropeSafeMeters * SCALE });
+  for (const route of completedRoutes(state))
+    for (let i = 1; i < route.length; i++)
+      shapes.push({ a: route[i - 1], b: route[i], r: BALANCE.ropeSafeMeters * SCALE });
   return shapes;
 }
 function perimeter(s: Capsule): Point[] {
@@ -47,7 +48,14 @@ function geometry(vertices: number[]) {
 }
 export function territoryModel(state: Campaign, contains: (p: Point) => boolean) {
   const group = new T.Group(), shapes = territoryFootprint(state);
-  const fill: number[] = [], edges: [Point, Point][] = [];
+  const fill: number[] = [], edges: [Point, Point][] = [], areas = enclosedAreas(state);
+  for (const area of areas) {
+    const contour = area.map(p => new T.Vector2(p.x, p.z));
+    for (const tri of T.ShapeUtils.triangulateShape(contour, [])) {
+      const center = tri.reduce((p, i) => ({ x: p.x + area[i].x / 3, z: p.z + area[i].z / 3 }), { x: 0, z: 0 });
+      if (contains(center)) for (const i of tri) fill.push(area[i].x, 0.065, area[i].z);
+    }
+  }
   for (const [index, s] of shapes.entries()) {
     const points = perimeter(s), center = { x: (s.a.x + s.b.x) / 2, z: (s.a.z + s.b.z) / 2 };
     for (let i = 0; i < points.length; i++) {
@@ -55,7 +63,7 @@ export function territoryModel(state: Campaign, contains: (p: Point) => boolean)
       if (!contains(a) || !contains(b)) continue;
       fill.push(center.x, 0.065, center.z, a.x, 0.065, a.z, b.x, 0.065, b.z);
       const mid = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
-      if (!shapes.some((other, j) => j !== index && pointSegment(mid, other.a, other.b) < other.r - 0.003)) edges.push([a, b]);
+      if (!areas.some(area => insideArea(mid, area)) && !shapes.some((other, j) => j !== index && pointSegment(mid, other.a, other.b) < other.r - 0.003)) edges.push([a, b]);
     }
   }
   const tint = new T.Mesh(geometry(fill), fillMaterial);

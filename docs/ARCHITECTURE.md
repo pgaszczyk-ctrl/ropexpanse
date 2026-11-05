@@ -54,3 +54,12 @@ HP jest stale widoczne i czerwone; XP ma bursztynowy pasek oraz pierścień przy
 - `main.ts`: integracja tych reguł z istniejącą walką. Teren jest w osobnej grupie, usuwane geometrie zwalniane, odlegli przeciwnicy usuwani. Zmiana mapy pobiera dane przed zmianą zapisanej kampanii. Brak kafla jest przeszkodą, nie pustą mapą.
 
 Zapis v2 zachowuje położenia wszystkich postaci i obozów względem zapisanego origin. Rebase przelicza całą kampanię, w tym trasy połączeń; nie zapisuje współrzędnych ekranu. Stare v1 jest tylko źródłem migracji, nie współdzielonym zapisem z erpeg. Zapis nie jest usługą kont ani zabezpieczeniem przed modyfikacją lokalnych danych.
+
+
+## Terytorium i pogranicze (05.11.2026)
+
+`territory-rules.ts` udostępnia ukończone trasy, planarny graf odcinków (podział na przecięciach, obchód ograniczonych ścian), cache wnętrz pętli oraz odległość od bezpiecznego terenu. `invalidateTerritory` jest wywoływane po zmianie sieci i rebase. `territory.ts` używa tych samych wnętrz do triangulacji wypełnienia i wycinania wewnętrznych obrysów. Dodatkowe połączenia istniejących obozów są w opcjonalnym `Campaign.connections`; stare drzewa pozostają w `Camp.parentId/route`.
+
+`recruitment.ts` oddziela profil prawdopodobieństwa/klasy/poziomu od zapisanego rozstrzygnięcia. `null` oznacza oczekiwanie, `[]` brak zgłoszeń, niepusta tablica kandydatów — wynik. Zasoby pozostają w escrow do zatrudnienia albo wycofania. Metadane poziomu, rzadkości i afiliacji są opcjonalne i walidowane.
+
+`encounters.ts` wyznacza stabilne i oddzielne rzuty zagęszczenia, elit i bossów oraz presję odległości od bazy i granicy strefy. Zmiana obozów nie leczy istniejącego przeciwnika; wykluczone punkty są usuwane, pozostałe statystyki zmieniają się dopiero przy odrodzeniu.

@@ -1,5 +1,7 @@
 import * as T from "three";
 import { territoryModel } from "./territory";
+import { completedRoutes, invalidateTerritory } from "./territory-rules";
+import { recruitmentProfile } from "./recruitment";
 import { person, material, type Rig } from "./models";
 import {
   BALANCE,
@@ -15,6 +17,7 @@ import {
   hire,
   cancelOffer,
   nextId,
+  connectCamps,
   type Campaign,
   type Camp,
   type Character,
@@ -430,7 +433,7 @@ export class Expedition {
         node("h3", item.name),
         node("p", `${item.slot === "weapon" ? "Atak" : "Armor"} ${item.power}`),
       );
-      if (!vault)
+      if (!vault && item.slot !== "material")
         side.append(
           button("Załóż", () => {
             equip(c, item.id);
@@ -500,8 +503,8 @@ export class Expedition {
     const o = s.offers.find((v) => v.campId === camp.id);
     if (o) {
       this.body.append(node("p", `${o.gold} zł · ${o.items.length} przedm.`));
-      if (o.candidates) {
-        this.title.textContent = "Zgłoszenia";
+      if (o.candidates !== null) {
+        this.title.textContent = o.candidates.length ? "Zgłoszenia" : "Brak zgłoszeń";
         for (const v of o.candidates)
           this.body.append(
             button(
@@ -531,7 +534,7 @@ export class Expedition {
         this.body.append(timer);
       }
       this.body.append(
-        button("Wycofaj ofertę", () => {
+        button(o.candidates?.length === 0 ? "Odbierz ofertę" : "Wycofaj ofertę", () => {
           cancelOffer(s, o.id);
           this.h.save();
           this.render();
@@ -547,7 +550,7 @@ export class Expedition {
     gold.step = "1";
     gold.value = String(this.offerGold);
     gold.setAttribute("aria-label", "Złoto w ofercie");
-    gold.oninput = () => (this.offerGold = Number(gold.value));
+    gold.oninput = () => { this.offerGold = Number(gold.value); updateProfile(); };
     form.append(node("label", `Złoto · ${c.coins}`), gold);
     const grid = node("div", "", "offer-grid");
     for (const item of c.bag) {
@@ -569,6 +572,18 @@ export class Expedition {
     form.append(grid);
     const submit = button("Wystaw", () => {});
     submit.type = "submit";
+    const summary = node("div", "", "recruitment-profile");
+    const updateProfile = () => {
+      const profile = recruitmentProfile({ gold: this.offerGold, items: c.bag.filter(i => this.offerItems.has(i.id)), ceiling: levelOf(c.exp) }, camp.buildings);
+      submit.disabled = !Number.isSafeInteger(this.offerGold) || this.offerGold < 0 || this.offerGold > c.coins || !profile.chance;
+      summary.replaceChildren(
+        node("p", `Szansa zgłoszenia: ${Math.round(profile.chance * 100)}%`),
+        node("p", `Wojownik ${Math.round(profile.roles.warrior * 100)}% · Mag ${Math.round(profile.roles.mage * 100)}% · Łucznik ${Math.round(profile.roles.archer * 100)}%`),
+        node("p", `Poziom: ${profile.minLevel === profile.maxLevel ? profile.maxLevel : `${profile.minLevel}–${profile.maxLevel}`}`),
+      );
+    };
+    updateProfile();
+    form.append(summary);
     form.append(submit);
     form.onsubmit = (e) => {
       e.preventDefault();
@@ -657,10 +672,27 @@ export class Expedition {
     this.hideMenu();
     return false;
   }
+  private connectionTarget() {
+    if (!this.rope) return undefined;
+    const c = activeCharacter(this.h.state);
+    return this.h.state.camps.filter(camp => camp.id !== this.rope!.campId && distance(camp, c) <= 2.4).sort((a, b) => distance(a, c) - distance(b, c))[0];
+  }
+  private connectingRoute() {
+    const target = this.connectionTarget();
+    return target && this.rope ? updateRope(this.rope.points, target, this.h.obstacles()) : null;
+  }
   private placementError() {
     const c = activeCharacter(this.h.state);
     if (!this.rope) return "";
     if (this.h.combat()) return "Najpierw zakończ walkę";
+    const target = this.connectionTarget();
+    if (target) {
+      const route = this.connectingRoute();
+      if (!route || routeLength(route) > BALANCE.ropeLength) return "Lina nie sięga obozu";
+      const from = this.rope.campId, to = target.id, s = this.h.state;
+      if (s.camps.some(camp => camp.id === from && camp.parentId === to || camp.id === to && camp.parentId === from) || s.connections?.some(link => link.from === from && link.to === to || link.from === to && link.to === from)) return "Obozy są już połączone";
+      return "";
+    }
     if (!this.h.contains(c)) return "Mapa jeszcze się wczytuje";
     if (
       this.h.state.camps.some((v) => distance(v, c) < BALANCE.minCampDistance)
@@ -681,6 +713,17 @@ export class Expedition {
     }
     const c = activeCharacter(this.h.state),
       s = this.h.state;
+    const target = this.connectionTarget();
+    if (target) {
+      const route = this.connectingRoute();
+      if (route && connectCamps(s, this.rope!.campId, target.id, route)) {
+        this.rope = null;
+        this.refreshWorld();
+        this.h.save();
+        this.h.notify("Obozy połączone");
+      }
+      return;
+    }
     const camp: Camp = {
       id: nextId(s, "camp"),
       x: c.x,
@@ -722,6 +765,7 @@ export class Expedition {
     }
   }
   refreshWorld() {
+    invalidateTerritory(this.h.state);
     this.h.scene.remove(this.territory);
     this.disposeGeometry(this.territory);
     this.territory = territoryModel(this.h.state, this.h.contains);
@@ -755,8 +799,8 @@ export class Expedition {
       this.group.add(rig.root);
     }
     const points: T.Vector3[] = [];
-    for (const c of this.h.state.camps) {
-      const list = ropeLine(c.route, 0, false);
+    for (const route of completedRoutes(this.h.state)) {
+      const list = ropeLine(route, 0, false);
       for (let i = 1; i < list.length; i++)
         if (this.h.contains(list[i]) && this.h.contains(list[i - 1]))
           points.push(list[i - 1], list[i]);
@@ -776,7 +820,7 @@ export class Expedition {
       c = activeCharacter(s);
     this.selected = nearCamp(s, c);
     el("action-label").textContent = this.rope
-      ? "Wbij palik"
+      ? this.connectionTarget() ? "Połącz obozy" : "Wbij palik"
       : this.selected
         ? "Obóz"
         : "Akcja";
@@ -790,7 +834,8 @@ export class Expedition {
     }
     this.marker.visible = !!this.rope;
     if (this.rope) {
-      this.marker.position.set(c.x, 0.09, c.z);
+      const target = this.connectionTarget() ?? c;
+      this.marker.position.set(target.x, 0.09, target.z);
       (this.marker.material as T.MeshBasicMaterial).color.set(
         this.placementError() ? 0xb57b69 : 0xe3c574,
       );
@@ -806,10 +851,11 @@ export class Expedition {
       this.clock = 0;
       this.noticeClock += 0.25;
       this.positionMenu();
+      const pending = s.offers.filter(o => o.candidates === null && Date.now() >= o.readyAt);
       const changed = resolveOffers(s);
       if (changed) {
         this.h.save();
-        this.h.notify("Nowe zgłoszenia do rekrutacji");
+        this.h.notify(pending.some(o => o.candidates?.length) ? "Nowe zgłoszenia do rekrutacji" : "Brak zgłoszeń do rekrutacji");
         if (this.view === "recruit") this.render();
       } else if (
         this.view === "recruit" &&
@@ -837,7 +883,7 @@ export class Expedition {
         : "Wczytywanie mapy…";
       el("characters").classList.toggle(
         "has-candidates",
-        s.offers.some((o) => !!o.candidates),
+        s.offers.some((o) => !!o.candidates?.length),
       );
     }
   }
@@ -848,6 +894,8 @@ export class Expedition {
       Object.assign(c, convert(c));
       c.route = c.route.map(convert);
     }
+    for (const link of this.h.state.connections ?? []) link.route = link.route.map(convert);
+    invalidateTerritory(this.h.state);
     this.cancelRope();
   }
 }

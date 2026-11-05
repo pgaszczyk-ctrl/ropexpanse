@@ -1,11 +1,14 @@
-import { nearRope } from "./rope.ts";
+import { safeDistance, invalidateTerritory, type Connection } from "./territory-rules.ts";
+import { candidatesFor } from "./recruitment.ts";
+export { candidatesFor } from "./recruitment.ts";
 import { distance, type Point } from "./rules.ts";
 export const BALANCE = {
   slots: 24,
   safeRadius: 7.5,
   minCampDistance: 18,
   ropeLength: 65,
-  ropeSafeMeters: 3,
+  ropeSafeMeters: 10,
+  quietBorderMeters: 100,
   recruitmentMs: 300_000,
   campCost: 30,
 };
@@ -15,7 +18,10 @@ export type Item = {
   id: string;
   kind: string;
   name: string;
-  slot: Slot;
+  slot: Slot | "material";
+  level?: number;
+  rarity?: "common" | "uncommon" | "rare" | "epic" | "legendary";
+  affinity?: Role;
   power: number;
   value: number;
   icon: string;
@@ -66,6 +72,7 @@ export type Campaign = {
   activeId: string;
   characters: Character[];
   camps: Camp[];
+  connections?: Connection[];
   vault: Item[];
   bank: number;
   offers: Offer[];
@@ -123,6 +130,9 @@ export function makeItem(s: Campaign, index: number, tier = 1): Item {
     kind: `gear-${index % templates.length}`,
     name,
     slot,
+    level: tier,
+    rarity: "common",
+    affinity: icon === "sword" ? "warrior" : icon === "staff" ? "mage" : undefined,
     power: power + Math.max(0, tier - 1),
     value: value * tier,
     icon,
@@ -171,16 +181,27 @@ export function nearCamp(s: Campaign, p: Point, r = BALANCE.safeRadius) {
     .filter((c) => distance(c, p) <= r)
     .sort((a, b) => distance(a, p) - distance(b, p))[0];
 }
-// Only established connections protect a route; a carried rope is not a mobile refuge.
+export function distanceToSafeZone(s: Campaign, p: Point, scale: number) {
+  return safeDistance(s, p, scale, BALANCE.safeRadius, BALANCE.ropeSafeMeters);
+}
+// A carried rope protects nothing until its connection is committed.
 export function inSafeZone(s: Campaign, p: Point, scale: number, margin = 0) {
-  return !!nearCamp(s, p, BALANCE.safeRadius + margin) || s.camps.some(
-    (camp) => !!camp.parentId && nearRope(p, camp.route, BALANCE.ropeSafeMeters * scale + margin),
-  );
+  return distanceToSafeZone(s, p, scale) <= margin;
+}
+export function connectCamps(s: Campaign, from: string, to: string, route: Point[]) {
+  const a = s.camps.find(c => c.id === from), b = s.camps.find(c => c.id === to);
+  if (!a || !b || a === b || route.length < 2 || route.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.z)) || distance(route[0], a) > 0.01 || distance(route.at(-1)!, b) > 0.01) return false;
+  if (s.camps.some(c => c.id === to && c.parentId === from || c.id === from && c.parentId === to) || s.connections?.some(c => c.from === from && c.to === to || c.from === to && c.to === from)) return false;
+  s.connections ??= [];
+  s.connections.push({ id: nextId(s, "link"), from, to, route: route.map(p => ({ ...p })) });
+  invalidateTerritory(s);
+  return true;
 }
 export function equip(c: Character, id: string) {
   const i = c.bag.findIndex((v) => v.id === id);
   if (i < 0) return false;
-  const item = c.bag[i],
+  if (c.bag[i].slot === "material") return false;
+  const item = c.bag[i] as Item & { slot: Slot },
     old = c.equipment[item.slot];
   c.bag.splice(i, 1);
   if (old) c.bag.push(old);
@@ -233,47 +254,11 @@ export function postOffer(
     items,
     readyAt: now + BALANCE.recruitmentMs,
     seed: s.serial * 7919,
-    ceiling: Math.max(...s.characters.map((v) => levelOf(v.exp))),
+    ceiling: levelOf(c.exp),
     candidates: null,
   };
   s.offers.push(o);
   return o;
-}
-export function candidatesFor(o: Offer, buildings: number): Candidate[] {
-  let seed = o.seed;
-  const rand = () => {
-    seed = (Math.imul(seed, 1664525) + 1013904223) | 0;
-    return (seed >>> 0) / 4294967296;
-  };
-  const generosity = o.gold + o.items.reduce((n, i) => n + i.value, 0);
-  const count = Math.min(
-    4,
-    1 + Math.floor(Math.log2(1 + Math.max(0, buildings)) / 2),
-  );
-  const quality = Math.min(
-    o.ceiling,
-    1 + Math.floor(Math.sqrt(generosity / 100)),
-  );
-  const names = [
-    "Mira",
-    "Bruno",
-    "Iga",
-    "Oskar",
-    "Nela",
-    "Wit",
-    "Ada",
-    "Leon",
-    "Ruta",
-    "Jan",
-  ];
-  const roles: Role[] = ["warrior", "mage", "archer"];
-  return Array.from({ length: count }, (_, i) => ({
-    id: `${o.id}-candidate-${i}`,
-    name: names[Math.floor(rand() * names.length)],
-    role: roles[Math.floor(rand() * 3)],
-    appearance: Math.floor(rand() * 10000),
-    level: Math.max(1, quality - Math.floor(rand() * Math.max(1, quality - 1))),
-  }));
 }
 export function resolveOffers(s: Campaign, now = Date.now()) {
   let changed = false;
@@ -344,6 +329,8 @@ export function parseCampaign(raw: string): Campaign | null {
       Math.abs(s.origin.lon) > 180
     )
       return null;
+    s.connections ??= [];
+    if (!Array.isArray(s.connections)) return null;
     s.encounters ??= {};
     if (
       typeof s.encounters !== "object" ||
@@ -358,7 +345,7 @@ export function parseCampaign(raw: string): Campaign | null {
         !i ||
         typeof i.id !== "string" ||
         items.has(i.id) ||
-        !["weapon", "armor", "helmet", "boots"].includes(i.slot) ||
+        !["weapon", "armor", "helmet", "boots", "material"].includes(i.slot) ||
         !Number.isFinite(i.power) ||
         i.power < 0 ||
         !Number.isFinite(i.value) ||
@@ -366,6 +353,9 @@ export function parseCampaign(raw: string): Campaign | null {
         typeof i.name !== "string"
       )
         throw Error();
+      if (i.level !== undefined && (!Number.isInteger(i.level) || i.level < 1 || i.level > 100)) throw Error();
+      if (i.rarity !== undefined && !["common", "uncommon", "rare", "epic", "legendary"].includes(i.rarity)) throw Error();
+      if (i.affinity !== undefined && !["warrior", "mage", "archer"].includes(i.affinity)) throw Error();
       items.add(i.id);
     };
     const point = (p: Point) => Number.isFinite(p.x) && Number.isFinite(p.z);
@@ -383,6 +373,11 @@ export function parseCampaign(raw: string): Campaign | null {
     }
     for (const c of s.camps)
       if (c.parentId && !ids.has(c.parentId)) return null;
+    for (const link of s.connections) {
+      const from = s.camps.find(c => c.id === link.from), to = s.camps.find(c => c.id === link.to);
+      if (typeof link.id !== "string" || ids.has(link.id) || !from || !to || from === to || !Array.isArray(link.route) || link.route.length < 2 || !link.route.every(point) || distance(link.route[0], from) > 0.01 || distance(link.route.at(-1)!, to) > 0.01) return null;
+      ids.add(link.id);
+    }
     for (const c of s.characters) {
       if (
         !point(c) ||
@@ -401,7 +396,7 @@ export function parseCampaign(raw: string): Campaign | null {
         return null;
       ids.add(c.id);
       c.bag.forEach(item);
-      Object.values(c.equipment).forEach(item);
+      Object.entries(c.equipment).forEach(([slot, i]) => { if (i.slot !== slot || i.slot === "material") throw Error(); item(i); });
     }
     s.vault.forEach(item);
     for (const o of s.offers) {

@@ -15,3 +15,12 @@ Obozy i połączenia liną, kontekstowa akcja, prawdziwe przedmioty i wyposażen
 ## Przed otwartą produkcją
 
 Własny serwer kafli/cache lub zakontraktowany dostawca OSM, zamiast uzależnienia od publicznego endpointu. Następnie transport między regionami, pełniejsze obszary wodne/wybrzeża i ewentualna synchronizacja zapisów. Nie dodawać gospodarki MMO ani usług kont przy okazji naprawy obecnej pętli.
+
+
+## Aktualizacja terytorium i rekrutacji — 05.11.2026
+
+Wykonane: ochrona 10 m z obu stron liny, łączenie istniejących obozów, bezpieczne wnętrza pętli, redukcja punktów spotkań o 50% w pasie 100 m od strefy, presja zależna od bazy i sieci obozów, rzadkie bossy w dziczy oraz rekrutacja z możliwością braku zgłoszeń i zwrotem oferty. Poziomy/afiliacja/rarity przedmiotów przygotowane pod nowy loot.
+
+Sprawdzić na telefonie: domknięcie trójkąta przez E/Akcję, obrys i ochronę wnętrza, brak zgłoszeń/Odbierz ofertę, czytelność prawdopodobieństw. Pełny test przeglądarkowy nadal wymaga Chromium.
+
+Następne zlecenie właściciela: zaprojektować elegantszy sposób dostarczania lootu i właściwe unikalne przedmioty. Obecna zmiana nie zastępuje tego etapu.

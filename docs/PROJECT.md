@@ -34,4 +34,4 @@ Globalna kampania po trzech miastach kraju, kupowanie miast, kopalnie i tartaki 
 
 ## Zatwierdzona rozbudowa — 05.11.2026
 
-Właściciel zatwierdził sieć obozów (namiot/tablica/palik), linę reagującą na budynki, przedmioty, skarbiec, rekrutację za ofertę oraz przełączanie rozwijanych niezależnie postaci. Zakres geograficzny ma obejmować cały świat, generowany fragmentami według spójnych reguł. Nowe połączone obozy nie obniżają poziomu regionu. Limity kosztów, długości liny i tempo XP są wartościami startowymi do balansu.
+Właściciel zatwierdził sieć obozów (namiot/tablica/palik), linę reagującą na budynki, przedmioty, skarbiec, rekrutację za ofertę oraz przełączanie rozwijanych niezależnie postaci. Zakres geograficzny ma obejmować cały świat, generowany fragmentami według spójnych reguł. Nowe połączone obozy łagodzą zagrożenie lokalne, przy zachowaniu narastającego wpływu odległości od głównej bazy (aktualizacja właściciela 05.11.2026). Limity kosztów, długości liny i tempo XP są wartościami startowymi do balansu.
