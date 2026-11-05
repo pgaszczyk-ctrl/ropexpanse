@@ -1,6 +1,6 @@
 import { distance, circleBlocked, type Point } from "./rules.ts";
 export type Obstacle = { rings: number[][][] };
-function pointSegment(p: Point, a: Point, b: Point) {
+export function pointSegment(p: Point, a: Point, b: Point) {
   const dx = b.x - a.x,
     dz = b.z - a.z,
     den = dx * dx + dz * dz,
@@ -8,6 +8,10 @@ function pointSegment(p: Point, a: Point, b: Point) {
       ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.z - a.z) * dz) / den))
       : 0;
   return Math.hypot(p.x - a.x - dx * t, p.z - a.z - dz * t);
+}
+export function nearRope(p: Point, points: Point[], radius: number) {
+  if (points.length === 1) return distance(p, points[0]) <= radius;
+  return points.some((b, i) => i > 0 && pointSegment(p, points[i - 1], b) <= radius);
 }
 function cross(a: Point, b: Point, c: Point) {
   return (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x);
@@ -140,3 +144,4 @@ export function updateRope(
   route.push({ ...target });
   return route;
 }
+

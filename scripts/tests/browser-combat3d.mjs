@@ -102,6 +102,15 @@ try {
         );
       }
     await page.screenshot({ path: `work/combat3d/${tag}-city.png` });
+    await fixture("patrol");
+    const patrolStart = await snap();
+    await gameWait(4);
+    const patrolEnd = await snap();
+    assert(Math.hypot(patrolEnd.enemies[0].x - patrolStart.enemies[0].x,
+      patrolEnd.enemies[0].z - patrolStart.enemies[0].z) > 0.1,
+      "enemy must wander while player rests in camp");
+    assert.equal(patrolEnd.player.hp, patrolStart.player.hp);
+    assert.equal(patrolEnd.enemies[0].state, "idle");
     await fixture("target");
     await attack();
     await gameWait(0.6);
@@ -337,3 +346,4 @@ try {
   await browser.close();
   await new Promise((resolve) => server.httpServer.close(resolve));
 }
+

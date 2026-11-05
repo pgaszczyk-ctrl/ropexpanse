@@ -5,6 +5,7 @@ import {
   parseCampaign,
   activeCharacter,
   nearCamp,
+  inSafeZone,
   levelOf,
   xpShare,
   loseXp,
@@ -44,6 +45,8 @@ type Enemy = {
   id: number;
   rig: Rig;
   spawn: Point;
+  wanderTarget: Point | null;
+  wanderWait: number;
   hp: number;
   maxHp: number;
   kind: "wolf" | "archer" | "mage" | "raider" | "heavy";
@@ -352,8 +355,50 @@ function slide(p: Point, dx: number, dz: number, r: number) {
   if (allow({ x: p.x + dx, z: p.z })) p.x += dx;
   if (allow({ x: p.x, z: p.z + dz })) p.z += dz;
 }
-function safe(p: Point) {
-  return !!nearCamp(campaign, p);
+function safe(p: Point, margin = 0) {
+  return inSafeZone(campaign, p, map?.scale ?? 0.18, margin);
+}
+function slideEnemy(p: Point, dx: number, dz: number) {
+  // Sweep the whole step so a charge cannot jump across a narrow rope corridor.
+  const move = (x: number, z: number) => {
+    const steps = Math.max(1, Math.ceil(Math.hypot(x, z) / 0.1));
+    for (let i = 0; i < steps; i++) {
+      const next = { x: p.x + x / steps, z: p.z + z / steps };
+      // A newly built connection may cover an existing enemy; let it leave.
+      if (blocked(next.x, next.z, 0.48) || (!safe(p, 0.48) && safe(next, 0.48))) break;
+      p.x = next.x;
+      p.z = next.z;
+    }
+  };
+  move(dx, 0);
+  move(0, dz);
+}
+function wander(e: Enemy, dt: number) {
+  const p = e.rig.root.position;
+  e.wanderWait -= dt;
+  if (!e.wanderTarget && e.wanderWait <= 0) {
+    for (let i = 0; i < 12; i++) {
+      const a = Math.random() * Math.PI * 2, r = 1.5 + Math.random() * 5;
+      const target = { x: e.spawn.x + Math.sin(a) * r, z: e.spawn.z + Math.cos(a) * r };
+      if (!blocked(target.x, target.z, 0.48) && !safe(target, 0.48) && lineClear(p, target)) {
+        e.wanderTarget = target;
+        break;
+      }
+    }
+    e.wanderWait = 0.5 + Math.random();
+  }
+  if (!e.wanderTarget) return false;
+  if (distance(p, e.wanderTarget) < 0.3) {
+    e.wanderTarget = null;
+    e.wanderWait = 0.5 + Math.random() * 2;
+    return false;
+  }
+  e.heading = Math.atan2(e.wanderTarget.x - p.x, e.wanderTarget.z - p.z);
+  const before = { x: p.x, z: p.z };
+  slideEnemy(p, Math.sin(e.heading) * 1.2 * dt, Math.cos(e.heading) * 1.2 * dt);
+  const moved = distance(before, p) > 0.0001;
+  if (!moved) e.wanderTarget = null;
+  return moved;
 }
 function findFree(wanted: Point, clearance = 0.75) {
   if (!blocked(wanted.x, wanted.z, clearance)) return { ...wanted };
@@ -791,6 +836,8 @@ function spawnEnemy(p: Point, id: number, key = `legacy-${id}`) {
     tier,
     rig,
     spawn: { ...p },
+    wanderTarget: null,
+    wanderWait: Math.random() * 2,
     hp:
       (elite ? 120 : kind === "heavy" ? 85 : kind === "wolf" ? 40 : 36) *
       (1 + (tier - 1) * 0.35),
@@ -1016,14 +1063,14 @@ function updateEnemies(dt: number) {
       d = distance(player, p);
     let moving = false;
     e.timer -= dt;
+    if (safe(player) || safe(p)) {
+      e.state = "idle";
+      e.timer = 0;
+      e.hit = false;
+    }
     if (e.state === "idle") {
       if (distance(p, e.spawn) > 20 || safe(player) || safe(p) || d > 17) {
-        if (distance(p, e.spawn) > 0.5) {
-          const a = Math.atan2(e.spawn.x - p.x, e.spawn.z - p.z);
-          slide(p, Math.sin(a) * 2 * dt, Math.cos(a) * 2 * dt, 0.48);
-          e.heading = a;
-          moving = true;
-        }
+        moving = wander(e, dt);
         if (d > 20) e.hp = Math.min(e.maxHp, e.hp + dt * 6);
       } else if (
         d <
@@ -1032,6 +1079,7 @@ function updateEnemies(dt: number) {
             : 10) &&
         lineClear(p, player)
       ) {
+        e.wanderTarget = null;
         e.state = "windup";
         e.timer =
           e.kind === "heavy"
@@ -1045,7 +1093,7 @@ function updateEnemies(dt: number) {
         const a = Math.atan2(player.x - p.x, player.z - p.z);
         e.heading = a;
         const sign = e.kind === "archer" && d < 5 ? -1 : 1;
-        slide(
+        slideEnemy(
           p,
           Math.sin(a) *
             (e.kind === "heavy" ? 1.7 : e.kind === "wolf" ? 3.1 : 2.5) *
@@ -1055,7 +1103,6 @@ function updateEnemies(dt: number) {
             (e.kind === "heavy" ? 1.7 : e.kind === "wolf" ? 3.1 : 2.5) *
             dt *
             sign,
-          0.48,
         );
         moving = true;
       }
@@ -1074,11 +1121,10 @@ function updateEnemies(dt: number) {
     } else if (e.state === "strike") {
       if (e.kind === "wolf" || e.kind === "raider" || e.kind === "heavy") {
         const before = { x: p.x, z: p.z };
-        slide(
+        slideEnemy(
           p,
           Math.sin(e.heading) * 10 * dt,
           Math.cos(e.heading) * 10 * dt,
-          0.48,
         );
         if (!e.hit && segmentHitsCircle(before, p, player, 0.95)) {
           hurtPlayer(
@@ -1237,7 +1283,7 @@ function updateHud() {
   const inSafe = safe(player);
   $("zone").className = `zone ${inSafe ? "safe" : "danger"}`;
   $("zone").textContent = inSafe
-    ? "Obóz"
+    ? nearCamp(campaign, player) ? "Obóz" : "Bezpieczna lina"
     : time - lastCombat < R.regenDelay
       ? "Walka"
       : "Poza obozem";
@@ -1864,6 +1910,16 @@ async function init() {
                   e.hit = false;
                   heading = Math.atan2(e.spawn.x - open.x, e.spawn.z - open.z);
                 }
+                if (name === "patrol") {
+                  Object.assign(player, { x: home.x, z: home.z });
+                  e.state = "idle";
+                  e.timer = 0;
+                  e.wanderTarget = null;
+                  e.wanderWait = 0;
+                  e.spawn = findFree({ x: home.x + 12, z: home.z });
+                  e.rig.root.position.set(e.spawn.x, 0, e.spawn.z);
+                  cameraTarget.set(player.x, 0, player.z);
+                }
                 if (name === "hurt") {
                   player.hp = 25;
                 }
@@ -1923,3 +1979,4 @@ async function init() {
   }
 }
 void init();
+

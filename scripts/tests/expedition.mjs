@@ -14,11 +14,13 @@ import {
   xpThreshold,
   loseXp,
   BALANCE,
+  inSafeZone,
 } from "../../src/combat3d/campaign.ts";
 import {
   updateRope,
   segmentClear,
   routeLength,
+  nearRope,
 } from "../../src/combat3d/rope.ts";
 import {
   project,
@@ -232,3 +234,22 @@ assert(failed.error);
 console.log(
   "PASS: inventory ownership, escrow, deterministic recruitment, hire/cancel, save validation, XP curve, rope wrapping/unwrapping, world projection, multipolygons, streaming failure",
 );
+
+
+// Rope protection follows each segment, including bends and endpoints, in map metres.
+const path = [{x: 30, z: 0}, {x: 40, z: 0}, {x: 40, z: 10}];
+assert(nearRope({x: 40.5, z: 5}, path, 0.54));
+assert(!nearRope({x: 40.6, z: 5}, path, 0.54));
+assert(!nearRope({x: 35, z: 5}, path, 0.54));
+assert(nearRope({x: 40, z: 10.5}, path, 0.54));
+assert(nearRope({x: 30, z: 0.5}, [path[0], path[0]], 0.54));
+assert(!nearRope({x: 0, z: 0}, [], 0.54));
+const network = newCampaign({x: 0, z: 0}, origin);
+network.camps.push({id: 'linked', parentId: network.camps[0].id, x: 40, z: 10, route: path, buildings: 0});
+assert(inSafeZone(network, {x: 35, z: 0.53}, 0.18));
+assert(!inSafeZone(network, {x: 35, z: 0.55}, 0.18));
+assert(inSafeZone(network, {x: 35, z: 0.8}, 0.18, 0.48));
+assert(inSafeZone(network, {x: 0, z: 0}, 0.18));
+assert(inSafeZone(network, {x: 35, z: 2.9}, 1));
+assert(inSafeZone(parseCampaign(JSON.stringify(network)), {x: 35, z: 0.53}, 0.18));
+console.log('Rope safe corridor: OK');

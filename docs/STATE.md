@@ -29,3 +29,10 @@ Testy reguł obejmują ekwipunek, escrow, kandydatów, zatrudnianie, wycofanie, 
 Pełny test gry 3D i fizycznego telefonu pozostaje otwarty: przeglądarka tej sesji nie tworzy kontekstu WebGL, a instalator Chromium do Playwright otrzymał niepoprawne archiwum. Nie przedstawiać tego jako zaliczonego testu 3D. Próby rzeczywistego pobrania Overpass w środowisku wykonawczym zakończyły się HTTP 406 / timeout; ścieżkę sieciową sprawdzono deterministycznie na kontrolowanych odpowiedziach, nie na działającym publicznym serwerze.
 
 Publiczny Overpass nie daje gwarancji dostępności. Przed szerokim udostępnieniem globalnej gry potrzebny jest kontrolowany dostawca danych lub własny cache serwerowy. Obecna wersja jest lokalną betą, nie ukończonym globalnym zapleczem produkcyjnym.
+
+
+## Korekta bezpieczeństwa liny i AI (05.11.2026)
+
+Zapisane połączenia między obozami chronią pas po 3 metry od liny, według skali mapy (0,54 jednostki w obecnej skali). Ochrona obejmuje zakręty i końce, regenerację, odporność na obrażenia oraz przerwanie ataku wrogów. Prowadzona, niezatwierdzona lina nie tworzy ruchomej strefy ochronnej. HUD odróżnia obóz od bezpiecznej liny. Wrogowie losują krótkie trasy i postoje wokół miejsca pojawienia także podczas odpoczynku gracza. Omijają bezpieczne obszary; przeciwnik objęty nowym połączeniem może z niego wyjść.
+
+Build i testy reguł zaliczone; dodano test patrolowania w przeglądarce. Pełny test przeglądarkowy nadal wymaga dostępnego Chromium.

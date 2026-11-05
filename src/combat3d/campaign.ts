@@ -1,9 +1,11 @@
+import { nearRope } from "./rope.ts";
 import { distance, type Point } from "./rules.ts";
 export const BALANCE = {
   slots: 24,
   safeRadius: 7.5,
   minCampDistance: 18,
   ropeLength: 65,
+  ropeSafeMeters: 3,
   recruitmentMs: 300_000,
   campCost: 30,
 };
@@ -168,6 +170,12 @@ export function nearCamp(s: Campaign, p: Point, r = BALANCE.safeRadius) {
   return s.camps
     .filter((c) => distance(c, p) <= r)
     .sort((a, b) => distance(a, p) - distance(b, p))[0];
+}
+// Only established connections protect a route; a carried rope is not a mobile refuge.
+export function inSafeZone(s: Campaign, p: Point, scale: number, margin = 0) {
+  return !!nearCamp(s, p, BALANCE.safeRadius + margin) || s.camps.some(
+    (camp) => !!camp.parentId && nearRope(p, camp.route, BALANCE.ropeSafeMeters * scale + margin),
+  );
 }
 export function equip(c: Character, id: string) {
   const i = c.bag.findIndex((v) => v.id === id);
@@ -427,3 +435,4 @@ export function parseCampaign(raw: string): Campaign | null {
     return null;
   }
 }
+
