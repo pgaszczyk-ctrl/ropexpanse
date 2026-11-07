@@ -1,0 +1,73 @@
+# Plan prac według dokumentu projektowego (Tab 1)
+
+Źródło: dokument właściciela „ROPExpanse — dokument projektowy”, zakładka Tab 1 (stan z 06.11.2026). To ustalenia właściciela, mają pierwszeństwo przed starszym docs/NEXT_STEPS.md. Plan powstał 07.11.2026.
+
+Baza: gałąź `feat/camps-world` (otwarty PR #1: obozy, lina, rekrutacja, strumieniowanie OSM). Sekcja „Poprawki obecnej wersji” w dokumencie opisuje właśnie tę wersję, nie `main`.
+
+Zasada z dokumentu: każda zmiana upraszcza. Zamiast tekstów pomocniczych poprawiamy układ. Każdy tekst w dwóch językach (PL/EN).
+
+## Budżet i pauzy
+
+Pracuję etapami. Po każdym etapie: build, testy, commit, push i krótki raport. Nie widzę licznika tygodniowego limitu tokenów, więc po każdym etapie zatrzymuję się, żeby właściciel mógł sprawdzić zużycie (limit właściciela: pauza przy 20% tygodnia).
+
+## Etap 1 — Poprawki obecnej wersji (najpierw)
+
+Kolejność według dokumentu, od najważniejszego.
+
+| # | Problem | Poprawka | Uwagi |
+|---|---|---|---|
+| 1.1 | Mapa wisi na „Wczytywanie mapy…” / „Mapa niedostępna · ponów” (publiczny Overpass) | Kafelki wektorowe PMTiles (Protomaps), cache kafli jak w erpeg; Overpass tylko awaryjnie | Decyzja: adres pliku świata (patrz Pytania) |
+| 1.2 | Pole złota w rekrutacji od 0 („050”), klawiatura | Suwak lub przyciski +10/+50 | |
+| 1.3 | Okno oferty w stylu systemowym | Okno w stylu HUD gry | |
+| 1.4 | Brak statystyk przedmiotów, 5 min bez informacji | Statystyki przy przedmiocie, powiadomienie o kandydacie | |
+| 1.5 | Menu obozu jako biała lista | Menu z ikonami w stylu gry | |
+| 1.6 | „Brak miejsca na obóz” | Podświetlenie na mapie, gdzie można postawić | |
+| 1.7 | Liczby obrażeń nachodzą na „+XP” | Osobne miejsca, rozsuwanie napisów | |
+| 1.8 | Małe paski HP, postacie za budynkami | Większe paski, sylwetka przez ściany, półprzezroczyste przeszkody | |
+| 1.9 | Dużo wrogów przy obozie | Mniej spawnów przy obozach, skalowanie od odległości od lin | |
+| 1.10 | HUD przeciążony, „Wędrowiec ▾” | Mniej przycisków, rzadkie akcje w menu | |
+| 1.11 | „Akcja” długo nieaktywna | Ukryta bez akcji, pojawia się z nazwą akcji | |
+| 1.12 | Komunikat przeglądarki o pełnym ekranie | PWA (manifest, display fullscreen) | |
+
+## Etap 2 — Rdzeń pętli: lina, obozy, kręgi, surowce
+
+- Lina jako surowiec (powroźnik z włókna), jej długość ograniczona zapasem.
+- Krąg: 3+ obozy zamknięte liną → brak wrogów i wyziewów, produkcja według OSM w środku (część już jest jako bezpieczne wnętrze pętli).
+- Sześć surowców + lina, dwie warstwy rozmieszczenia (główne / zastępcze), gwarancja każdego surowca do 1 km od startu, ziarno z kafla.
+- Zbieranie atakiem, rozpad na kostki, odnawianie.
+- Wspólny Skarbiec z limitem 8–12 h produkcji.
+- Wyziewy: fala potworów, wbicie pala, skrzynia lootu, pal z latarnią na mapie.
+
+## Etap 3 — Drużyna i rozwój
+
+- Drużyna do 3, reszta sterowana przez AI, zmiana postaci tapnięciem portretu (dziś nieaktywne postacie nie walczą).
+- Profesje bojowe (wojownik, mag, łucznik, zielarz) i obozowe (drwal, górnik, powroźnik).
+- Poziom = tylko statystyki; umiejętności z broni i drugiej ręki (tabela Arsenał); 4 sloty: broń, druga ręka, hełm, zbroja. Uwaga: dziś są buty — dokument ich nie ma.
+- Rzadkość przedmiotów i Wędrowców (ramki), cecha pasywna, imiona z kraju (pliki JSON), tytuły legendarnych.
+- Rekrutacja na mapie: uratowany Wędrowiec dołącza za darmo.
+
+## Etap 4 — Wrogowie, biomy, pora dnia, pogoda
+
+- Archetypy walki (stado, szarżownik, strzelec, zasadzka, przywoływacz, kolos, złodziej, zwodziciel); czerwony kształt = jedyne ostrzeżenie.
+- Bestiariusz Europy Słowiańskiej według biomów OSM; skalowanie +1 poziom co ~15 km i od odległości od lin.
+- Pora dnia z suncalc, pogoda z Open-Meteo, wrogowie zależni od pory i pogody.
+- Znaki Mgły na wrogach (ubytki voxeli, fiolet), rozpad na kostki.
+
+## Etap 5 — Świat 3D: teren i kamera
+
+- Wysokość z AWS Terrain Tiles (Terrarium), tarasy voxelowe, przesadzony relief na nizinach.
+- Obrót kamery dwoma palcami z dociąganiem do 45°, kompas, joystick względem ekranu.
+- Mgła wojny jako desaturacja, paleta mapy dnia, 5 typów drzew, pory roku.
+
+## Etap 6 — AFK, Kotwice, sezony
+
+- AFK liczone lokalnie: produkcja do Skarbca (ok. 10% aktywnej gry), zajęcia Wędrowców (trening, wyprawa 1/4/8 h), ekran „Gdy cię nie było”.
+- Kotwice z OSM (wikidata + zabytek), obrys budynku, punktacja według kolejności w mieście i odległości, komplet miasta, Kronika.
+- Sezony, ranking (jedna tabela), Przypływ Mgły — dopiero po sprawdzeniu pętli. Monetyzacja na końcu, tylko kosmetyki i wygoda.
+
+## Pytania do właściciela
+
+1. **Źródło mapy (blokuje 1.1).** Dokument mówi „to samo źródło co w drugiej grze”, a AGENTS.md zabrania kopiowania identyfikatorów hostingu innych projektów do tego publicznego repo. Propozycja: adres pliku PMTiles podawany przy budowaniu (zmienna `VITE_WORLD_URL`), nie wpisany w kod. Lokalnie testuję na próbce Lublina.
+2. **Baza gałęzi.** Pracuję na `feat/camps-world` (PR #1). Czy scalić PR #1 do `main` przed dalszą pracą?
+3. **Buty.** Dokument ma 4 sloty bez butów; obecna wersja ma buty. Usunąć?
+4. **Grafika voxel chibi** — czekamy na ilustracje grafika (wojownik jako wzorzec). Do tego czasu zostają modele z brył.
