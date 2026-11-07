@@ -13,6 +13,7 @@ import {
   attackPower,
   armorPower,
   makeItem,
+  GEAR_KINDS,
   type Character,
 } from "./campaign";
 import { Expedition } from "./expedition";
@@ -368,7 +369,8 @@ function slideEnemy(p: Point, dx: number, dz: number) {
     for (let i = 0; i < steps; i++) {
       const next = { x: p.x + x / steps, z: p.z + z / steps };
       // A newly built connection may cover an existing enemy; let it leave.
-      if (blocked(next.x, next.z, 0.48) || (!safe(p, 0.48) && safe(next, 0.48))) break;
+      if (blocked(next.x, next.z, 0.48) || (!safe(p, 0.48) && safe(next, 0.48)))
+        break;
       p.x = next.x;
       p.z = next.z;
     }
@@ -381,9 +383,17 @@ function wander(e: Enemy, dt: number) {
   e.wanderWait -= dt;
   if (!e.wanderTarget && e.wanderWait <= 0) {
     for (let i = 0; i < 12; i++) {
-      const a = Math.random() * Math.PI * 2, r = 1.5 + Math.random() * 5;
-      const target = { x: e.spawn.x + Math.sin(a) * r, z: e.spawn.z + Math.cos(a) * r };
-      if (!blocked(target.x, target.z, 0.48) && !safe(target, 0.48) && lineClear(p, target)) {
+      const a = Math.random() * Math.PI * 2,
+        r = 1.5 + Math.random() * 5;
+      const target = {
+        x: e.spawn.x + Math.sin(a) * r,
+        z: e.spawn.z + Math.cos(a) * r,
+      };
+      if (
+        !blocked(target.x, target.z, 0.48) &&
+        !safe(target, 0.48) &&
+        lineClear(p, target)
+      ) {
         e.wanderTarget = target;
         break;
       }
@@ -689,7 +699,10 @@ function removeEnemy(e: Enemy) {
 function populateEncounters() {
   if (!worldStream || qaFixtureActive) return;
   for (let i = enemies.length - 1; i >= 0; i--)
-    if (distance(enemies[i].spawn, player) > 85 || !encounterAllowed(campaign, enemies[i].spawn, enemies[i].key, map.scale)) {
+    if (
+      distance(enemies[i].spawn, player) > 85 ||
+      !encounterAllowed(campaign, enemies[i].spawn, enemies[i].key, map.scale)
+    ) {
       removeEnemy(enemies[i]);
       enemies.splice(i, 1);
     }
@@ -830,10 +843,26 @@ function spawnEnemy(p: Point, id: number, key = `legacy-${id}`) {
     wanderTarget: null,
     wanderWait: Math.random() * 2,
     hp:
-      (boss ? 320 : elite ? 120 : kind === "heavy" ? 85 : kind === "wolf" ? 40 : 36) *
+      (boss
+        ? 320
+        : elite
+          ? 120
+          : kind === "heavy"
+            ? 85
+            : kind === "wolf"
+              ? 40
+              : 36) *
       (1 + (tier - 1) * 0.35),
     maxHp:
-      (boss ? 320 : elite ? 120 : kind === "heavy" ? 85 : kind === "wolf" ? 40 : 36) *
+      (boss
+        ? 320
+        : elite
+          ? 120
+          : kind === "heavy"
+            ? 85
+            : kind === "wolf"
+              ? 40
+              : 36) *
       (1 + (tier - 1) * 0.35),
     kind,
     elite,
@@ -919,7 +948,7 @@ function hurtEnemy(e: Enemy, damage: number) {
       player.bag.length < BALANCE.slots &&
       (player.kills % 3 === 0 || e.elite)
     )
-      player.bag.push(makeItem(campaign, e.id % 7, e.tier));
+      player.bag.push(makeItem(campaign, e.id % GEAR_KINDS, e.tier));
     player.fragments += e.elite ? 5 : 1;
     sound(640, 0.13, "sine");
     floatingText(`+${earned} XP`, e.rig.root.position, "#e6f3be");
@@ -1037,19 +1066,34 @@ function updateEnemies(dt: number) {
       e.timer += dt;
       e.rig.root.rotation.z = Math.min(1, e.timer * 5) * Math.PI * 0.45;
       e.rig.root.scale.setScalar(
-        (e.boss ? 1.65 : e.elite ? 1.25 : e.kind === "heavy" ? 1.15 : 1) * Math.max(0, 1 - Math.max(0, e.timer - 0.6) * 2),
+        (e.boss ? 1.65 : e.elite ? 1.25 : e.kind === "heavy" ? 1.15 : 1) *
+          Math.max(0, 1 - Math.max(0, e.timer - 0.6) * 2),
       );
       e.respawn -= dt;
       if (e.respawn <= 0 && distance(player, e.spawn) > 10 && !safe(e.spawn)) {
         const profile = encounterProfile(campaign, e.spawn, e.key, map.scale);
-        e.tier = profile.tier; e.boss = profile.boss; e.elite = profile.elite;
-        e.maxHp = (e.boss ? 320 : e.elite ? 120 : e.kind === "heavy" ? 85 : e.kind === "wolf" ? 40 : 36) * (1 + (e.tier - 1) * 0.35);
+        e.tier = profile.tier;
+        e.boss = profile.boss;
+        e.elite = profile.elite;
+        e.maxHp =
+          (e.boss
+            ? 320
+            : e.elite
+              ? 120
+              : e.kind === "heavy"
+                ? 85
+                : e.kind === "wolf"
+                  ? 40
+                  : 36) *
+          (1 + (e.tier - 1) * 0.35);
         e.state = "idle";
         e.hp = e.maxHp;
         e.timer = 0;
         e.rig.root.position.set(e.spawn.x, 0, e.spawn.z);
         e.rig.root.rotation.z = 0;
-        e.rig.root.scale.setScalar(e.boss ? 1.65 : e.elite ? 1.25 : e.kind === "heavy" ? 1.15 : 1);
+        e.rig.root.scale.setScalar(
+          e.boss ? 1.65 : e.elite ? 1.25 : e.kind === "heavy" ? 1.15 : 1,
+        );
       }
       continue;
     }
@@ -1109,7 +1153,9 @@ function updateEnemies(dt: number) {
       if (e.kind === "archer" || e.kind === "mage") {
         fire(p, e.heading, true);
         shots[shots.length - 1].damage = Math.round(
-          (e.kind === "mage" ? 17 : 13) * (e.boss ? 1.6 : e.elite ? 1.15 : 1) * (1 + (e.tier - 1) * 0.22),
+          (e.kind === "mage" ? 17 : 13) *
+            (e.boss ? 1.6 : e.elite ? 1.15 : 1) *
+            (1 + (e.tier - 1) * 0.22),
         );
       }
     } else if (e.state === "strike") {
@@ -1277,7 +1323,9 @@ function updateHud() {
   const inSafe = safe(player);
   $("zone").className = `zone ${inSafe ? "safe" : "danger"}`;
   $("zone").textContent = inSafe
-    ? nearCamp(campaign, player) ? "Obóz" : "Bezpieczna lina"
+    ? nearCamp(campaign, player)
+      ? "Obóz"
+      : "Bezpieczna lina"
     : time - lastCombat < R.regenDelay
       ? "Walka"
       : "Poza obozem";
@@ -1856,7 +1904,9 @@ async function init() {
           map: {
             buildings: map.buildings.length,
             roads: map.roads.length,
-            source: worldStream.tiles.size ? "world map tiles" : "bundled Lublin extract",
+            source: worldStream.tiles.size
+              ? "world map tiles"
+              : "bundled Lublin extract",
           },
           drawCalls: renderer.info.render.calls,
         }),
@@ -1980,4 +2030,3 @@ async function init() {
   }
 }
 void init();
-

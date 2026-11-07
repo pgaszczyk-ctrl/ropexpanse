@@ -16,7 +16,7 @@ Kolejność według dokumentu, od najważniejszego.
 
 | # | Problem | Poprawka | Uwagi |
 |---|---|---|---|
-| 1.1 | Mapa wisi na „Wczytywanie mapy…” / „Mapa niedostępna · ponów” (publiczny Overpass) | Kafelki wektorowe PMTiles (Protomaps), cache kafli jak w erpeg; Overpass tylko awaryjnie | Decyzja: adres pliku świata (patrz Pytania) |
+| 1.1 | Mapa wisi na „Wczytywanie mapy…” / „Mapa niedostępna · ponów” (publiczny Overpass) | Kafelki wektorowe PMTiles (Protomaps), cache kafli jak w erpeg; Overpass tylko awaryjnie | Wykonane 07.11.2026 (docs/DATA.md). Do sprawdzenia: CORS kubełka R2 dla hostingu gry |
 | 1.2 | Pole złota w rekrutacji od 0 („050”), klawiatura | Suwak lub przyciski +10/+50 | |
 | 1.3 | Okno oferty w stylu systemowym | Okno w stylu HUD gry | |
 | 1.4 | Brak statystyk przedmiotów, 5 min bez informacji | Statystyki przy przedmiocie, powiadomienie o kandydacie | |
@@ -42,7 +42,7 @@ Kolejność według dokumentu, od najważniejszego.
 
 - Drużyna do 3, reszta sterowana przez AI, zmiana postaci tapnięciem portretu (dziś nieaktywne postacie nie walczą).
 - Profesje bojowe (wojownik, mag, łucznik, zielarz) i obozowe (drwal, górnik, powroźnik).
-- Poziom = tylko statystyki; umiejętności z broni i drugiej ręki (tabela Arsenał); 4 sloty: broń, druga ręka, hełm, zbroja. Uwaga: dziś są buty — dokument ich nie ma.
+- Poziom = tylko statystyki; umiejętności z broni i drugiej ręki (tabela Arsenał). Sloty (decyzja właściciela 07.11.2026): broń, druga ręka, zbroja, hełm, buty — wykonane.
 - Rzadkość przedmiotów i Wędrowców (ramki), cecha pasywna, imiona z kraju (pliki JSON), tytuły legendarnych.
 - Rekrutacja na mapie: uratowany Wędrowiec dołącza za darmo.
 
@@ -67,7 +67,7 @@ Kolejność według dokumentu, od najważniejszego.
 
 ## Pytania do właściciela
 
-1. **Źródło mapy (blokuje 1.1).** Dokument mówi „to samo źródło co w drugiej grze”, a AGENTS.md zabrania kopiowania identyfikatorów hostingu innych projektów do tego publicznego repo. Propozycja: adres pliku PMTiles podawany przy budowaniu (zmienna `VITE_WORLD_URL`), nie wpisany w kod. Lokalnie testuję na próbce Lublina.
-2. **Baza gałęzi.** Pracuję na `feat/camps-world` (PR #1). Czy scalić PR #1 do `main` przed dalszą pracą?
-3. **Buty.** Dokument ma 4 sloty bez butów; obecna wersja ma buty. Usunąć?
-4. **Grafika voxel chibi** — czekamy na ilustracje grafika (wojownik jako wzorzec). Do tego czasu zostają modele z brył.
+Rozstrzygnięte 07.11.2026: mapa z archiwum erpeg (bezpiecznie, tylko odczyt, Overpass jako zapas), praca na PR #1, buty zostają (5 slotów).
+
+1. **Grafika voxel chibi** — czekamy na ilustracje grafika (wojownik jako wzorzec). Do tego czasu zostają modele z brył.
+2. **CORS** — kubełek R2 erpeg musi dopuszczać adres, pod którym działa ROPExpanse; inaczej gra użyje zapasowego Overpass.

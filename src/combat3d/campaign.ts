@@ -1,4 +1,8 @@
-import { safeDistance, invalidateTerritory, type Connection } from "./territory-rules.ts";
+import {
+  safeDistance,
+  invalidateTerritory,
+  type Connection,
+} from "./territory-rules.ts";
 import { candidatesFor } from "./recruitment.ts";
 export { candidatesFor } from "./recruitment.ts";
 import { distance, type Point } from "./rules.ts";
@@ -13,7 +17,15 @@ export const BALANCE = {
   campCost: 30,
 };
 export type Role = "warrior" | "mage" | "archer";
-export type Slot = "weapon" | "armor" | "helmet" | "boots";
+export type Slot = "weapon" | "offhand" | "armor" | "helmet" | "boots";
+/** Display order of the five equipment places. */
+export const SLOTS: readonly Slot[] = [
+  "weapon",
+  "offhand",
+  "armor",
+  "helmet",
+  "boots",
+];
 export type Item = {
   id: string;
   kind: string;
@@ -105,7 +117,7 @@ export function attackPower(c: Character) {
   return levelOf(c.exp) - 1 + (c.equipment.weapon?.power ?? 0);
 }
 export function armorPower(c: Character) {
-  return ["armor", "helmet", "boots"].reduce(
+  return ["offhand", "armor", "helmet", "boots"].reduce(
     (n, k) => n + (c.equipment[k as Slot]?.power ?? 0),
     0,
   );
@@ -121,7 +133,10 @@ const templates = [
   ["Buty wędrowca", "boots", 2, 60, "boots"],
   ["Miecz strażnika", "weapon", 7, 260, "sword"],
   ["Kostur bursztynowy", "weapon", 7, 260, "staff"],
+  ["Drewniana tarcza", "offhand", 2, 70, "shield"],
+  ["Kryształowy orb", "offhand", 2, 70, "orb"],
 ] as const;
+export const GEAR_KINDS = templates.length;
 export function makeItem(s: Campaign, index: number, tier = 1): Item {
   const [name, slot, power, value, icon] =
     templates[Math.abs(index) % templates.length];
@@ -132,7 +147,12 @@ export function makeItem(s: Campaign, index: number, tier = 1): Item {
     slot,
     level: tier,
     rarity: "common",
-    affinity: icon === "sword" ? "warrior" : icon === "staff" ? "mage" : undefined,
+    affinity:
+      icon === "sword" || icon === "shield"
+        ? "warrior"
+        : icon === "staff" || icon === "orb"
+          ? "mage"
+          : undefined,
     power: power + Math.max(0, tier - 1),
     value: value * tier,
     icon,
@@ -188,12 +208,43 @@ export function distanceToSafeZone(s: Campaign, p: Point, scale: number) {
 export function inSafeZone(s: Campaign, p: Point, scale: number, margin = 0) {
   return distanceToSafeZone(s, p, scale) <= margin;
 }
-export function connectCamps(s: Campaign, from: string, to: string, route: Point[]) {
-  const a = s.camps.find(c => c.id === from), b = s.camps.find(c => c.id === to);
-  if (!a || !b || a === b || route.length < 2 || route.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.z)) || distance(route[0], a) > 0.01 || distance(route.at(-1)!, b) > 0.01) return false;
-  if (s.camps.some(c => c.id === to && c.parentId === from || c.id === from && c.parentId === to) || s.connections?.some(c => c.from === from && c.to === to || c.from === to && c.to === from)) return false;
+export function connectCamps(
+  s: Campaign,
+  from: string,
+  to: string,
+  route: Point[],
+) {
+  const a = s.camps.find((c) => c.id === from),
+    b = s.camps.find((c) => c.id === to);
+  if (
+    !a ||
+    !b ||
+    a === b ||
+    route.length < 2 ||
+    route.some((p) => !Number.isFinite(p.x) || !Number.isFinite(p.z)) ||
+    distance(route[0], a) > 0.01 ||
+    distance(route.at(-1)!, b) > 0.01
+  )
+    return false;
+  if (
+    s.camps.some(
+      (c) =>
+        (c.id === to && c.parentId === from) ||
+        (c.id === from && c.parentId === to),
+    ) ||
+    s.connections?.some(
+      (c) =>
+        (c.from === from && c.to === to) || (c.from === to && c.to === from),
+    )
+  )
+    return false;
   s.connections ??= [];
-  s.connections.push({ id: nextId(s, "link"), from, to, route: route.map(p => ({ ...p })) });
+  s.connections.push({
+    id: nextId(s, "link"),
+    from,
+    to,
+    route: route.map((p) => ({ ...p })),
+  });
   invalidateTerritory(s);
   return true;
 }
@@ -345,7 +396,7 @@ export function parseCampaign(raw: string): Campaign | null {
         !i ||
         typeof i.id !== "string" ||
         items.has(i.id) ||
-        !["weapon", "armor", "helmet", "boots", "material"].includes(i.slot) ||
+        ![...SLOTS, "material"].includes(i.slot) ||
         !Number.isFinite(i.power) ||
         i.power < 0 ||
         !Number.isFinite(i.value) ||
@@ -353,9 +404,21 @@ export function parseCampaign(raw: string): Campaign | null {
         typeof i.name !== "string"
       )
         throw Error();
-      if (i.level !== undefined && (!Number.isInteger(i.level) || i.level < 1 || i.level > 100)) throw Error();
-      if (i.rarity !== undefined && !["common", "uncommon", "rare", "epic", "legendary"].includes(i.rarity)) throw Error();
-      if (i.affinity !== undefined && !["warrior", "mage", "archer"].includes(i.affinity)) throw Error();
+      if (
+        i.level !== undefined &&
+        (!Number.isInteger(i.level) || i.level < 1 || i.level > 100)
+      )
+        throw Error();
+      if (
+        i.rarity !== undefined &&
+        !["common", "uncommon", "rare", "epic", "legendary"].includes(i.rarity)
+      )
+        throw Error();
+      if (
+        i.affinity !== undefined &&
+        !["warrior", "mage", "archer"].includes(i.affinity)
+      )
+        throw Error();
       items.add(i.id);
     };
     const point = (p: Point) => Number.isFinite(p.x) && Number.isFinite(p.z);
@@ -374,8 +437,21 @@ export function parseCampaign(raw: string): Campaign | null {
     for (const c of s.camps)
       if (c.parentId && !ids.has(c.parentId)) return null;
     for (const link of s.connections) {
-      const from = s.camps.find(c => c.id === link.from), to = s.camps.find(c => c.id === link.to);
-      if (typeof link.id !== "string" || ids.has(link.id) || !from || !to || from === to || !Array.isArray(link.route) || link.route.length < 2 || !link.route.every(point) || distance(link.route[0], from) > 0.01 || distance(link.route.at(-1)!, to) > 0.01) return null;
+      const from = s.camps.find((c) => c.id === link.from),
+        to = s.camps.find((c) => c.id === link.to);
+      if (
+        typeof link.id !== "string" ||
+        ids.has(link.id) ||
+        !from ||
+        !to ||
+        from === to ||
+        !Array.isArray(link.route) ||
+        link.route.length < 2 ||
+        !link.route.every(point) ||
+        distance(link.route[0], from) > 0.01 ||
+        distance(link.route.at(-1)!, to) > 0.01
+      )
+        return null;
       ids.add(link.id);
     }
     for (const c of s.characters) {
@@ -396,7 +472,10 @@ export function parseCampaign(raw: string): Campaign | null {
         return null;
       ids.add(c.id);
       c.bag.forEach(item);
-      Object.entries(c.equipment).forEach(([slot, i]) => { if (i.slot !== slot || i.slot === "material") throw Error(); item(i); });
+      Object.entries(c.equipment).forEach(([slot, i]) => {
+        if (i.slot !== slot || i.slot === "material") throw Error();
+        item(i);
+      });
     }
     s.vault.forEach(item);
     for (const o of s.offers) {
@@ -430,4 +509,3 @@ export function parseCampaign(raw: string): Campaign | null {
     return null;
   }
 }
-

@@ -15,6 +15,9 @@ import {
   loseXp,
   BALANCE,
   inSafeZone,
+  armorPower,
+  GEAR_KINDS,
+  SLOTS,
 } from "../../src/combat3d/campaign.ts";
 import {
   updateRope,
@@ -29,6 +32,7 @@ import {
   convertElements,
   WorldStream,
 } from "../../src/combat3d/world.ts";
+import { useWorldSource } from "../../src/combat3d/osmTiles.ts";
 const origin = { lat: 51.2482, lon: 22.5681 };
 const s = newCampaign({ x: 0, z: 0 }, origin),
   c = activeCharacter(s);
@@ -47,6 +51,21 @@ const better = makeItem(s, 5);
 c.bag.push(better);
 assert(equip(c, better.id));
 assert(c.bag.some((v) => v.id === sword.id));
+// Five equipment places: weapon, second hand, armour, helmet, boots.
+assert.deepEqual(SLOTS, ["weapon", "offhand", "armor", "helmet", "boots"]);
+const shield = makeItem(s, GEAR_KINDS - 2);
+assert.equal(shield.slot, "offhand");
+c.bag.push(shield);
+const defence = armorPower(c);
+assert(equip(c, shield.id));
+assert.equal(c.equipment.offhand.id, shield.id);
+assert.equal(armorPower(c), defence + shield.power);
+assert.equal(
+  parseCampaign(JSON.stringify(s)).characters.find((v) => v.id === c.id)
+    .equipment.offhand.id,
+  shield.id,
+  "second hand survives a save",
+);
 assert(transfer(c.bag, s.vault, sword.id));
 assert(
   !transfer(c.bag, s.vault, sword.id),
@@ -60,7 +79,10 @@ assert(!c.bag.some((v) => v.id === offered.id));
 assert(!postOffer(s, "camp-1", 1, [], 2000), "one pending offer per camp");
 assert(!resolveOffers(s, 1000 + BALANCE.recruitmentMs - 1));
 assert(resolveOffers(s, 1000 + BALANCE.recruitmentMs));
-assert(offer.candidates.length >= 1, "this seeded generous offer gets a candidate");
+assert(
+  offer.candidates.length >= 1,
+  "this seeded generous offer gets a candidate",
+);
 assert(offer.candidates.every((v) => v.level <= 5));
 const candidates = JSON.stringify(offer.candidates);
 const restored = parseCampaign(JSON.stringify(s));
@@ -211,6 +233,14 @@ assert.equal(
 );
 // Mock network at the boundary, exercise the real streaming/cache state machine.
 let calls = 0;
+// World archive unreachable: the stream must fall back to the (mocked) Overpass server.
+useWorldSource({
+  getKey: () => "offline",
+  getBytes: async () => {
+    throw Error("offline");
+  },
+});
+console.warn = () => {};
 globalThis.fetch = async () => {
   calls++;
   return { ok: true, json: async () => ({ elements: [] }) };
@@ -219,8 +249,8 @@ const stream = new WorldStream({ lat: 0, lon: 179.999 });
 assert(!stream.contains({ x: 0, z: 0 }));
 await stream.load({ x: 0, z: 0 });
 assert(stream.contains({ x: 0, z: 0 }));
-assert(stream.tiles.size>=1);
-assert(calls>=1);
+assert(stream.tiles.size >= 1);
+assert(calls >= 1);
 stream.snapshot();
 assert(!stream.changed);
 const failed = new WorldStream({ lat: 20, lon: 20 });
@@ -235,21 +265,33 @@ console.log(
   "PASS: inventory ownership, escrow, deterministic recruitment, hire/cancel, save validation, XP curve, rope wrapping/unwrapping, world projection, multipolygons, streaming failure",
 );
 
-
 // Rope protection follows each segment, including bends and endpoints, in map metres.
-const path = [{x: 30, z: 0}, {x: 40, z: 0}, {x: 40, z: 10}];
-assert(nearRope({x: 40.5, z: 5}, path, 0.54));
-assert(!nearRope({x: 40.6, z: 5}, path, 0.54));
-assert(!nearRope({x: 35, z: 5}, path, 0.54));
-assert(nearRope({x: 40, z: 10.5}, path, 0.54));
-assert(nearRope({x: 30, z: 0.5}, [path[0], path[0]], 0.54));
-assert(!nearRope({x: 0, z: 0}, [], 0.54));
-const network = newCampaign({x: 0, z: 0}, origin);
-network.camps.push({id: 'linked', parentId: network.camps[0].id, x: 40, z: 10, route: path, buildings: 0});
-assert(inSafeZone(network, {x: 35, z: 1.79}, 0.18));
-assert(!inSafeZone(network, {x: 35, z: 1.81}, 0.18));
-assert(inSafeZone(network, {x: 35, z: 2.2}, 0.18, 0.48));
-assert(inSafeZone(network, {x: 0, z: 0}, 0.18));
-assert(inSafeZone(network, {x: 35, z: 2.9}, 1));
-assert(inSafeZone(parseCampaign(JSON.stringify(network)), {x: 35, z: 1.79}, 0.18));
-console.log('Rope safe corridor: OK');
+const path = [
+  { x: 30, z: 0 },
+  { x: 40, z: 0 },
+  { x: 40, z: 10 },
+];
+assert(nearRope({ x: 40.5, z: 5 }, path, 0.54));
+assert(!nearRope({ x: 40.6, z: 5 }, path, 0.54));
+assert(!nearRope({ x: 35, z: 5 }, path, 0.54));
+assert(nearRope({ x: 40, z: 10.5 }, path, 0.54));
+assert(nearRope({ x: 30, z: 0.5 }, [path[0], path[0]], 0.54));
+assert(!nearRope({ x: 0, z: 0 }, [], 0.54));
+const network = newCampaign({ x: 0, z: 0 }, origin);
+network.camps.push({
+  id: "linked",
+  parentId: network.camps[0].id,
+  x: 40,
+  z: 10,
+  route: path,
+  buildings: 0,
+});
+assert(inSafeZone(network, { x: 35, z: 1.79 }, 0.18));
+assert(!inSafeZone(network, { x: 35, z: 1.81 }, 0.18));
+assert(inSafeZone(network, { x: 35, z: 2.2 }, 0.18, 0.48));
+assert(inSafeZone(network, { x: 0, z: 0 }, 0.18));
+assert(inSafeZone(network, { x: 35, z: 2.9 }, 1));
+assert(
+  inSafeZone(parseCampaign(JSON.stringify(network)), { x: 35, z: 1.79 }, 0.18),
+);
+console.log("Rope safe corridor: OK");

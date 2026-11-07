@@ -70,6 +70,9 @@ const paths: Record<string, string> = {
     '<path fill="#668b94" stroke="#3e5860" stroke-width="2" d="m15 10 9 5h8l9-5 9 14-8 7-3-5v23H17V26l-3 5-8-7Z"/><path stroke="#d4b575" stroke-width="3" d="M17 36h22"/>',
   helmet:
     '<path fill="#99a8ab" stroke="#53696f" stroke-width="2" d="M11 38V27a17 17 0 0 1 34 0v11l-10 8V29H21v17Z"/><path stroke="#d0aa63" stroke-width="4" d="M9 28h38"/>',
+  shield:
+    '<path fill="#9a6a3c" stroke="#5d452f" stroke-width="2" d="M28 6c8 4 14 5 20 5 0 19-6 31-20 39C14 42 8 30 8 11c6 0 12-1 20-5Z"/><path stroke="#c9ccc6" stroke-width="4" d="M28 9v38M12 22h32"/><circle cx="28" cy="22" r="5" fill="#d4b575"/>',
+  orb: '<circle cx="28" cy="25" r="15" fill="#70c9e3" stroke="#2f6f85" stroke-width="2"/><circle cx="23" cy="20" r="4" fill="#e9fbff"/><path fill="#8b5c31" stroke="#5d452f" stroke-width="2" d="M17 40h22l-4 9H21Z"/>',
   boots:
     '<path fill="#8e643f" stroke="#5d452f" stroke-width="2" d="m15 8 17 2-3 22 14 9v8H10V34Z"/><path stroke="#d4b575" stroke-width="3" d="M14 18h17"/>',
 };
@@ -186,7 +189,13 @@ export class Expedition {
   private noticeClock = 0;
   constructor(h: Hooks) {
     this.h = h;
-    h.scene.add(this.group, this.liveLine, this.connections, this.marker, this.territory);
+    h.scene.add(
+      this.group,
+      this.liveLine,
+      this.connections,
+      this.marker,
+      this.territory,
+    );
     this.marker.rotation.x = -Math.PI / 2;
     this.marker.visible = false;
     document.body.insertAdjacentHTML(
@@ -406,6 +415,7 @@ export class Expedition {
     if (!vault) {
       for (const [slot, label] of [
         ["weapon", "Broń"],
+        ["offhand", "Druga ręka"],
         ["armor", "Zbroja"],
         ["helmet", "Hełm"],
         ["boots", "Buty"],
@@ -431,7 +441,10 @@ export class Expedition {
     if (item) {
       side.append(
         node("h3", item.name),
-        node("p", `${item.slot === "weapon" ? "Atak" : "Armor"} ${item.power}`),
+        node(
+          "p",
+          `${item.slot === "weapon" ? "Atak" : "Obrona"} ${item.power}`,
+        ),
       );
       if (!vault && item.slot !== "material")
         side.append(
@@ -504,7 +517,9 @@ export class Expedition {
     if (o) {
       this.body.append(node("p", `${o.gold} zł · ${o.items.length} przedm.`));
       if (o.candidates !== null) {
-        this.title.textContent = o.candidates.length ? "Zgłoszenia" : "Brak zgłoszeń";
+        this.title.textContent = o.candidates.length
+          ? "Zgłoszenia"
+          : "Brak zgłoszeń";
         for (const v of o.candidates)
           this.body.append(
             button(
@@ -534,11 +549,14 @@ export class Expedition {
         this.body.append(timer);
       }
       this.body.append(
-        button(o.candidates?.length === 0 ? "Odbierz ofertę" : "Wycofaj ofertę", () => {
-          cancelOffer(s, o.id);
-          this.h.save();
-          this.render();
-        }),
+        button(
+          o.candidates?.length === 0 ? "Odbierz ofertę" : "Wycofaj ofertę",
+          () => {
+            cancelOffer(s, o.id);
+            this.h.save();
+            this.render();
+          },
+        ),
       );
       return;
     }
@@ -550,7 +568,10 @@ export class Expedition {
     gold.step = "1";
     gold.value = String(this.offerGold);
     gold.setAttribute("aria-label", "Złoto w ofercie");
-    gold.oninput = () => { this.offerGold = Number(gold.value); updateProfile(); };
+    gold.oninput = () => {
+      this.offerGold = Number(gold.value);
+      updateProfile();
+    };
     form.append(node("label", `Złoto · ${c.coins}`), gold);
     const grid = node("div", "", "offer-grid");
     for (const item of c.bag) {
@@ -574,12 +595,29 @@ export class Expedition {
     submit.type = "submit";
     const summary = node("div", "", "recruitment-profile");
     const updateProfile = () => {
-      const profile = recruitmentProfile({ gold: this.offerGold, items: c.bag.filter(i => this.offerItems.has(i.id)), ceiling: levelOf(c.exp) }, camp.buildings);
-      submit.disabled = !Number.isSafeInteger(this.offerGold) || this.offerGold < 0 || this.offerGold > c.coins || !profile.chance;
+      const profile = recruitmentProfile(
+        {
+          gold: this.offerGold,
+          items: c.bag.filter((i) => this.offerItems.has(i.id)),
+          ceiling: levelOf(c.exp),
+        },
+        camp.buildings,
+      );
+      submit.disabled =
+        !Number.isSafeInteger(this.offerGold) ||
+        this.offerGold < 0 ||
+        this.offerGold > c.coins ||
+        !profile.chance;
       summary.replaceChildren(
         node("p", `Szansa zgłoszenia: ${Math.round(profile.chance * 100)}%`),
-        node("p", `Wojownik ${Math.round(profile.roles.warrior * 100)}% · Mag ${Math.round(profile.roles.mage * 100)}% · Łucznik ${Math.round(profile.roles.archer * 100)}%`),
-        node("p", `Poziom: ${profile.minLevel === profile.maxLevel ? profile.maxLevel : `${profile.minLevel}–${profile.maxLevel}`}`),
+        node(
+          "p",
+          `Wojownik ${Math.round(profile.roles.warrior * 100)}% · Mag ${Math.round(profile.roles.mage * 100)}% · Łucznik ${Math.round(profile.roles.archer * 100)}%`,
+        ),
+        node(
+          "p",
+          `Poziom: ${profile.minLevel === profile.maxLevel ? profile.maxLevel : `${profile.minLevel}–${profile.maxLevel}`}`,
+        ),
       );
     };
     updateProfile();
@@ -675,11 +713,17 @@ export class Expedition {
   private connectionTarget() {
     if (!this.rope) return undefined;
     const c = activeCharacter(this.h.state);
-    return this.h.state.camps.filter(camp => camp.id !== this.rope!.campId && distance(camp, c) <= 2.4).sort((a, b) => distance(a, c) - distance(b, c))[0];
+    return this.h.state.camps
+      .filter(
+        (camp) => camp.id !== this.rope!.campId && distance(camp, c) <= 2.4,
+      )
+      .sort((a, b) => distance(a, c) - distance(b, c))[0];
   }
   private connectingRoute() {
     const target = this.connectionTarget();
-    return target && this.rope ? updateRope(this.rope.points, target, this.h.obstacles()) : null;
+    return target && this.rope
+      ? updateRope(this.rope.points, target, this.h.obstacles())
+      : null;
   }
   private placementError() {
     const c = activeCharacter(this.h.state);
@@ -688,9 +732,24 @@ export class Expedition {
     const target = this.connectionTarget();
     if (target) {
       const route = this.connectingRoute();
-      if (!route || routeLength(route) > BALANCE.ropeLength) return "Lina nie sięga obozu";
-      const from = this.rope.campId, to = target.id, s = this.h.state;
-      if (s.camps.some(camp => camp.id === from && camp.parentId === to || camp.id === to && camp.parentId === from) || s.connections?.some(link => link.from === from && link.to === to || link.from === to && link.to === from)) return "Obozy są już połączone";
+      if (!route || routeLength(route) > BALANCE.ropeLength)
+        return "Lina nie sięga obozu";
+      const from = this.rope.campId,
+        to = target.id,
+        s = this.h.state;
+      if (
+        s.camps.some(
+          (camp) =>
+            (camp.id === from && camp.parentId === to) ||
+            (camp.id === to && camp.parentId === from),
+        ) ||
+        s.connections?.some(
+          (link) =>
+            (link.from === from && link.to === to) ||
+            (link.from === to && link.to === from),
+        )
+      )
+        return "Obozy są już połączone";
       return "";
     }
     if (!this.h.contains(c)) return "Mapa jeszcze się wczytuje";
@@ -820,7 +879,9 @@ export class Expedition {
       c = activeCharacter(s);
     this.selected = nearCamp(s, c);
     el("action-label").textContent = this.rope
-      ? this.connectionTarget() ? "Połącz obozy" : "Wbij palik"
+      ? this.connectionTarget()
+        ? "Połącz obozy"
+        : "Wbij palik"
       : this.selected
         ? "Obóz"
         : "Akcja";
@@ -851,11 +912,17 @@ export class Expedition {
       this.clock = 0;
       this.noticeClock += 0.25;
       this.positionMenu();
-      const pending = s.offers.filter(o => o.candidates === null && Date.now() >= o.readyAt);
+      const pending = s.offers.filter(
+        (o) => o.candidates === null && Date.now() >= o.readyAt,
+      );
       const changed = resolveOffers(s);
       if (changed) {
         this.h.save();
-        this.h.notify(pending.some(o => o.candidates?.length) ? "Nowe zgłoszenia do rekrutacji" : "Brak zgłoszeń do rekrutacji");
+        this.h.notify(
+          pending.some((o) => o.candidates?.length)
+            ? "Nowe zgłoszenia do rekrutacji"
+            : "Brak zgłoszeń do rekrutacji",
+        );
         if (this.view === "recruit") this.render();
       } else if (
         this.view === "recruit" &&
@@ -894,7 +961,8 @@ export class Expedition {
       Object.assign(c, convert(c));
       c.route = c.route.map(convert);
     }
-    for (const link of this.h.state.connections ?? []) link.route = link.route.map(convert);
+    for (const link of this.h.state.connections ?? [])
+      link.route = link.route.map(convert);
     invalidateTerritory(this.h.state);
     this.cancelRope();
   }

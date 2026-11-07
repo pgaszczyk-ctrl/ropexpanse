@@ -106,9 +106,13 @@ try {
     const patrolStart = await snap();
     await gameWait(4);
     const patrolEnd = await snap();
-    assert(Math.hypot(patrolEnd.enemies[0].x - patrolStart.enemies[0].x,
-      patrolEnd.enemies[0].z - patrolStart.enemies[0].z) > 0.1,
-      "enemy must wander while player rests in camp");
+    assert(
+      Math.hypot(
+        patrolEnd.enemies[0].x - patrolStart.enemies[0].x,
+        patrolEnd.enemies[0].z - patrolStart.enemies[0].z,
+      ) > 0.1,
+      "enemy must wander while player rests in camp",
+    );
     assert.equal(patrolEnd.player.hp, patrolStart.player.hp);
     assert.equal(patrolEnd.enemies[0].state, "idle");
     await fixture("target");
@@ -251,6 +255,12 @@ try {
     await gameWait(0.3);
     await page.click("#inventory");
     assert.equal(await page.locator(".item-slot").count(), 24);
+    assert.equal(
+      await page.locator(".equipment-slot").count(),
+      5,
+      "weapon, second hand, armour, helmet, boots",
+    );
+    await page.screenshot({ path: `work/combat3d/${tag}-inventory.png` });
     const itemCount = (await snap()).campaign.characters[0].bag.length;
     await page.locator(".item-slot:not(:disabled)").first().click();
     await page.getByRole("button", { name: "Załóż", exact: true }).click();
@@ -274,9 +284,13 @@ try {
     await page.getByLabel("Złoto w ofercie").fill("1");
     await page.getByRole("button", { name: "Wystaw", exact: true }).click();
     await page.evaluate(() => window.__combat3d.advanceOffers(1));
-    await page.getByRole("heading", { name: "Brak zgłoszeń", exact: true }).waitFor();
+    await page
+      .getByRole("heading", { name: "Brak zgłoszeń", exact: true })
+      .waitFor();
     assert.deepEqual((await snap()).campaign.offers[0].candidates, []);
-    await page.getByRole("button", { name: "Odbierz ofertę", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Odbierz ofertę", exact: true })
+      .click();
     assert.equal((await snap()).campaign.offers.length, 0);
     assert.equal((await snap()).campaign.bank, 1);
     await page.click("#panel-close");
@@ -354,4 +368,3 @@ try {
   await browser.close();
   await new Promise((resolve) => server.httpServer.close(resolve));
 }
-
