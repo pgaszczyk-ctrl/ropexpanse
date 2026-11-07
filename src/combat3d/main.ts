@@ -1392,8 +1392,9 @@ function updateHud() {
     : time - lastCombat < R.regenDelay
       ? "Walka"
       : "Poza obozem";
-  $("loot").textContent =
-    `${player.fragments} odłamków · ${player.coins} złota`;
+  // Gold and shards are the hero's own; the rest is the shared Vault.
+  const stockLine = `${player.coins} zł · ${player.fragments} odł. · ${campaign.stock.wood} drewna · ${campaign.stock.rope} m liny`;
+  if ($("loot").textContent !== stockLine) $("loot").textContent = stockLine;
   const sweepLeft = Math.max(0, sweepReady - time),
     healLeft = Math.max(0, potionReady - time);
   $<HTMLButtonElement>("sweep").disabled = sweepLeft > 0 || paused || helpOpen;

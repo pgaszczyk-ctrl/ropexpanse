@@ -16,6 +16,9 @@ import {
   BALANCE,
   inSafeZone,
   armorPower,
+  ropeAvailable,
+  spendRope,
+  twistRope,
   GEAR_KINDS,
   SLOTS,
 } from "../../src/combat3d/campaign.ts";
@@ -51,6 +54,25 @@ const better = makeItem(s, 5);
 c.bag.push(better);
 assert(equip(c, better.id));
 assert(c.bag.some((v) => v.id === sword.id));
+// Shared Vault goods: rope is spent in metres, fibre twists into rope, old saves get a starter stock.
+{
+  const v = newCampaign({ x: 0, z: 0 }, origin), scale = 0.18;
+  assert.deepEqual(v.stock, BALANCE.startStock);
+  assert.equal(ropeAvailable(v, scale), BALANCE.ropeLength);
+  v.stock.rope = 100;
+  assert.equal(ropeAvailable(v, scale), 100 * scale, "short stock limits the stretch");
+  assert(spendRope(v, 18, scale));
+  assert.equal(v.stock.rope, 0);
+  assert(!spendRope(v, 1, scale), "cannot lay rope you do not have");
+  v.stock.fiber = 25;
+  assert.equal(twistRope(v, 10), 10 * BALANCE.ropePerFiber);
+  assert.equal(v.stock.fiber, 15);
+  const legacy = JSON.parse(JSON.stringify(v));
+  delete legacy.stock;
+  assert.deepEqual(parseCampaign(JSON.stringify(legacy)).stock, BALANCE.startStock);
+  legacy.stock = { ...BALANCE.startStock, wood: -1 };
+  assert.equal(parseCampaign(JSON.stringify(legacy)), null, "negative stock rejected");
+}
 // Five equipment places: weapon, second hand, armour, helmet, boots.
 assert.deepEqual(SLOTS, ["weapon", "offhand", "armor", "helmet", "boots"]);
 const shield = makeItem(s, GEAR_KINDS - 2);

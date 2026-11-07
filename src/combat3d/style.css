@@ -1682,3 +1682,24 @@ canvas[data-interaction="camp"] {
   border: 1px solid #e7bf78;
   box-shadow: var(--rim);
 }
+
+.stock-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.stock-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 4px;
+  border: 1px solid #6f5532;
+  border-radius: 8px;
+  background: #0e0c0a66;
+  color: #ffe5ab;
+}
+.stock-cell svg {
+  width: 24px;
+  height: 24px;
+}

@@ -14,8 +14,42 @@ export const BALANCE = {
   ropeSafeMeters: 10,
   quietBorderMeters: 300,
   recruitmentMs: 300_000,
-  campCost: 30,
+  /** Wood for a new camp (owner's design doc: wood builds camps and buoys). */
+  campWood: 20,
+  /** Metres of rope twisted from one bundle of fibre. */
+  ropePerFiber: 5,
+  /** What a new expedition starts with in the shared Vault. */
+  startStock: { wood: 40, ore: 0, fiber: 10, herbs: 0, rope: 500 },
 };
+/** Gathered goods, kept in one shared Vault for the whole rope network. Rope is in metres. */
+export type Stock = { wood: number; ore: number; fiber: number; herbs: number; rope: number };
+export const STOCK_KEYS = ["wood", "ore", "fiber", "herbs", "rope"] as const;
+export const STOCK_NAMES: Record<keyof Stock, string> = {
+  wood: "Drewno",
+  ore: "Ruda",
+  fiber: "Włókno",
+  herbs: "Zioła",
+  rope: "Lina",
+};
+/** Longest rope (scene units) the hero may run out now: the stretch limit or what is left in stock. */
+export function ropeAvailable(s: Campaign, scale: number) {
+  return Math.min(BALANCE.ropeLength, s.stock.rope * scale);
+}
+/** Takes a laid rope (scene units) from the stock, in whole metres. */
+export function spendRope(s: Campaign, units: number, scale: number) {
+  const metres = Math.ceil(units / scale);
+  if (metres > s.stock.rope) return false;
+  s.stock.rope -= metres;
+  return true;
+}
+/** Twists fibre into rope (a stand-in for the ropemaker until camp characters exist). */
+export function twistRope(s: Campaign, bundles: number) {
+  const n = Math.min(Math.floor(bundles), s.stock.fiber);
+  if (n <= 0) return 0;
+  s.stock.fiber -= n;
+  s.stock.rope += n * BALANCE.ropePerFiber;
+  return n * BALANCE.ropePerFiber;
+}
 export type Role = "warrior" | "mage" | "archer";
 export type Slot = "weapon" | "offhand" | "armor" | "helmet" | "boots";
 /** Display order of the five equipment places. */
@@ -87,6 +121,7 @@ export type Campaign = {
   connections?: Connection[];
   vault: Item[];
   bank: number;
+  stock: Stock;
   offers: Offer[];
   encounters: Record<string, number>;
   serial: number;
@@ -186,6 +221,7 @@ export function newCampaign(
     camps: [{ ...home, id: "camp-1", route: [], buildings: 0 }],
     vault: [],
     bank: 0,
+    stock: { ...BALANCE.startStock },
     offers: [],
     encounters: {},
     serial: 1,
@@ -382,6 +418,10 @@ export function parseCampaign(raw: string): Campaign | null {
       return null;
     s.connections ??= [];
     if (!Array.isArray(s.connections)) return null;
+    // Saves from before gathering get the starting stock.
+    s.stock = { ...BALANCE.startStock, ...(s.stock ?? {}) };
+    if (STOCK_KEYS.some((k) => !Number.isFinite(s.stock[k]) || s.stock[k] < 0))
+      return null;
     s.encounters ??= {};
     if (
       typeof s.encounters !== "object" ||

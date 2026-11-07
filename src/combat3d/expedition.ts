@@ -18,6 +18,11 @@ import {
   cancelOffer,
   nextId,
   connectCamps,
+  ropeAvailable,
+  spendRope,
+  twistRope,
+  STOCK_KEYS,
+  STOCK_NAMES,
   type Campaign,
   type Camp,
   type Character,
@@ -25,7 +30,7 @@ import {
 } from "./campaign";
 import { updateRope, routeLength, type Obstacle } from "./rope";
 import { distance, type Point } from "./rules";
-import type { Geo } from "./world";
+import { SCALE, type Geo } from "./world";
 type Hooks = {
   scene: T.Scene;
   camera: T.Camera;
@@ -76,6 +81,17 @@ const paths: Record<string, string> = {
   boots:
     '<path fill="#8e643f" stroke="#5d452f" stroke-width="2" d="m15 8 17 2-3 22 14 9v8H10V34Z"/><path stroke="#d4b575" stroke-width="3" d="M14 18h17"/>',
 };
+const STOCK_ICONS: Record<string, string> = {
+  wood: '<path fill="#8b5c31" stroke="#4a3220" stroke-width="2" d="M4 12h20v10H4z"/><ellipse cx="24" cy="17" rx="4" ry="5" fill="#d9a86a" stroke="#4a3220" stroke-width="2"/>',
+  ore: '<path fill="#8f9aa0" stroke="#3e474c" stroke-width="2" d="m6 22 4-11 9-4 8 8-3 10H9Z"/><path fill="#d27a4a" d="m13 13 4-2 2 4-4 2Z"/>',
+  fiber: '<path fill="none" stroke="#c9d36a" stroke-width="2.5" stroke-linecap="round" d="M16 28V8M16 20c-4-3-7-8-8-12M16 18c4-3 7-7 8-11"/>',
+  herbs: '<path fill="#6fcf7a" stroke="#2f6b3a" stroke-width="1.5" d="M16 28c0-10 2-15 9-19-1 8-4 13-9 14M16 28C14 19 11 15 6 13c1 7 4 11 10 12"/><circle cx="16" cy="9" r="3" fill="#e98fc6"/>',
+  rope: '<circle cx="16" cy="17" r="9" fill="none" stroke="#e8c27a" stroke-width="3"/><circle cx="16" cy="17" r="4" fill="none" stroke="#b0793c" stroke-width="2.5"/>',
+};
+/** Small picture of a gathered good (Vault and HUD). */
+export function stockIcon(key: string) {
+  return `<svg viewBox="0 0 32 32" aria-hidden="true">${STOCK_ICONS[key] ?? ""}</svg>`;
+}
 const CAMP_ICONS = {
   rope: '<path fill="none" stroke="#e8c27a" stroke-width="3" stroke-linecap="round" d="M5 25c4-9 8-9 11-3s7 6 11-5"/><path fill="#8b5c31" d="M3 23h5v7H3zM24 13h5v7h-5z"/><circle cx="26.5" cy="10" r="2.5" fill="#ffd27a"/>',
   vault:
@@ -438,6 +454,28 @@ export class Expedition {
       );
     }
     col.append(gold);
+    if (vault) {
+      // Shared goods of the whole rope network.
+      const goods = node("div", "", "stock-row");
+      for (const k of STOCK_KEYS) {
+        const cell = node("span", "", "stock-cell");
+        cell.innerHTML = `${stockIcon(k)}<b>${s.stock[k]}${k === "rope" ? " m" : ""}</b>`;
+        cell.title = STOCK_NAMES[k];
+        cell.setAttribute("aria-label", `${STOCK_NAMES[k]}: ${s.stock[k]}`);
+        goods.append(cell);
+      }
+      col.append(goods);
+      const twist = button(
+        `Skręć linę: 10 włókna → ${10 * BALANCE.ropePerFiber} m`,
+        () => {
+          twistRope(s, 10);
+          this.h.save();
+          this.render();
+        },
+      );
+      twist.disabled = s.stock.fiber < 10;
+      col.append(twist);
+    }
     const items = vault ? s.vault : c.bag,
       grid = node("div", "", "item-grid");
     const slots = vault
@@ -816,7 +854,7 @@ export class Expedition {
     const target = this.connectionTarget();
     if (target) {
       const route = this.connectingRoute();
-      if (!route || routeLength(route) > BALANCE.ropeLength)
+      if (!route || routeLength(route) > this.ropeMax())
         return "Lina nie sięga obozu";
       const from = this.rope.campId,
         to = target.id,
@@ -841,18 +879,22 @@ export class Expedition {
       this.h.state.camps.some((v) => distance(v, c) < BALANCE.minCampDistance)
     )
       return "Za blisko obozu";
-    if (c.coins < BALANCE.campCost)
-      return `Potrzebujesz ${BALANCE.campCost} zł`;
-    if (routeLength(this.rope.points) > BALANCE.ropeLength)
+    if (this.h.state.stock.wood < BALANCE.campWood)
+      return `Potrzebujesz ${BALANCE.campWood} drewna`;
+    if (routeLength(this.rope.points) > this.ropeMax())
       return "Lina jest za krótka";
     if (this.h.blocked(c, 3.6)) return "Brak miejsca na obóz";
     return "";
+  }
+  /** Longest rope the hero can run out now (stretch limit or what is left in the Vault). */
+  private ropeMax() {
+    return ropeAvailable(this.h.state, SCALE);
   }
   /** Up to three nearby places where the rope's next camp may stand. */
   private freeSpots(): Point[] {
     const s = this.h.state,
       c = activeCharacter(s);
-    if (!this.rope || this.connectionTarget() || c.coins < BALANCE.campCost)
+    if (!this.rope || this.connectionTarget() || s.stock.wood < BALANCE.campWood)
       return [];
     const used = routeLength(this.rope.points),
       out: Point[] = [];
@@ -860,7 +902,7 @@ export class Expedition {
       for (let a = 0; a < Math.PI * 2 && out.length < 3; a += Math.PI / 10) {
         const p = { x: c.x + Math.sin(a) * r, z: c.z + Math.cos(a) * r };
         if (
-          used + r <= BALANCE.ropeLength &&
+          used + r <= this.ropeMax() &&
           this.h.contains(p) &&
           !this.h.blocked(p, 3.6) &&
           s.camps.every((v) => distance(v, p) >= BALANCE.minCampDistance) &&
@@ -884,6 +926,7 @@ export class Expedition {
     if (target) {
       const route = this.connectingRoute();
       if (route && connectCamps(s, this.rope!.campId, target.id, route)) {
+        spendRope(s, routeLength(route), SCALE);
         this.rope = null;
         this.refreshWorld();
         this.h.save();
@@ -901,7 +944,8 @@ export class Expedition {
     };
     s.camps.push(camp);
     c.campId = camp.id;
-    c.coins -= BALANCE.campCost;
+    s.stock.wood -= BALANCE.campWood;
+    spendRope(s, routeLength(camp.route), SCALE);
     this.rope = null;
     this.countBuildings();
     this.refreshWorld();
@@ -910,7 +954,7 @@ export class Expedition {
   moveAllowed(next: Point) {
     if (!this.rope) return true;
     const points = updateRope(this.rope.points, next, this.h.obstacles());
-    if (!points || routeLength(points) > BALANCE.ropeLength) return false;
+    if (!points || routeLength(points) > this.ropeMax()) return false;
     this.rope.points = points;
     return true;
   }

@@ -272,6 +272,11 @@ try {
     await page.evaluate(() => window.__combat3d.grantGold(1000));
     await page.click("#action");
     await page.screenshot({ path: `work/combat3d/${tag}-camp-menu.png` });
+    await page.getByRole("button", { name: "Skarbiec", exact: true }).click();
+    assert.equal(await page.locator(".stock-cell").count(), 5, "wood, ore, fibre, herbs, rope");
+    await page.screenshot({ path: `work/combat3d/${tag}-vault.png` });
+    await page.click("#panel-close");
+    await page.click("#action");
     // Too close to the camp: green circles show where it may stand instead of a message.
     await page.getByRole("button", { name: "Rozciągnij linę", exact: true }).click();
     await gameWait(0.4);
