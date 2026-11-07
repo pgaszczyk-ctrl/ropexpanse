@@ -719,6 +719,10 @@ footer a {
   color: #e1cba5;
   font-size: 11px;
 }
+.float-xp {
+  font-size: 15px;
+  font-weight: 700;
+}
 .float-label {
   position: fixed;
   pointer-events: none;
@@ -1621,4 +1625,60 @@ canvas[data-interaction="camp"] {
 }
 .context-action[hidden] {
   display: none;
+}
+
+/* The portrait is the character switch (replaces "Wędrowiec ▾"). */
+.portrait-switch {
+  position: absolute;
+  top: 10px;
+  left: 7px;
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  pointer-events: auto;
+  cursor: pointer;
+  box-shadow: none;
+}
+.portrait-switch:focus-visible {
+  outline: 2px solid var(--gold);
+}
+#characters.has-candidates:after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border-radius: 50%;
+  background: #8ff0bf;
+  box-shadow: 0 0 0 2px #211b17;
+}
+/* Rare settings live in the menu sheet. */
+.menu-options {
+  display: flex;
+  gap: 10px;
+  margin: 8px 0 14px;
+}
+.menu-options button {
+  width: 48px;
+  height: 48px;
+}
+/* The action button appears only with an action and says what it does. */
+.context-action {
+  width: auto;
+  min-width: 64px;
+  padding: 0 14px;
+  border-radius: 32px;
+}
+.context-action small {
+  font: 600 12px "Trebuchet MS", sans-serif;
+}
+#world-state {
+  background: var(--glass);
+  color: #f6e8c8;
+  border: 1px solid #e7bf78;
+  box-shadow: var(--rim);
 }

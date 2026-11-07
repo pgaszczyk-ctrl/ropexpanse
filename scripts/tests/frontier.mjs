@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { newCampaign, connectCamps, inSafeZone, distanceToSafeZone, parseCampaign, activeCharacter, makeItem, equip, postOffer, resolveOffers, cancelOffer, xpThreshold } from '../../src/combat3d/campaign.ts';
 import { enclosedAreas, invalidateTerritory } from '../../src/combat3d/territory-rules.ts';
 import { recruitmentProfile, candidatesFor } from '../../src/combat3d/recruitment.ts';
-import { encounterAllowed, difficultyAt, encounterProfile } from '../../src/combat3d/encounters.ts';
+import { encounterAllowed, encounterShare, difficultyAt, encounterProfile } from '../../src/combat3d/encounters.ts';
 const origin = { lat: 51, lon: 22 }, scale = 0.18;
 const s = newCampaign({x: 0, z: 0}, origin);
 s.camps.push({id: 'b', parentId: 'camp-1', x: 35, z: 0, route: [{x:0,z:0},{x:35,z:0}], buildings: 0});
@@ -47,9 +47,12 @@ const base = newCampaign({x:0,z:0},origin);
 let nearCount = 0;
 for (let i=0;i<10000;i++) {
   nearCount += Number(encounterAllowed(base,{x:12,z:0},`cell-${i}`,scale));
-  assert(encounterAllowed(base,{x:40,z:0},`cell-${i}`,scale));
+  assert(encounterAllowed(base,{x:80,z:0},`cell-${i}`,scale), 'all encounter points 300 m+ from the safe border');
 }
-assert(nearCount > 4750 && nearCount < 5250, `near density approximately half (${nearCount})`);
+// 12 units from a lone camp = 25 m past its edge: share 0.15 + 0.85 * 25 / 300 ≈ 0.22.
+const expected = encounterShare((12 - 7.5) / scale) * 10000;
+assert(Math.abs(nearCount - expected) < 300, `near camp density ${nearCount} ≈ ${expected.toFixed(0)}`);
+assert(encounterShare(0) === 0 && encounterShare(1) < 0.2 && encounterShare(300) === 1 && encounterShare(150) > encounterShare(50));
 assert(!encounterAllowed(base,{x:0,z:0},'home',scale));
 const near = difficultyAt(base,{x:15,z:0},scale), wild = difficultyAt(base,{x:600,z:0},scale);
 assert(wild.tier > near.tier);
@@ -95,7 +98,7 @@ hero.bag.push({...scales,id:'scales'}); assert(!equip(hero,'scales'),'materials 
 assert(parseCampaign(JSON.stringify(failedState)),'item metadata survives save validation');
 hero.exp=xpThreshold(3); failedState.characters.push({...hero,id:'high-level',exp:xpThreshold(20),bag:[],equipment:{}});
 const limited=postOffer(failedState,'camp-1',1,[],0); assert.equal(limited.ceiling,3,'active character level is snapshotted');
-console.log('PASS: 10m corridors, closed/concave/crossing loops, save migration, half border density, frontier difficulty/bosses, probabilistic class-weighted recruitment and refunds');
+console.log('PASS: 10m corridors, closed/concave/crossing loops, save migration, quiet camp surroundings rising to full density at 300 m, frontier difficulty/bosses, probabilistic class-weighted recruitment and refunds');
 // Exercise actual Three.js geometry construction without claiming a GPU render.
 const { territoryModel } = await import('../../src/combat3d/territory.ts');
 const covers = (model, p) => {

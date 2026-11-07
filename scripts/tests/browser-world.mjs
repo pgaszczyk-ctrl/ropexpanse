@@ -82,9 +82,19 @@ try {
   assert.ok(loadMs < 20_000, `travel took ${loadMs} ms`);
   await page.waitForTimeout(1500);
   await page.screenshot({ path: "work/world/srodmiescie.png" });
+  // Installable app: manifest with fullscreen display and icons that load.
+  const manifest = await page.evaluate(async () => {
+    const href = document.querySelector('link[rel="manifest"]').href;
+    const m = await (await fetch(href)).json();
+    const icons = await Promise.all(m.icons.map(async (i) => (await fetch(new URL(i.src, href))).ok));
+    return { display: m.display, orientation: m.orientation, icons };
+  });
+  assert.equal(manifest.display, "fullscreen");
+  assert.equal(manifest.orientation, "landscape");
+  assert.ok(manifest.icons.length >= 3 && manifest.icons.every(Boolean), "icons load");
   assert.deepEqual(errors, []);
   console.log(
-    `PASS: world map from PMTiles: ${s.world.tiles} tiles, ${s.map.buildings} buildings, ${ranges.length} range reads, first view ${loadMs} ms, 4+ tiles ${fullMs} ms, no Overpass`,
+    `PASS: world map from PMTiles: ${s.world.tiles} tiles, ${s.map.buildings} buildings, ${ranges.length} range reads, first view ${loadMs} ms, 4+ tiles ${fullMs} ms, no Overpass; installable app manifest`,
   );
 } finally {
   await browser.close();

@@ -12,7 +12,7 @@ export const BALANCE = {
   minCampDistance: 18,
   ropeLength: 65,
   ropeSafeMeters: 10,
-  quietBorderMeters: 100,
+  quietBorderMeters: 300,
   recruitmentMs: 300_000,
   campCost: 30,
 };

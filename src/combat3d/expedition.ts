@@ -249,7 +249,7 @@ export class Expedition {
     this.marker.visible = false;
     document.body.insertAdjacentHTML(
       "beforeend",
-      `<button id="action" class="context-action" aria-label="Akcja"><span>⚑</span><small id="action-label">Akcja</small></button><nav id="camp-menu" hidden aria-label="Obóz"></nav><dialog id="expedition-panel"><div class="panel-heading"><h2 id="panel-title"></h2><button id="panel-close" aria-label="Zamknij">×</button></div><div id="panel-body"></div></dialog><nav id="expedition-tools" aria-label="Wyprawa"><button id="characters">Wędrowiec ▾</button><button id="inventory" aria-label="Ekwipunek">▦</button><button id="world-map" aria-label="Świat">◎</button></nav><button id="world-state" hidden></button>`,
+      `<button id="action" class="context-action" aria-label="Akcja"><span>⚑</span><small id="action-label">Akcja</small></button><nav id="camp-menu" hidden aria-label="Obóz"></nav><dialog id="expedition-panel"><div class="panel-heading"><h2 id="panel-title"></h2><button id="panel-close" aria-label="Zamknij">×</button></div><div id="panel-body"></div></dialog><nav id="expedition-tools" aria-label="Wyprawa"><button id="inventory" aria-label="Ekwipunek">▦</button><button id="world-map" aria-label="Świat">◎</button></nav><button id="world-state" hidden></button>`,
     );
     this.dialog = el<HTMLDialogElement>("expedition-panel");
     this.body = el("panel-body");
@@ -274,7 +274,13 @@ export class Expedition {
     });
     el("action").onclick = () => this.action();
     el("inventory").onclick = () => this.open("inventory");
-    el("characters").onclick = () => this.open("characters");
+    // Characters are switched by tapping the portrait (owner's design doc), not a "Wędrowiec ▾" button.
+    const portrait = document.createElement("button");
+    portrait.id = "characters";
+    portrait.className = "portrait-switch";
+    portrait.setAttribute("aria-label", "Wędrowcy");
+    document.querySelector(".vitals")?.append(portrait);
+    portrait.onclick = () => this.open("characters");
     el("world-map").onclick = () => this.open("world");
     el("world-state").onclick = () => h.retry();
     document.addEventListener("pointerdown", (e) => {
@@ -326,7 +332,7 @@ export class Expedition {
     this.body.replaceChildren();
     const s = this.h.state,
       c = activeCharacter(s);
-    el("characters").textContent = `${c.name} ▾`;
+    el("characters").setAttribute("aria-label", `Wędrowcy · ${c.name}`);
     if (this.view === "characters") {
       this.title.textContent = "Postacie";
       for (const v of s.characters) {
@@ -968,7 +974,10 @@ export class Expedition {
     }
     this.connections.geometry.dispose();
     this.connections.geometry = new T.BufferGeometry().setFromPoints(points);
-    el("characters").textContent = `${activeCharacter(this.h.state).name} ▾`;
+    el("characters").setAttribute(
+      "aria-label",
+      `Wędrowcy · ${activeCharacter(this.h.state).name}`,
+    );
   }
   private disposeGeometry(root: T.Object3D) {
     root.traverse((o) => {

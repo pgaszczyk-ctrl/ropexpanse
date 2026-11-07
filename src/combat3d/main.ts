@@ -124,8 +124,18 @@ function rendererProblem(message: string) {
     `Tryb ${compatibility ? "zgodności" : "standardowy"} · ${location.protocol} · ${innerWidth}×${innerHeight} · próba 03`;
   $("renderer-error").hidden = false;
 }
+// Installed as an app (manifest display "fullscreen"): the screen is already the
+// game's, so we skip the browser's own full-screen request and its notice.
+const installedApp =
+  typeof matchMedia === "function" &&
+  (matchMedia("(display-mode: fullscreen)").matches ||
+    matchMedia("(display-mode: standalone)").matches);
 async function enterFullscreen() {
   if (document.fullscreenElement) return;
+  if (installedApp) {
+    fullscreenState = "app";
+    return;
+  }
   if (!document.documentElement.requestFullscreen) {
     fullscreenState = "unavailable";
     return;
@@ -428,11 +438,11 @@ function findFree(wanted: Point, clearance = 0.75) {
 function healthBar(width = 1.3, color = 0xb9d791) {
   const group = new T.Group(),
     back = new T.Mesh(
-      new T.PlaneGeometry(width + 0.1, 0.18),
+      new T.PlaneGeometry(width + 0.12, 0.3),
       new T.MeshBasicMaterial({ color: 0x25342d, depthTest: false }),
     ),
     fill = new T.Mesh(
-      new T.PlaneGeometry(width, 0.1),
+      new T.PlaneGeometry(width, 0.2),
       new T.MeshBasicMaterial({ color, depthTest: false }),
     );
   fill.position.z = 0.01;
@@ -466,6 +476,7 @@ function buildWorld() {
       campaign.camps.find((c) => c.id === player.campId) ?? campaign.camps[0];
   scene.add(hero.root);
   addBlobShadow(hero);
+  addXray(hero);
   loadSave();
   populateEncounters();
   selectWeapon(weapon);
@@ -664,6 +675,7 @@ async function switchCharacter(c: Character) {
   hero = person(c.role === "archer" ? "archer" : "hero", c.appearance);
   scene.add(hero.root);
   addBlobShadow(hero);
+  addXray(hero);
   weapon = c.weapon;
   sweepReady = time + (c.sweepReady ?? 0);
   potionReady = time + (c.potionReady ?? 0);
@@ -788,6 +800,32 @@ function updateWorld(dt: number) {
   }
   populateEncounters();
 }
+// The hero stays visible behind buildings: a flat tinted copy drawn only where
+// something already drawn is nearer (depth test "greater"). The copy is drawn after
+// the world (render order 1) but before the hero himself (2), so his own parts never
+// hide each other and in plain sight he paints over it (owner's design doc).
+const xrayMaterial = new T.MeshBasicMaterial({
+  color: 0xc9a46a,
+  depthWrite: false,
+  depthFunc: T.GreaterDepth,
+});
+function addXray(rig: Rig) {
+  const meshes: T.Mesh[] = [];
+  rig.root.traverse((o) => {
+    if (
+      o instanceof T.Mesh &&
+      !(o.material instanceof T.Material && o.material.transparent)
+    )
+      meshes.push(o);
+  });
+  for (const m of meshes) {
+    m.renderOrder = 2;
+    const ghost = new T.Mesh(m.geometry, xrayMaterial);
+    ghost.renderOrder = 1;
+    ghost.userData.xray = true;
+    m.add(ghost);
+  }
+}
 function addBlobShadow(rig: Rig) {
   rig.root.traverse((o) => {
     if (o instanceof T.Mesh) o.castShadow = false;
@@ -822,7 +860,7 @@ function spawnEnemy(p: Point, id: number, key = `legacy-${id}`) {
   scene.add(rig.root);
   addBlobShadow(rig);
   const { group: bar, fill } = healthBar(
-    boss ? 2.4 : elite ? 1.8 : 1.15,
+    boss ? 3.2 : elite ? 2.3 : 1.7,
     boss ? 0xe57975 : elite ? 0xf2bc68 : 0xd9a27e,
   );
   scene.add(bar);
@@ -889,13 +927,27 @@ function selectWeapon(w: "sword" | "magic") {
   });
   persist();
 }
-function floatingText(text: string, p: Point, color = "#fff1c8") {
+// Damage numbers and "+XP" use separate lanes (XP higher and slower) and are pushed
+// apart on screen, so they never sit on top of each other (owner's design doc).
+function floatingText(
+  text: string,
+  p: Point,
+  color = "#fff1c8",
+  lane: "damage" | "xp" = "damage",
+) {
   const el = document.createElement("span");
-  el.className = "float-label";
+  el.className = lane === "xp" ? "float-label float-xp" : "float-label";
   el.textContent = text;
   el.style.color = color;
   document.body.append(el);
-  floating.push({ el, p: new T.Vector3(p.x, 2.5, p.z), life: 0.8, total: 0.8 });
+  const jitter = lane === "damage" ? (Math.random() - 0.5) * 0.9 : 0,
+    life = lane === "xp" ? 1.3 : 0.8;
+  floating.push({
+    el,
+    p: new T.Vector3(p.x + jitter, lane === "xp" ? 3.5 : 2.4, p.z),
+    life,
+    total: life,
+  });
 }
 function burst(p: Point, color: number, n = 8) {
   for (let i = 0; i < n; i++) {
@@ -951,7 +1003,7 @@ function hurtEnemy(e: Enemy, damage: number) {
       player.bag.push(makeItem(campaign, e.id % GEAR_KINDS, e.tier));
     player.fragments += e.elite ? 5 : 1;
     sound(640, 0.13, "sine");
-    floatingText(`+${earned} XP`, e.rig.root.position, "#e6f3be");
+    floatingText(`+${earned} XP`, e.rig.root.position, "#e6f3be", "xp");
     persist();
   }
 }
@@ -1287,19 +1339,30 @@ function updateEffects(dt: number) {
       particles.splice(i, 1);
     }
   }
-  for (let i = floating.length - 1; i >= 0; i--) {
+  const placed: { x: number; y: number }[] = [];
+  for (let i = 0; i < floating.length; i++) {
     const f = floating[i];
     f.life -= dt;
-    f.p.y += dt * 1.6;
+    f.p.y += dt * (f.total > 1 ? 0.9 : 1.6);
     const v = f.p.clone().project(camera);
-    f.el.style.left = `${((v.x + 1) * innerWidth) / 2}px`;
-    f.el.style.top = `${((1 - v.y) * innerHeight) / 2}px`;
+    const x = ((v.x + 1) * innerWidth) / 2;
+    let y = ((1 - v.y) * innerHeight) / 2;
+    // Older labels keep their place; a newer one moves up until it is clear.
+    for (let k = 0; k < placed.length; k++)
+      if (Math.abs(placed[k].x - x) < 46 && Math.abs(placed[k].y - y) < 22) {
+        y = placed[k].y - 22;
+        k = -1;
+      }
+    placed.push({ x, y });
+    f.el.style.left = `${x}px`;
+    f.el.style.top = `${y}px`;
     f.el.style.opacity = String(Math.min(1, f.life * 3));
-    if (f.life <= 0) {
-      f.el.remove();
+  }
+  for (let i = floating.length - 1; i >= 0; i--)
+    if (floating[i].life <= 0) {
+      floating[i].el.remove();
       floating.splice(i, 1);
     }
-  }
 }
 function updateHud() {
   const hp = clamp(player.hp / maxHp(), 0, 1);

@@ -7,6 +7,11 @@
       content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"
     />
     <meta name="theme-color" content="#211b17" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>ROPExpanse</title>
   </head>
   <body>
@@ -33,14 +38,10 @@
       </div>
     </section>
     <nav class="loadout" aria-label="Wyposażenie testowe">
-      <button id="fullscreen" aria-label="Pełny ekran" title="Pełny ekran">
-        <i class="icon" data-icon="fullscreen"></i>
-      </button>
       <button data-weapon="sword" class="selected" aria-label="Miecz" aria-pressed="true">
         <i class="icon" data-icon="sword"></i><span>Miecz</span><kbd>1</kbd></button
       ><button data-weapon="magic" aria-label="Magia" aria-pressed="false"><i class="icon" data-icon="magic"></i><span>Magia</span><kbd>2</kbd></button
-      ><button id="audio" aria-pressed="false" title="Dźwięk">♫</button
-      ><button id="help-button" aria-label="Instrukcja">?</button>
+      ><button id="help-button" aria-label="Menu" title="Menu">☰</button>
     </nav>
     <div id="zone" class="zone safe">SCHRONIENIE · regeneracja</div>
     <div id="toast" role="status"></div>
@@ -87,7 +88,13 @@
     </div>
     <div id="help" class="overlay" hidden>
       <div class="sheet">
-        <span class="eyebrow">JAK GRAĆ</span>
+        <span class="eyebrow">MENU</span>
+        <div class="menu-options">
+          <button id="fullscreen" aria-label="Pełny ekran" title="Pełny ekran">
+            <i class="icon" data-icon="fullscreen"></i>
+          </button>
+          <button id="audio" aria-pressed="false" aria-label="Dźwięk" title="Dźwięk">♫</button>
+        </div>
         <h2>Ruszaj się. Celuj. Uderzaj.</h2>
         <p>
           <b>Telefon:</b> lewy drążek — ruch. Prawy — przeciągnij, aby celować,

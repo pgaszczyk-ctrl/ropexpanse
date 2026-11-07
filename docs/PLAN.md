@@ -10,24 +10,24 @@ Zasada z dokumentu: każda zmiana upraszcza. Zamiast tekstów pomocniczych popra
 
 Pracuję etapami. Po każdym etapie: build, testy, commit, push i krótki raport. Nie widzę licznika tygodniowego limitu tokenów, więc po każdym etapie zatrzymuję się, żeby właściciel mógł sprawdzić zużycie (limit właściciela: pauza przy 20% tygodnia).
 
-## Etap 1 — Poprawki obecnej wersji (najpierw)
+## Etap 1 — Poprawki obecnej wersji — ukończony 07.11.2026
 
 Kolejność według dokumentu, od najważniejszego.
 
 | # | Problem | Poprawka | Uwagi |
 |---|---|---|---|
 | 1.1 | Mapa wisi na „Wczytywanie mapy…” / „Mapa niedostępna · ponów” (publiczny Overpass) | Kafelki wektorowe PMTiles (Protomaps), cache kafli jak w erpeg; Overpass tylko awaryjnie | Wykonane 07.11.2026 (docs/DATA.md). Do sprawdzenia: CORS kubełka R2 dla hostingu gry |
-| 1.2 | Pole złota w rekrutacji od 0 („050”), klawiatura | Suwak lub przyciski +10/+50 | |
-| 1.3 | Okno oferty w stylu systemowym | Okno w stylu HUD gry | |
-| 1.4 | Brak statystyk przedmiotów, 5 min bez informacji | Statystyki przy przedmiocie, powiadomienie o kandydacie | |
-| 1.5 | Menu obozu jako biała lista | Menu z ikonami w stylu gry | |
-| 1.6 | „Brak miejsca na obóz” | Podświetlenie na mapie, gdzie można postawić | |
-| 1.7 | Liczby obrażeń nachodzą na „+XP” | Osobne miejsca, rozsuwanie napisów | |
-| 1.8 | Małe paski HP, postacie za budynkami | Większe paski, sylwetka przez ściany, półprzezroczyste przeszkody | |
-| 1.9 | Dużo wrogów przy obozie | Mniej spawnów przy obozach, skalowanie od odległości od lin | |
-| 1.10 | HUD przeciążony, „Wędrowiec ▾” | Mniej przycisków, rzadkie akcje w menu | |
-| 1.11 | „Akcja” długo nieaktywna | Ukryta bez akcji, pojawia się z nazwą akcji | |
-| 1.12 | Komunikat przeglądarki o pełnym ekranie | PWA (manifest, display fullscreen) | |
+| 1.2 | Pole złota w rekrutacji od 0 („050”), klawiatura | Suwak lub przyciski +10/+50 | Wykonane: suwak i ±10/±50 |
+| 1.3 | Okno oferty w stylu systemowym | Okno w stylu HUD gry | Wykonane (też ekwipunek i skarbiec) |
+| 1.4 | Brak statystyk przedmiotów, 5 min bez informacji | Statystyki przy przedmiocie, powiadomienie o kandydacie | Wykonane: liczba mocy na ikonie, lista z atakiem/obroną, pasek postępu; komunikat o zgłoszeniach już był. Powiadomienia systemowe — etap AFK |
+| 1.5 | Menu obozu jako biała lista | Menu z ikonami w stylu gry | Wykonane |
+| 1.6 | „Brak miejsca na obóz” | Podświetlenie na mapie, gdzie można postawić | Wykonane: do 3 zielonych kręgów zamiast komunikatu |
+| 1.7 | Liczby obrażeń nachodzą na „+XP” | Osobne miejsca, rozsuwanie napisów | Wykonane |
+| 1.8 | Małe paski HP, postacie za budynkami | Większe paski, sylwetka przez ściany, półprzezroczyste przeszkody | Wykonane: paski ~1,5×, sylwetka bohatera. Półprzezroczyste budynki — etap 5 (kamera) |
+| 1.9 | Dużo wrogów przy obozie | Mniej spawnów przy obozach, skalowanie od odległości od lin | Wykonane: 15% przy granicy → 100% po 300 m |
+| 1.10 | HUD przeciążony, „Wędrowiec ▾” | Mniej przycisków, rzadkie akcje w menu | Wykonane: pełny ekran i dźwięk w menu ☰, zmiana postaci tapnięciem portretu |
+| 1.11 | „Akcja” długo nieaktywna | Ukryta bez akcji, pojawia się z nazwą akcji | Wykonane |
+| 1.12 | Komunikat przeglądarki o pełnym ekranie | PWA (manifest, display fullscreen) | Wykonane: manifest i ikony; po instalacji gra nie prosi o pełny ekran |
 
 ## Etap 2 — Rdzeń pętli: lina, obozy, kręgi, surowce
 

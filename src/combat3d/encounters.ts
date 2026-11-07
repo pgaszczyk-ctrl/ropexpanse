@@ -8,9 +8,16 @@ export function encounterRoll(key: string, salt: string) {
   h ^= h >>> 16; h = Math.imul(h, 0x7feb352d); h ^= h >>> 15;
   return (h >>> 0) / 4294967296;
 }
+// Near camps and ropes the land is quiet: at the safe border only 15% of the encounter
+// points stay, rising evenly to all of them QUIET_METERS out (owner's design doc: fewer
+// spawns by camps, scaling with the distance from the ropes).
+export const QUIET_METERS = BALANCE.quietBorderMeters;
+export function encounterShare(edgeMeters: number) {
+  return edgeMeters <= 0 ? 0 : Math.min(1, 0.15 + 0.85 * (edgeMeters / QUIET_METERS));
+}
 export function encounterAllowed(s: Campaign, p: Point, key: string, scale: number) {
   const edge = distanceToSafeZone(s, p, scale) / scale;
-  return edge > 0 && (edge > BALANCE.quietBorderMeters || encounterRoll(key, "density") < 0.5);
+  return encounterRoll(key, "density") < encounterShare(edge);
 }
 export function difficultyAt(s: Campaign, p: Point, scale: number) {
   const roots = s.camps.filter(c => !c.parentId);

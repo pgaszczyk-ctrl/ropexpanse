@@ -1,6 +1,8 @@
 # ROPExpanse — stan projektu
 
-Aktualizacja: 05.11.2026.
+Aktualizacja: 07.11.2026.
+
+Plan prac według dokumentu projektowego właściciela: docs/PLAN.md (etap 1 ukończony: mapa z PMTiles, 5 slotów sprzętu, okna w stylu gry, zielone miejsca na obóz, czytelna walka, prostszy HUD, PWA). Testy przeglądarkowe działają z Chromium w /opt/pw-browsers (`BROWSER_EXECUTABLE=/opt/pw-browsers/chromium npm run test:browser`).
 
 Samodzielna gra w `pgaszczyk-ctrl/ropexpanse`. Three.js, TypeScript, Vite; bez zależności od erpeg i bez zaplecza kont.
 

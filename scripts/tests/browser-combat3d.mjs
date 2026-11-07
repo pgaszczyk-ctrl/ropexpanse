@@ -310,7 +310,9 @@ try {
     assert.equal((await snap()).campaign.offers.length, 0);
     assert.equal((await snap()).campaign.bank, 1);
     await page.click("#panel-close");
-    await page.click("#characters");
+    // The portrait switches characters; the old "Wędrowiec ▾" button is gone.
+    assert.equal(await page.locator("#expedition-tools #characters").count(), 0);
+    await page.click(".vitals #characters");
     await page.locator(".character-choice").nth(1).click();
     assert.equal(
       (await snap()).campaign.activeId,
