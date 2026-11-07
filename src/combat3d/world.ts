@@ -1,4 +1,5 @@
 import { circleBlocked, type Point } from "./rules.ts";
+import { elementsInBox } from "./osmTiles.ts";
 export type Geo = { lat: number; lon: number };
 export type Building = {
   id?: string;
@@ -21,7 +22,7 @@ export type MapData = {
   }[];
   areas: { id?: string; rings: number[][][]; water: boolean; name: string }[];
 };
-export const WORLD_VERSION = 1,
+export const WORLD_VERSION = 2,
   SCALE = 0.18,
   TILE_DEGREES = 0.006;
 export const OSM_ENDPOINT = "https://overpass.private.coffee/api/interpreter";
@@ -100,7 +101,12 @@ type Element = {
   geometry?: Coord[];
   members?: { type: string; role: string; geometry?: Coord[] }[];
 };
-export type Tile = { v: 1; key: string; elements: Element[]; savedAt: number };
+export type Tile = {
+  v: number;
+  key: string;
+  elements: Element[];
+  savedAt: number;
+};
 function stitch(parts: Coord[][]) {
   const pending = parts.map((p) => p.slice()),
     out: Coord[][] = [];
@@ -288,6 +294,25 @@ async function cache(tile: Tile) {
     /* Play remains available when persistent cache is full/disabled. */
   }
 }
+async function overpass(
+  b: ReturnType<typeof tileBounds>,
+  wait: () => number,
+): Promise<Element[]> {
+  const delay = wait();
+  if (delay) await new Promise((r) => setTimeout(r, delay));
+  const bbox = `${b.south},${b.west},${b.north},${b.east}`;
+  const query = `[out:json][timeout:20];(way[building](${bbox});relation[building](${bbox});way[highway](${bbox});way[natural=water](${bbox});relation[natural=water](${bbox});way[landuse](${bbox});way[leisure=park](${bbox}););out geom;`;
+  const response = await fetch(OSM_ENDPOINT, {
+    method: "POST",
+    body: new URLSearchParams({ data: query }),
+    signal: AbortSignal.timeout(25_000),
+  });
+  if (!response.ok) throw Error(`HTTP ${response.status}`);
+  const json = await response.json();
+  if (!Array.isArray(json.elements) || json.remark)
+    throw Error("Niepełne dane mapy");
+  return json.elements;
+}
 export class WorldStream {
   origin: Geo;
   tiles = new Map<string, Tile>();
@@ -385,22 +410,20 @@ export class WorldStream {
     try {
       let data = await cached(key);
       if (!data || data.v !== WORLD_VERSION) {
-        const delay = Math.max(0, 3000 - (Date.now() - this.lastRequest));
-        if (delay) await new Promise((r) => setTimeout(r, delay));
-        this.lastRequest = Date.now();
-        const b = tileBounds(tile.x, tile.y),
-          bbox = `${b.south},${b.west},${b.north},${b.east}`;
-        const query = `[out:json][timeout:20];(way[building](${bbox});relation[building](${bbox});way[highway](${bbox});way[natural=water](${bbox});relation[natural=water](${bbox});way[landuse](${bbox});way[leisure=park](${bbox}););out geom;`;
-        const response = await fetch(OSM_ENDPOINT, {
-          method: "POST",
-          body: new URLSearchParams({ data: query }),
-          signal: AbortSignal.timeout(25_000),
-        });
-        if (!response.ok) throw Error(`HTTP ${response.status}`);
-        const json = await response.json();
-        if (!Array.isArray(json.elements) || json.remark)
-          throw Error("Niepełne dane mapy");
-        data = { v: 1, key, elements: json.elements, savedAt: Date.now() };
+        const b = tileBounds(tile.x, tile.y);
+        let elements: Element[];
+        try {
+          elements = await elementsInBox(b);
+        } catch (worldError) {
+          // The world archive is the source; the public Overpass server is only a fallback.
+          console.warn("World map tile failed, trying Overpass", worldError);
+          elements = await overpass(b, () => {
+            const delay = Math.max(0, 3000 - (Date.now() - this.lastRequest));
+            this.lastRequest = Date.now() + delay;
+            return delay;
+          });
+        }
+        data = { v: WORLD_VERSION, key, elements, savedAt: Date.now() };
         await cache(data);
       }
       if (

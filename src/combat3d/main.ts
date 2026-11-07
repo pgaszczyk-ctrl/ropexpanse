@@ -1856,7 +1856,7 @@ async function init() {
           map: {
             buildings: map.buildings.length,
             roads: map.roads.length,
-            source: "existing OSM extract",
+            source: worldStream.tiles.size ? "world map tiles" : "bundled Lublin extract",
           },
           drawCalls: renderer.info.render.calls,
         }),
@@ -1949,6 +1949,7 @@ async function init() {
                 }
                 resolveForQA();
               },
+              travel: (lat: number, lon: number) => travelTo({ lat, lon }),
               grantGold: (n: number) => {
                 player.coins = n;
               },

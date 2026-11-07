@@ -10,18 +10,21 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --experimental-strip-types --no-warnings scripts/tests/combat3d-rules.mjs && node --experimental-strip-types --no-warnings scripts/tests/expedition.mjs && node --experimental-strip-types --no-warnings scripts/tests/frontier.mjs",
-    "test:browser": "node scripts/tests/browser-combat3d.mjs",
+    "test": "node --experimental-strip-types --no-warnings scripts/tests/combat3d-rules.mjs && node --experimental-strip-types --no-warnings scripts/tests/expedition.mjs && node --experimental-strip-types --no-warnings scripts/tests/frontier.mjs && node --experimental-strip-types --no-warnings scripts/tests/osm-tiles.mjs",
+    "test:browser": "node scripts/tests/browser-combat3d.mjs && node scripts/tests/browser-world.mjs",
     "export:offline": "node scripts/export-combat3d.mjs",
     "map:import": "node scripts/build-combat3d-map.mjs"
   },
   "dependencies": {
+    "@mapbox/vector-tile": "3.0.0",
+    "pbf": "5.1.2",
+    "pmtiles": "4.5.0",
     "three": "0.186.1"
   },
   "devDependencies": {
     "@types/three": "0.186.0",
+    "playwright": "1.62.1",
     "typescript": "7.0.2",
-    "vite": "8.3.1",
-    "playwright": "1.62.1"
+    "vite": "8.3.5"
   }
 }

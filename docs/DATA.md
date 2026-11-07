@@ -29,6 +29,15 @@ CSS korzysta opcjonalnie z Google Fonts. Eksport jednoplikowy usuwa import zewn�
 
 ## Strumieniowanie świata
 
-`src/combat3d/world.ts` pobiera ograniczone fragmenty przez `https://overpass.private.coffee/api/interpreter`, publiczny endpoint wymieniony w dokumentacji OSM: https://wiki.openstreetmap.org/wiki/Overpass_API . Zapytania są sekwencyjne, oddalone o co najmniej trzy sekundy, obejmują budynki, drogi oraz wybrane obszary wód/zieleni. Dane trafiają do IndexedDB; ponownie odwiedzane zapisane kafle nie wymagają ponownego pobrania. Błędy mają opóźnienie ponawiania, częściowe odpowiedzi z remark nie są przyjmowane.
+Źródło główne (od 07.11.2026, decyzja właściciela): mapa świata Protomaps — jeden niezmienny plik PMTiles z kaflami wektorowymi OpenStreetMap, ten sam, którego używa erpeg. `src/combat3d/osmTiles.ts` czyta z niego zapytaniami HTTP Range tylko kafle zoom 15 pod kaflem gry, przycina je do granic kafla (bez podwójnych dachów na styku) i zamienia na elementy, które rozumie `convertElements`. Odczytane kafle trzymamy w pamięci (48 ostatnich) i w IndexedDB (96 kafli gry, tylko elementy sięgające danego kafla).
 
-To integracja prototypu, bez gwarantowanej dostępności usługi publicznej. Przed szeroką dystrybucją wdrożyć własny provider/cache; nie zwiększać obciążenia publicznych instancji przez równoległy masowy import. Cała Ziemia nie jest dołączana do repo. Dane nadal podlegają ODbL i wymagają widocznej atrybucji.
+Adres pliku: parametr `?world=<url>` (testy), zmienna `VITE_WORLD_URL` przy budowaniu, w przeciwnym razie archiwum erpeg (`world-20261103.pmtiles`). Gra tylko czyta; nazwa archiwum jest przypięta, więc podmiana pliku przez nowy build nie zmienia mapy w trakcie gry.
+
+Bezpieczeństwo i ograniczenia:
+
+- Hosting gry musi być dopuszczony w ustawieniach CORS kubełka R2 (dziś ustawionym dla exp-lore.app). Bez tego przeglądarka odrzuci odczyt i gra przejdzie na Overpass.
+- Overpass (`https://overpass.private.coffee/api/interpreter`, https://wiki.openstreetmap.org/wiki/Overpass_API) zostaje wyłącznie jako zapas przy błędzie archiwum: zapytania sekwencyjne, co najmniej 3 s odstępu, odrzucanie częściowych odpowiedzi.
+- Zmiana źródła podniosła `WORLD_VERSION` do 2: stare kafle z Overpass w IndexedDB są pobierane ponownie (inne identyfikatory obiektów).
+- Testy: `scripts/tests/osm-tiles.mjs` i `browser-world.mjs` na próbce `scripts/tests/fixtures/lublin.pmtiles` (Protomaps 4.15, wycinek Lublina z erpeg, build 20261011, ~3,9 MB). Nie wymagają sieci.
+
+Cała Ziemia nie jest dołączana do repo. Dane nadal podlegają ODbL i wymagają widocznej atrybucji (© OpenStreetMap contributors; Protomaps).
