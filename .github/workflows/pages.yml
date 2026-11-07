@@ -1,0 +1,35 @@
+# Builds the game and publishes it to the gh-pages branch, served by GitHub Pages at
+# https://pgaszczyk-ctrl.github.io/ropexpanse/ (Settings → Pages → Deploy from a branch → gh-pages).
+name: Publish game (GitHub Pages)
+on:
+  push:
+    branches: [main, feat/camps-world]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: Push the build to gh-pages
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd dist
+          touch .nojekyll
+          echo "${GITHUB_REF_NAME} ${GITHUB_SHA::7} $(date -u +%FT%TZ)" > version.txt
+          git init -q -b gh-pages
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -qm "Publish ${GITHUB_REF_NAME} ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
