@@ -163,6 +163,8 @@ export type Campaign = {
   rates?: Record<"wood" | "ore" | "fiber" | "herbs", number>;
   pending?: Record<"wood" | "ore" | "fiber" | "herbs", number>;
   producedAt?: number;
+  /** Closed haze vents, by key → when they were closed (ms). They stay closed. */
+  vents?: Record<string, number>;
   /** Gathering spots taken, by key → time (ms) they grow back. */
   harvested?: Record<string, number>;
   serial: number;
@@ -473,6 +475,13 @@ export function parseCampaign(raw: string): Campaign | null {
         return null;
     }
     if (s.producedAt !== undefined && !Number.isFinite(s.producedAt))
+      return null;
+    s.vents ??= {};
+    if (
+      typeof s.vents !== "object" ||
+      Array.isArray(s.vents) ||
+      Object.values(s.vents).some((n) => !Number.isFinite(n))
+    )
       return null;
     s.harvested ??= {};
     if (

@@ -15,10 +15,19 @@ import {
   makeItem,
   GEAR_KINDS,
   accrue,
+  distanceToSafeZone,
   type Character,
 } from "./campaign";
 import { enclosedAreas } from "./territory-rules";
 import { circleRates } from "./production";
+import {
+  ventCells,
+  ventChance,
+  ventRoll,
+  waveSize,
+  WAKE_RADIUS,
+  type Vent,
+} from "./vents";
 import { Expedition } from "./expedition";
 import {
   resourceNodes,
@@ -841,6 +850,140 @@ function updateProduction(dt: number) {
   }
   if (accrue(campaign, Date.now())) notify("Skarbiec pełny — zajrzyj do obozu");
 }
+// ---- Haze vents: wake → wave → one blow drives in a stake with a lantern ----
+type VentView = {
+  vent: Vent;
+  view: T.Group;
+  state: "idle" | "wave" | "ready" | "closed";
+  cubes: T.Mesh[];
+};
+const ventViews = new Map<string, VentView>();
+const ventFog = new T.MeshBasicMaterial({ color: 0x7c3aed, transparent: true, opacity: 0.55, depthWrite: false });
+const ventGround = new T.MeshBasicMaterial({ color: 0x1e0f33, transparent: true, opacity: 0.85, depthWrite: false });
+function ventModel(v: VentView) {
+  const g = v.view;
+  g.clear();
+  v.cubes = [];
+  if (v.state === "closed") {
+    // Stake with a rope knot and a lantern in the rope's colour; lighter ground.
+    const glow = new T.Mesh(new T.CircleGeometry(2.6, 28), new T.MeshBasicMaterial({ color: 0xe9e2b8, transparent: true, opacity: 0.35, depthWrite: false }));
+    glow.rotation.x = -Math.PI / 2;
+    glow.position.y = 0.03;
+    const pole = new T.Mesh(nodeGeo, nodeMat(0x6b4224));
+    pole.scale.set(0.22, 2.4, 0.22);
+    pole.position.y = 1.2;
+    const knot = new T.Mesh(nodeGeo, nodeMat(0xd9b46a));
+    knot.scale.set(0.38, 0.2, 0.38);
+    knot.position.y = 1.5;
+    const lamp = new T.Mesh(nodeGeo, new T.MeshBasicMaterial({ color: 0xffd27a }));
+    lamp.scale.set(0.34, 0.4, 0.34);
+    lamp.position.set(0.3, 2.2, 0);
+    g.add(glow, pole, knot, lamp);
+    return;
+  }
+  const crack = new T.Mesh(new T.CircleGeometry(2.4, 24), ventGround);
+  crack.rotation.x = -Math.PI / 2;
+  crack.position.y = 0.04;
+  g.add(crack);
+  for (let i = 0; i < 9; i++) {
+    const c = new T.Mesh(nodeGeo, i % 3 ? ventFog : nodeMat(0x6a5a4a));
+    const s = 0.2 + ((v.vent.seed >>> i) % 5) * 0.06;
+    c.scale.setScalar(s);
+    c.userData.phase = i / 9;
+    g.add(c);
+    v.cubes.push(c);
+  }
+}
+let ventClock = 0;
+function updateVents(dt: number, now: number) {
+  ventClock += dt;
+  if (ventClock > 1) {
+    ventClock = 0;
+    const scale = map.scale;
+    const list = ventCells(
+      campaign.origin,
+      unproject(player, campaign.origin),
+      player,
+      80,
+      scale,
+      (p, seed) =>
+        worldStream.contains(p) &&
+        ventRoll(seed) < ventChance(distanceToSafeZone(campaign, p, scale) / scale) &&
+        !blocked(p.x, p.z, 2.6),
+    );
+    const keep = new Set(list.map((v) => v.key));
+    for (const key of Object.keys(campaign.vents ?? {})) keep.add(key);
+    keep.add("qa:vent");
+    for (const [key, v] of ventViews)
+      if (!keep.has(key) || distance(v.vent, player) > 110) {
+        scene.remove(v.view);
+        ventViews.delete(key);
+      }
+    for (const vent of list) {
+      const old = ventViews.get(vent.key);
+      if (old && distance(old.vent, vent) < 0.5) continue;
+      if (old) scene.remove(old.view);
+      const v: VentView = { vent, view: new T.Group(), state: campaign.vents?.[vent.key] ? "closed" : "idle", cubes: [] };
+      v.view.position.set(vent.x, 0, vent.z);
+      ventModel(v);
+      scene.add(v.view);
+      ventViews.set(vent.key, v);
+    }
+  }
+  for (const v of ventViews.values()) {
+    // Cubes torn from the ground drift up and fade, faster while it is awake.
+    for (const c of v.cubes) {
+      const t = (now * (v.state === "idle" ? 0.25 : 0.5) + c.userData.phase) % 1;
+      const a = c.userData.phase * Math.PI * 2;
+      c.position.set(Math.sin(a) * 1.4 * (1 - t * 0.5), 0.2 + t * 3.2, Math.cos(a) * 1.4 * (1 - t * 0.5));
+      c.rotation.set(t * 4, t * 3, 0);
+    }
+    if (v.state === "idle" && distance(v.vent, player) < WAKE_RADIUS && !safe(player)) {
+      v.state = "wave";
+      const tier = encounterProfile(campaign, v.vent, v.vent.key, map.scale).tier;
+      for (let i = 0; i < waveSize(tier); i++) {
+        const a = (i / waveSize(tier)) * Math.PI * 2;
+        const p = findFree({ x: v.vent.x + Math.sin(a) * 4, z: v.vent.z + Math.cos(a) * 4 });
+        spawnEnemy(p, v.vent.seed + i * 7, `vent:${v.vent.key}:${i}`);
+      }
+    }
+    if (v.state === "wave") {
+      const wave = enemies.filter((e) => e.key.startsWith(`vent:${v.vent.key}:`));
+      if (!wave.length && distance(v.vent, player) > WAKE_RADIUS * 3) v.state = "idle";
+      else if (wave.length && wave.every((e) => e.state === "dead")) v.state = "ready";
+    }
+    if (v.state === "ready")
+      v.view.children[0].scale.setScalar(1 + Math.sin(now * 6) * 0.08);
+  }
+}
+/** One blow on a cleared vent drives in the stake: a chest of loot. */
+function closeVentAt(hits: (p: Point) => boolean) {
+  for (const v of ventViews.values()) {
+    if (v.state !== "ready" || !hits(v.vent)) continue;
+    v.state = "closed";
+    campaign.vents ??= {};
+    campaign.vents[v.vent.key] = Date.now();
+    ventModel(v);
+    const tier = encounterProfile(campaign, v.vent, v.vent.key, map.scale).tier;
+    const gold = 20 + tier * 10,
+      shards = 3 + Math.floor(tier / 2);
+    player.coins += gold;
+    player.fragments += shards;
+    campaign.stock.ore += 2;
+    if (player.bag.length < BALANCE.slots)
+      player.bag.push(makeItem(campaign, v.vent.seed % GEAR_KINDS, tier + 1));
+    burst(v.vent, 0xffd27a, 18);
+    floatingText(`+${gold} zł · +${shards} odł.`, v.vent, "#ffe5ab", "xp");
+    sound(520, 0.25, "sine");
+    persist();
+    return true;
+  }
+  return false;
+}
+/** QA: haze vents near the hero. */
+function ventSnapshot() {
+  return [...ventViews.values()].map((v) => ({ key: v.vent.key, x: v.vent.x, z: v.vent.z, state: v.state }));
+}
 /** QA: the gathering spots near the hero. */
 function resourceSnapshot() {
   return [...nodeViews.values()].map(({ node, view }) => ({ ...node, ready: view.visible }));
@@ -850,7 +993,8 @@ function populateEncounters() {
   for (let i = enemies.length - 1; i >= 0; i--)
     if (
       distance(enemies[i].spawn, player) > 85 ||
-      !encounterAllowed(campaign, enemies[i].spawn, enemies[i].key, map.scale)
+      (!enemies[i].key.startsWith("vent:") &&
+        !encounterAllowed(campaign, enemies[i].spawn, enemies[i].key, map.scale))
     ) {
       removeEnemy(enemies[i]);
       enemies.splice(i, 1);
@@ -1125,7 +1269,7 @@ function hurtEnemy(e: Enemy, damage: number) {
     e.timer = 0;
     e.warning.visible = false;
     e.bar.visible = false;
-    e.respawn = 30;
+    e.respawn = e.key.startsWith("vent:") ? Infinity : 30;
     player.kills++;
     const earned = Math.max(
       1,
@@ -1421,6 +1565,13 @@ function updateAttack(dt: number) {
           hit = true;
         }
       const a = attack;
+      if (
+        closeVentAt(
+          (p) =>
+            inArc(player, p, heading, a.sweep ? R.sweepReach : R.reach, a.sweep ? R.sweepHalfArc : R.halfArc, 2.2),
+        )
+      )
+        hit = true;
       if (
         harvestAt(
           (p) =>
@@ -1864,6 +2015,7 @@ function tick() {
     updateEnemies(dt);
     updateShots(dt);
     updateEffects(dt);
+    if (worldStream && !qaFixtureActive) updateVents(dt, time);
     if (deathUntil > time) {
       hero.root.rotation.z =
         Math.min(1, (1.1 - (deathUntil - time)) * 3) * Math.PI * 0.4;
@@ -2113,6 +2265,7 @@ async function init() {
           rope: expedition.rope,
           resources: resourceSnapshot(),
           rates: campaign.rates ?? null,
+          vents: ventSnapshot(),
           pending: campaign.pending ?? null,
           spots: expedition.spotCount,
           world: {
@@ -2126,6 +2279,7 @@ async function init() {
           attack: attack ? { ...attack } : null,
           enemies: enemies.map((e) => ({
             id: e.id,
+            key: e.key,
             x: e.rig.root.position.x,
             z: e.rig.root.position.z,
             hp: e.hp,
@@ -2233,6 +2387,34 @@ async function init() {
                 resolveForQA();
               },
               travel: (lat: number, lon: number) => travelTo({ lat, lon }),
+              // A haze vent 14 units away (ignores the placement rules).
+              vent: () => {
+                const p = findFree({ x: player.x + 14, z: player.z }, 2.6);
+                const vent = { key: "qa:vent", x: p.x, z: p.z, seed: 4242 };
+                const v: VentView = { vent, view: new T.Group(), state: "idle", cubes: [] };
+                v.view.position.set(p.x, 0, p.z);
+                ventModel(v);
+                scene.add(v.view);
+                ventViews.set(vent.key, v);
+                return p;
+              },
+              killWave: () => {
+                for (const e of enemies)
+                  if (e.key.startsWith("vent:") && e.state !== "dead") hurtEnemy(e, 99999);
+              },
+              face: (x: number, z: number) => {
+                for (let a = 0; a < Math.PI * 2; a += 0.3) {
+                  const p = { x: x + Math.sin(a) * 2.2, z: z + Math.cos(a) * 2.2 };
+                  if (!blocked(p.x, p.z, R.radius)) {
+                    player.x = p.x;
+                    player.z = p.z;
+                    heading = Math.atan2(x - p.x, z - p.z);
+                    cameraTarget.set(player.x, 0, player.z);
+                    return true;
+                  }
+                }
+                return false;
+              },
               // Circle production as if the hero had been away for `hours`.
               production: (rates: Record<string, number>, hours: number) => {
                 campaign.rates = { wood: 0, ore: 0, fiber: 0, herbs: 0, ...rates };

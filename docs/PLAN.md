@@ -29,14 +29,15 @@ Kolejność według dokumentu, od najważniejszego.
 | 1.11 | „Akcja” długo nieaktywna | Ukryta bez akcji, pojawia się z nazwą akcji | Wykonane |
 | 1.12 | Komunikat przeglądarki o pełnym ekranie | PWA (manifest, display fullscreen) | Wykonane: manifest i ikony; po instalacji gra nie prosi o pełny ekran |
 
-## Etap 2 — Rdzeń pętli: lina, obozy, kręgi, surowce
+## Etap 2 — Rdzeń pętli: lina, obozy, kręgi, surowce — ukończony 07.11.2026
 
-- Lina jako surowiec (powroźnik z włókna), jej długość ograniczona zapasem.
-- Krąg: 3+ obozy zamknięte liną → brak wrogów i wyziewów, produkcja według OSM w środku (część już jest jako bezpieczne wnętrze pętli).
-- Sześć surowców + lina, dwie warstwy rozmieszczenia (główne / zastępcze), gwarancja każdego surowca do 1 km od startu, ziarno z kafla.
-- Zbieranie atakiem, rozpad na kostki, odnawianie.
-- Wspólny Skarbiec z limitem 8–12 h produkcji.
-- Wyziewy: fala potworów, wbicie pala, skrzynia lootu, pal z latarnią na mapie.
+- Wspólny Skarbiec: drewno, ruda, włókno, zioła, lina (metry); złoto i odłamki zostają przy postaci. Wykonane.
+- Lina jest surowcem: rozciąganie zużywa metry ze Skarbca, odcinek ograniczony zapasem. Obóz kosztuje drewno. Wykonane.
+- Skręcanie liny z włókna w Skarbcu — zastępstwo powroźnika do etapu 3.
+- Zasoby na mapie wg OSM (główne gęsto, zastępcze rzadko, deterministyczna siatka), komplet czterech przy pierwszym obozie, zbieranie ciosem/czarem, rozpad na kostki, odrastanie 10 min (20 w kręgu). Wykonane.
+- Kręgi produkują wg powierzchni i terenu z OSM, także gdy gra jest zamknięta; limit 10 h; „Zbierz z kręgów” w Skarbcu. Wykonane.
+- Wyziewy: od 150 m od bezpiecznego terenu, częściej dalej; fala 4–9 potworów, potem jeden cios wbija pal z latarnią; skrzynia: złoto, odłamki, ruda, przedmiot. Zamknięte zostają na zawsze. Wykonane.
+- Wartości (tempo produkcji, szanse, nagrody) są startowe do strojenia. Woda i boje — razem z łodziami (później).
 
 ## Etap 3 — Drużyna i rozwój
 
