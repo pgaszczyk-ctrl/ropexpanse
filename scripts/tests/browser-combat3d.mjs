@@ -272,8 +272,13 @@ try {
     await page.evaluate(() => window.__combat3d.grantGold(1000));
     await page.click("#action");
     await page.screenshot({ path: `work/combat3d/${tag}-camp-menu.png` });
+    // Circles produced for 12 h while away: capped at 10 h, collected in the Vault.
+    await page.evaluate(() => window.__combat3d.production({ wood: 4 }, 12));
     await page.getByRole("button", { name: "Skarbiec", exact: true }).click();
-    assert.equal(await page.locator(".stock-cell").count(), 5, "wood, ore, fibre, herbs, rope");
+    const woodStock = (await snap()).campaign.stock.wood;
+    await page.getByRole("button", { name: "Zbierz z kręgów", exact: true }).click();
+    assert.equal((await snap()).campaign.stock.wood, woodStock + 40, "10 hours of 4 wood/h");
+    assert.equal(await page.locator(".stock-row:not(.production) .stock-cell").count(), 5, "wood, ore, fibre, herbs, rope");
     await page.screenshot({ path: `work/combat3d/${tag}-vault.png` });
     // A blow gathers a spot: wood to the Vault, the spot waits to grow back.
     await page.click("#panel-close");

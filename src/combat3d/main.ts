@@ -14,8 +14,11 @@ import {
   armorPower,
   makeItem,
   GEAR_KINDS,
+  accrue,
   type Character,
 } from "./campaign";
+import { enclosedAreas } from "./territory-rules";
+import { circleRates } from "./production";
 import { Expedition } from "./expedition";
 import {
   resourceNodes,
@@ -820,6 +823,24 @@ function harvestAt(hits: (p: Point) => boolean) {
   }
   return got;
 }
+// Circle production: rates are re-read from the map when circles or ground change;
+// the buffer grows from saved time, so it also counts while the game is closed.
+let ratesFor: { circles: unknown; map: MapData | null } = { circles: null, map: null };
+let productionClock = 0;
+function updateProduction(dt: number) {
+  productionClock += dt;
+  if (productionClock < 2) return;
+  productionClock = 0;
+  const circles = enclosedAreas(campaign);
+  if (ratesFor.circles !== circles || ratesFor.map !== map) {
+    const rates = circleRates(circles, map, (p) => worldStream.contains(p));
+    if (rates) {
+      campaign.rates = rates;
+      ratesFor = { circles, map };
+    }
+  }
+  if (accrue(campaign, Date.now())) notify("Skarbiec pełny — zajrzyj do obozu");
+}
 /** QA: the gathering spots near the hero. */
 function resourceSnapshot() {
   return [...nodeViews.values()].map(({ node, view }) => ({ ...node, ready: view.visible }));
@@ -906,6 +927,7 @@ function updateWorld(dt: number) {
     Math.abs(player.z) < 55
   ) {
     populateEncounters();
+    updateProduction(0.5);
     return;
   }
   worldStream.request(player);
@@ -917,6 +939,7 @@ function updateWorld(dt: number) {
   }
   populateEncounters();
   refreshResources();
+  updateProduction(0.5);
 }
 // The hero stays visible behind buildings: a flat tinted copy drawn only where
 // something already drawn is nearer (depth test "greater"). The copy is drawn after
@@ -1706,6 +1729,13 @@ function bindControls() {
     location.reload();
   };
   $("start").onclick = () => {
+    // Production counted while away (capped); collected in the Vault.
+    accrue(campaign, Date.now());
+    const waiting = campaign.pending
+      ? Object.values(campaign.pending).reduce((a, b) => a + Math.floor(b), 0)
+      : 0;
+    if (waiting > 0)
+      setTimeout(() => notify(`Kręgi wyprodukowały ${waiting} surowców — Skarbiec`), 4000);
     void enterFullscreen();
     started = true;
     $("loading").hidden = true;
@@ -2082,6 +2112,8 @@ async function init() {
           campaign: JSON.parse(JSON.stringify(campaign)),
           rope: expedition.rope,
           resources: resourceSnapshot(),
+          rates: campaign.rates ?? null,
+          pending: campaign.pending ?? null,
           spots: expedition.spotCount,
           world: {
             origin: campaign.origin,
@@ -2201,6 +2233,13 @@ async function init() {
                 resolveForQA();
               },
               travel: (lat: number, lon: number) => travelTo({ lat, lon }),
+              // Circle production as if the hero had been away for `hours`.
+              production: (rates: Record<string, number>, hours: number) => {
+                campaign.rates = { wood: 0, ore: 0, fiber: 0, herbs: 0, ...rates };
+                campaign.producedAt = Date.now() - hours * 3_600_000;
+                ratesFor = { circles: enclosedAreas(campaign), map };
+                accrue(campaign, Date.now());
+              },
               // Stand next to a ready gathering spot, facing it.
               faceNode: (kind: string) => {
                 refreshResources(true);

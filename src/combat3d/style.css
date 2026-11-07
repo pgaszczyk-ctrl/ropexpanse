@@ -1703,3 +1703,8 @@ canvas[data-interaction="camp"] {
   width: 24px;
   height: 24px;
 }
+.stock-row.production .stock-cell small {
+  color: #8ff0bf;
+  font-size: 11px;
+  margin-left: 2px;
+}

@@ -21,6 +21,7 @@ import {
   ropeAvailable,
   spendRope,
   twistRope,
+  collect,
   STOCK_KEYS,
   STOCK_NAMES,
   type Campaign,
@@ -475,6 +476,25 @@ export class Expedition {
       );
       twist.disabled = s.stock.fiber < 10;
       col.append(twist);
+      // What the closed circles produced (also while you were away).
+      const rates = s.rates;
+      if (rates && Object.values(rates).some((v) => v > 0)) {
+        const made = node("div", "", "stock-row production");
+        for (const k of ["wood", "ore", "fiber", "herbs"] as const) {
+          if (rates[k] <= 0) continue;
+          const cell = node("span", "", "stock-cell");
+          cell.innerHTML = `${stockIcon(k)}<b>+${Math.floor(s.pending?.[k] ?? 0)}</b><small>${rates[k].toFixed(1)}/h</small>`;
+          cell.setAttribute("aria-label", `${STOCK_NAMES[k]}: ${Math.floor(s.pending?.[k] ?? 0)} czeka, ${rates[k].toFixed(1)} na godzinę`);
+          made.append(cell);
+        }
+        const take = button("Zbierz z kręgów", () => {
+          collect(s);
+          this.h.save();
+          this.render();
+        });
+        take.disabled = !Object.values(s.pending ?? {}).some((v) => v >= 1);
+        col.append(made, take);
+      }
     }
     const items = vault ? s.vault : c.bag,
       grid = node("div", "", "item-grid");

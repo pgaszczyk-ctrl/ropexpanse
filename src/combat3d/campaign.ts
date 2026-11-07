@@ -42,6 +42,40 @@ export function spendRope(s: Campaign, units: number, scale: number) {
   s.stock.rope -= metres;
   return true;
 }
+const GOODS = ["wood", "ore", "fiber", "herbs"] as const;
+export const PRODUCTION_CAP_HOURS = 10;
+/** Counts circle production since the last count (also time spent away), up to the cap.
+ * Returns true when the buffer just became full. A clock moved backwards adds nothing. */
+export function accrue(s: Campaign, now: number) {
+  const rates = s.rates;
+  s.pending ??= { wood: 0, ore: 0, fiber: 0, herbs: 0 };
+  const since = s.producedAt ?? now;
+  s.producedAt = now;
+  if (!rates || now <= since) return false;
+  const hours = Math.min(PRODUCTION_CAP_HOURS, (now - since) / 3_600_000);
+  let full = true,
+    wasFull = true;
+  for (const k of GOODS) {
+    const cap = rates[k] * PRODUCTION_CAP_HOURS;
+    if (cap <= 0) continue;
+    if (s.pending[k] < cap - 1e-9) wasFull = false;
+    s.pending[k] = Math.min(cap, s.pending[k] + rates[k] * hours);
+    if (s.pending[k] < cap - 1e-9) full = false;
+  }
+  return full && !wasFull && GOODS.some((k) => rates[k] > 0);
+}
+/** Moves whole units of collected production into the Vault stock. */
+export function collect(s: Campaign) {
+  const got = { wood: 0, ore: 0, fiber: 0, herbs: 0 };
+  if (!s.pending) return got;
+  for (const k of GOODS) {
+    const n = Math.floor(s.pending[k]);
+    s.pending[k] -= n;
+    s.stock[k] += n;
+    got[k] = n;
+  }
+  return got;
+}
 /** Twists fibre into rope (a stand-in for the ropemaker until camp characters exist). */
 export function twistRope(s: Campaign, bundles: number) {
   const n = Math.min(Math.floor(bundles), s.stock.fiber);
@@ -124,6 +158,11 @@ export type Campaign = {
   stock: Stock;
   offers: Offer[];
   encounters: Record<string, number>;
+  /** Circle production per hour (last computed from the map), what waits to be collected,
+   * and when it was last counted (ms). */
+  rates?: Record<"wood" | "ore" | "fiber" | "herbs", number>;
+  pending?: Record<"wood" | "ore" | "fiber" | "herbs", number>;
+  producedAt?: number;
   /** Gathering spots taken, by key → time (ms) they grow back. */
   harvested?: Record<string, number>;
   serial: number;
@@ -423,6 +462,17 @@ export function parseCampaign(raw: string): Campaign | null {
     // Saves from before gathering get the starting stock.
     s.stock = { ...BALANCE.startStock, ...(s.stock ?? {}) };
     if (STOCK_KEYS.some((k) => !Number.isFinite(s.stock[k]) || s.stock[k] < 0))
+      return null;
+    for (const key of ["rates", "pending"] as const) {
+      const v = s[key];
+      if (
+        v !== undefined &&
+        (typeof v !== "object" ||
+          GOODS.some((k) => !Number.isFinite(v[k]) || v[k] < 0))
+      )
+        return null;
+    }
+    if (s.producedAt !== undefined && !Number.isFinite(s.producedAt))
       return null;
     s.harvested ??= {};
     if (
