@@ -1882,6 +1882,7 @@ async function init() {
           weapon,
           campaign: JSON.parse(JSON.stringify(campaign)),
           rope: expedition.rope,
+          spots: expedition.spotCount,
           world: {
             origin: campaign.origin,
             tiles: worldStream.tiles.size,

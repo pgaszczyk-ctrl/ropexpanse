@@ -76,6 +76,31 @@ const paths: Record<string, string> = {
   boots:
     '<path fill="#8e643f" stroke="#5d452f" stroke-width="2" d="m15 8 17 2-3 22 14 9v8H10V34Z"/><path stroke="#d4b575" stroke-width="3" d="M14 18h17"/>',
 };
+const CAMP_ICONS = {
+  rope: '<path fill="none" stroke="#e8c27a" stroke-width="3" stroke-linecap="round" d="M5 25c4-9 8-9 11-3s7 6 11-5"/><path fill="#8b5c31" d="M3 23h5v7H3zM24 13h5v7h-5z"/><circle cx="26.5" cy="10" r="2.5" fill="#ffd27a"/>',
+  vault:
+    '<path fill="#8b5c31" stroke="#4a3220" stroke-width="2" d="M4 13h24v14H4z"/><path fill="#b0793c" stroke="#4a3220" stroke-width="2" d="M4 13c0-6 4-8 12-8s12 2 12 8z"/><path fill="#e8c27a" d="M13 15h6v6h-6z"/><path stroke="#e8c27a" stroke-width="2" d="M4 18h24"/>',
+  recruit:
+    '<circle cx="12" cy="10" r="5" fill="#e8c27a"/><path fill="#b0793c" d="M3 28c0-7 4-11 9-11s9 4 9 11z"/><path stroke="#8ff0bf" stroke-width="3" stroke-linecap="round" d="M25 9v10M20 14h10"/>',
+};
+/** What an item gives, in a few words. */
+export function itemStat(item: Item) {
+  return item.slot === "material"
+    ? "materiał"
+    : `${item.slot === "weapon" ? "Atak" : "Obrona"} ${item.power}`;
+}
+/** How far an offer's waiting time has gone, 0–100. */
+function offerShare(o: { readyAt: number }) {
+  return Math.max(
+    0,
+    Math.min(100, 100 - ((o.readyAt - Date.now()) / BALANCE.recruitmentMs) * 100),
+  );
+}
+function itemBadge(item: Item) {
+  return item.slot === "material"
+    ? ""
+    : `<span class="item-power" aria-hidden="true">${item.power}</span>`;
+}
 export function itemIcon(item: Item) {
   return `<svg viewBox="0 0 56 56" aria-hidden="true">${paths[item.icon] ?? paths.sword}</svg>`;
 }
@@ -174,6 +199,14 @@ export class Expedition {
       depthTest: false,
     }),
   );
+  // Where a camp can stand when the hero's own spot is not allowed (shown instead of a message).
+  private spots = new T.Group();
+  private spotList: Point[] = [];
+  /** Green circles currently shown (QA diagnostics). */
+  get spotCount() {
+    return this.spotList.length;
+  }
+  private spotPulse = 0;
   rope: { campId: string; points: Point[] } | null = null;
   selected: Camp | undefined;
   private menuCamp: Camp | undefined;
@@ -195,7 +228,23 @@ export class Expedition {
       this.connections,
       this.marker,
       this.territory,
+      this.spots,
     );
+    for (let i = 0; i < 3; i++) {
+      const spot = new T.Group();
+      const disc = new T.Mesh(
+        new T.CircleGeometry(3.6, 40),
+        new T.MeshBasicMaterial({ color: 0x6fd3a0, transparent: true, opacity: 0.18, depthWrite: false }),
+      );
+      const ring = new T.Mesh(
+        new T.RingGeometry(3.3, 3.6, 40),
+        new T.MeshBasicMaterial({ color: 0x8ff0bf, transparent: true, opacity: 0.85, depthTest: false }),
+      );
+      disc.rotation.x = ring.rotation.x = -Math.PI / 2;
+      spot.add(disc, ring);
+      spot.visible = false;
+      this.spots.add(spot);
+    }
     this.marker.rotation.x = -Math.PI / 2;
     this.marker.visible = false;
     document.body.insertAdjacentHTML(
@@ -399,9 +448,9 @@ export class Expedition {
           "item-slot",
         );
       if (item) {
-        b.innerHTML = itemIcon(item);
-        b.setAttribute("aria-label", item.name);
-        b.title = item.name;
+        b.innerHTML = itemIcon(item) + itemBadge(item);
+        b.setAttribute("aria-label", `${item.name}, ${itemStat(item)}`);
+        b.title = `${item.name} · ${itemStat(item)}`;
         b.classList.toggle("selected", this.selectedItem === item.id);
       } else {
         b.disabled = true;
@@ -546,7 +595,10 @@ export class Expedition {
           "offer-timer",
         );
         timer.id = "offer-timer";
-        this.body.append(timer);
+        const bar = node("div", "", "offer-progress");
+        bar.innerHTML = `<i id="offer-bar" style="width:${offerShare(o)}%"></i>`;
+        bar.setAttribute("role", "progressbar");
+        this.body.append(timer, bar);
       }
       this.body.append(
         button(
@@ -561,18 +613,30 @@ export class Expedition {
       return;
     }
     const form = node("form");
+    // A slider with ±10/±50 steps: no on-screen keyboard and no "050" (owner's design doc).
     const gold = node("input");
-    gold.type = "number";
+    gold.type = "range";
     gold.min = "0";
     gold.max = String(c.coins);
     gold.step = "1";
+    this.offerGold = Math.min(this.offerGold, c.coins);
     gold.value = String(this.offerGold);
     gold.setAttribute("aria-label", "Złoto w ofercie");
-    gold.oninput = () => {
-      this.offerGold = Number(gold.value);
+    const readout = node("output", `${this.offerGold} zł`, "gold-readout");
+    const setGold = (v: number) => {
+      this.offerGold = Math.max(0, Math.min(c.coins, Math.round(v)));
+      gold.value = String(this.offerGold);
+      readout.textContent = `${this.offerGold} zł`;
       updateProfile();
     };
-    form.append(node("label", `Złoto · ${c.coins}`), gold);
+    gold.oninput = () => setGold(Number(gold.value));
+    const stepper = node("div", "", "gold-stepper");
+    for (const d of [-50, -10, 10, 50])
+      stepper.append(
+        button(d > 0 ? `+${d}` : `−${-d}`, () => setGold(this.offerGold + d), "gold-step"),
+      );
+    stepper.insertBefore(readout, stepper.children[2]);
+    form.append(stepper, gold);
     const grid = node("div", "", "offer-grid");
     for (const item of c.bag) {
       const b = button(
@@ -584,13 +648,21 @@ export class Expedition {
         },
         "item-slot",
       );
-      b.innerHTML = itemIcon(item);
-      b.setAttribute("aria-label", item.name);
+      b.innerHTML = itemIcon(item) + itemBadge(item);
+      b.setAttribute("aria-label", `${item.name}, ${itemStat(item)}`);
+      b.title = `${item.name} · ${itemStat(item)}`;
       b.setAttribute("aria-pressed", String(this.offerItems.has(item.id)));
       b.classList.toggle("selected", this.offerItems.has(item.id));
       grid.append(b);
     }
     form.append(grid);
+    const chosen = c.bag.filter((i) => this.offerItems.has(i.id));
+    if (chosen.length) {
+      const list = node("ul", "", "offer-items");
+      for (const i of chosen)
+        list.append(node("li", `${i.name} · ${itemStat(i)} · ${i.value} zł`));
+      form.append(list);
+    }
     const submit = button("Wystaw", () => {});
     submit.type = "submit";
     const summary = node("div", "", "recruitment-profile");
@@ -643,8 +715,14 @@ export class Expedition {
   private menu(camp: Camp) {
     this.menuCamp = camp;
     const menu = el("camp-menu");
+    const item = (label: string, icon: string, click: () => void) => {
+      const b = button("", click, "camp-item");
+      b.innerHTML = `<svg viewBox="0 0 32 32" aria-hidden="true">${icon}</svg><span>${label}</span>`;
+      b.setAttribute("aria-label", label);
+      return b;
+    };
     menu.replaceChildren(
-      button("Rozciągnij linę", () => {
+      item("Rozciągnij linę", CAMP_ICONS.rope, () => {
         this.rope = {
           campId: camp.id,
           points: [
@@ -654,8 +732,8 @@ export class Expedition {
         };
         this.hideMenu();
       }),
-      button("Skarbiec", () => this.open("vault")),
-      button("Rekrutuj", () => {
+      item("Skarbiec", CAMP_ICONS.vault, () => this.open("vault")),
+      item("Rekrutuj", CAMP_ICONS.recruit, () => {
         this.offerGold = 0;
         this.offerItems.clear();
         this.open("recruit");
@@ -764,10 +842,34 @@ export class Expedition {
     if (this.h.blocked(c, 3.6)) return "Brak miejsca na obóz";
     return "";
   }
+  /** Up to three nearby places where the rope's next camp may stand. */
+  private freeSpots(): Point[] {
+    const s = this.h.state,
+      c = activeCharacter(s);
+    if (!this.rope || this.connectionTarget() || c.coins < BALANCE.campCost)
+      return [];
+    const used = routeLength(this.rope.points),
+      out: Point[] = [];
+    for (let r = 2; r <= 26 && out.length < 3; r += 1.5)
+      for (let a = 0; a < Math.PI * 2 && out.length < 3; a += Math.PI / 10) {
+        const p = { x: c.x + Math.sin(a) * r, z: c.z + Math.cos(a) * r };
+        if (
+          used + r <= BALANCE.ropeLength &&
+          this.h.contains(p) &&
+          !this.h.blocked(p, 3.6) &&
+          s.camps.every((v) => distance(v, p) >= BALANCE.minCampDistance) &&
+          out.every((q) => distance(q, p) >= 6)
+        )
+          out.push(p);
+      }
+    return out;
+  }
   private place() {
     const reason = this.placementError();
     if (reason) {
-      this.h.notify(reason);
+      // A wrong spot is shown on the map (green circles), not explained in words.
+      if (this.spotList.length) this.spotPulse = 1;
+      else this.h.notify(reason);
       return;
     }
     const c = activeCharacter(this.h.state),
@@ -885,7 +987,7 @@ export class Expedition {
       : this.selected
         ? "Obóz"
         : "Akcja";
-    el<HTMLButtonElement>("action").disabled = !this.rope && !this.selected;
+    el<HTMLButtonElement>("action").hidden = !this.rope && !this.selected;
     el("action").classList.toggle("active", !!this.rope || !!this.selected);
     for (const [id, g] of this.campViews) {
       const highlight = g.userData.highlight as T.Mesh;
@@ -908,7 +1010,20 @@ export class Expedition {
       }
     }
     this.liveLine.visible = !!this.rope;
+    this.spotPulse = Math.max(0, this.spotPulse - dt * 1.5);
+    this.spots.children.forEach((spot, i) => {
+      const p = this.spotList[i];
+      spot.visible = !!p;
+      if (!p) return;
+      spot.position.set(p.x, 0.08, p.z);
+      spot.scale.setScalar(1 + Math.sin(time * 4) * 0.04 + this.spotPulse * 0.25);
+    });
     if (this.clock > 0.25) {
+      const why = this.rope ? this.placementError() : "";
+      this.spotList =
+        why === "Brak miejsca na obóz" || why === "Za blisko obozu"
+          ? this.freeSpots()
+          : [];
       this.clock = 0;
       this.noticeClock += 0.25;
       this.positionMenu();
@@ -940,6 +1055,8 @@ export class Expedition {
             Math.ceil((o.readyAt - Date.now()) / 1000),
           );
           timer.textContent = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`;
+          const fill = document.getElementById("offer-bar");
+          if (fill) fill.style.width = `${offerShare(o)}%`;
         }
       }
       const status = this.h.worldStatus(),

@@ -1446,3 +1446,179 @@ canvas[data-interaction="camp"] {
 #expedition-panel {
   width: min(740px, 94vw);
 }
+
+/* Game-style windows (owner's design doc, 06.11.2026): the offer, inventory, vault,
+   camp menu and top tools share the HUD's dark glass and brass instead of a white
+   system look. Rims stay thin so the inventory remains calm to read. */
+#expedition-panel {
+  background: var(--glass);
+  color: #f6e8c8;
+  border: 1px solid #e7bf78;
+  border-radius: 12px;
+  box-shadow:
+    var(--rim),
+    inset 0 1px #fff0be33,
+    0 24px 80px #0008;
+  font: 15px "Trebuchet MS", "Segoe UI", sans-serif;
+}
+#expedition-panel::backdrop {
+  background: #120e0b99;
+}
+.panel-heading h2 {
+  font: 600 24px "Trebuchet MS", "Segoe UI", sans-serif;
+  color: var(--gold);
+  letter-spacing: 0.02em;
+}
+.panel-heading > button {
+  color: #f6e8c8;
+}
+.slot-count,
+.gold-line,
+.equipment p {
+  color: #cbb48a;
+}
+#panel-body button:not(.item-slot) {
+  background: linear-gradient(#4a3a2a, #2b221b);
+  color: #f6e8c8;
+  border: 1px solid #b9853e;
+  border-radius: 8px;
+  font: 15px "Trebuchet MS", "Segoe UI", sans-serif;
+}
+#panel-body button:not(.item-slot):hover {
+  background: linear-gradient(#5b4733, #33281f);
+}
+#panel-body button:disabled {
+  opacity: 0.45;
+}
+.item-slot,
+#expedition-panel .item-slot:disabled {
+  position: relative;
+  background: #0e0c0a66;
+  border: 1px solid #6f5532;
+}
+#expedition-panel .item-slot:not(:disabled):hover {
+  background: #2f261d;
+  border-color: #d2a355;
+}
+.item-slot.selected {
+  border: 2px solid var(--gold);
+  background: #4a3a2a;
+}
+.item-power {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  font: 700 12px "Trebuchet MS", sans-serif;
+  color: #ffe5ab;
+  text-shadow: 0 1px 2px #000;
+}
+.inventory-column:before {
+  opacity: 0.35;
+  filter: invert(1);
+}
+.equipment h3 {
+  color: var(--gold);
+}
+#panel-body input {
+  background: #0e0c0a88;
+  color: #f6e8c8;
+  border-color: #6f5532;
+}
+.gold-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#panel-body .gold-step {
+  min-width: 56px;
+  min-height: 44px;
+}
+.gold-readout {
+  flex: 1;
+  text-align: center;
+  font: 700 22px "Trebuchet MS", sans-serif;
+  color: #ffe5ab;
+}
+#panel-body input[type="range"] {
+  padding: 0;
+  accent-color: var(--gold);
+  border: 0;
+  background: none;
+  height: 28px;
+}
+.offer-items {
+  margin: 0;
+  padding-left: 18px;
+  color: #ffe5ab;
+}
+.recruitment-profile p {
+  margin: 2px 0;
+  color: #cbb48a;
+}
+.offer-progress {
+  height: 10px;
+  border: 1px solid #b9853e;
+  border-radius: 6px;
+  background: #0e0c0a88;
+  overflow: hidden;
+  margin: 6px 0 12px;
+}
+.offer-progress i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #b9853e, #ffd27a);
+  transition: width 0.3s linear;
+}
+#camp-menu {
+  width: auto;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: var(--glass);
+  border: 1px solid #e7bf78;
+  border-radius: 12px;
+  box-shadow: var(--rim), 0 10px 28px #0007;
+}
+#camp-menu[hidden] {
+  display: none;
+}
+#camp-menu .camp-item {
+  width: 76px;
+  min-height: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 4px;
+  text-align: center;
+  color: #f6e8c8;
+  font: 12px "Trebuchet MS", sans-serif;
+  border: 1px solid #6f5532;
+  border-radius: 10px;
+  background: #0e0c0a55;
+}
+#camp-menu .camp-item:hover {
+  background: #2f261d;
+  border-color: #d2a355;
+}
+#camp-menu .camp-item svg {
+  width: 34px;
+  height: 34px;
+}
+#expedition-tools button {
+  background: var(--glass);
+  color: #f6e8c8;
+  border: 1px solid #b9853e;
+}
+#expedition-tools button:not(:disabled):hover {
+  background: #2f261d;
+}
+.context-action {
+  background: var(--glass);
+  border-color: #e7bf78;
+  box-shadow: var(--rim);
+}
+.context-action[hidden] {
+  display: none;
+}

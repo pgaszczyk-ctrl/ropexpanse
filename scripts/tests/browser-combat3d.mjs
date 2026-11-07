@@ -271,8 +271,24 @@ try {
     await page.click("#panel-close");
     await page.evaluate(() => window.__combat3d.grantGold(1000));
     await page.click("#action");
+    await page.screenshot({ path: `work/combat3d/${tag}-camp-menu.png` });
+    // Too close to the camp: green circles show where it may stand instead of a message.
+    await page.getByRole("button", { name: "Rozciągnij linę", exact: true }).click();
+    await gameWait(0.4);
+    assert.ok((await snap()).spots > 0, "free camp spots shown");
+    await page.screenshot({ path: `work/combat3d/${tag}-camp-spots.png` });
+    await page.keyboard.press("Escape");
+    await gameWait(0.3);
+    await page.click("#action");
     await page.getByRole("button", { name: "Rekrutuj", exact: true }).click();
+    // Gold is set without a keyboard: +50 steps, then the slider.
+    await page.getByRole("button", { name: "+50", exact: true }).click();
+    assert.equal(await page.locator(".gold-readout").textContent(), "50 zł");
     await page.getByLabel("Złoto w ofercie").fill("500");
+    await page.locator(".offer-grid .item-slot").first().click();
+    assert.match(await page.locator(".offer-items").textContent(), /(Atak|Obrona) \d+/);
+    await page.locator(".offer-grid .item-slot").first().click();
+    await page.screenshot({ path: `work/combat3d/${tag}-offer.png` });
     await page.getByRole("button", { name: "Wystaw", exact: true }).click();
     assert.equal((await snap()).campaign.offers.length, 1);
     assert.equal((await snap()).player.coins, 500);
