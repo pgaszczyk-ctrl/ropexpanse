@@ -17,6 +17,15 @@ import {
   type Character,
 } from "./campaign";
 import { Expedition } from "./expedition";
+import {
+  resourceNodes,
+  starterNodes,
+  YIELD,
+  NODE_NAMES,
+  RESPAWN_MS,
+  type ResourceNode,
+  type NodeKind,
+} from "./resources";
 import { encounterAllowed, encounterProfile } from "./encounters";
 import {
   WorldStream,
@@ -24,6 +33,7 @@ import {
   unproject,
   encounterCells,
   findLanding,
+  hash,
   type MapData,
   type Geo,
 } from "./world";
@@ -708,6 +718,112 @@ function removeEnemy(e: Enemy) {
   e.warning.geometry.dispose();
   (e.warning.material as T.Material).dispose();
 }
+// ---- Gathering spots (owner's design doc: gathered with a blow, crumble into cubes) ----
+const nodeGeo = new T.BoxGeometry(1, 1, 1);
+const nodeMats: Record<string, T.MeshLambertMaterial> = {};
+const nodeMat = (c: number) =>
+  (nodeMats[c] ??= new T.MeshLambertMaterial({ color: c }));
+const NODE_COLORS: Record<NodeKind, number> = {
+  wood: 0x8b5c31,
+  ore: 0x8f9aa0,
+  fiber: 0xc9d36a,
+  herbs: 0x6fcf7a,
+};
+function nodeModel(kind: NodeKind) {
+  const g = new T.Group();
+  const block = (c: number, x: number, y: number, z: number, w: number, h: number, d: number) => {
+    const m = new T.Mesh(nodeGeo, nodeMat(c));
+    m.position.set(x, y + h / 2, z);
+    m.scale.set(w, h, d);
+    m.castShadow = true;
+    g.add(m);
+  };
+  if (kind === "wood") {
+    block(0x8b5c31, 0, 0, 0, 1.5, 0.45, 0.45);
+    block(0xd9a86a, 0.76, 0.02, 0, 0.04, 0.38, 0.38);
+    block(0x6b4224, -0.3, 0.45, 0.05, 0.6, 0.3, 0.35);
+  } else if (kind === "ore") {
+    block(0x8f9aa0, 0, 0, 0, 0.9, 0.55, 0.8);
+    block(0x737e84, 0.25, 0.55, -0.1, 0.45, 0.3, 0.45);
+    block(0xd27a4a, -0.2, 0.4, 0.38, 0.22, 0.18, 0.08);
+  } else if (kind === "fiber") {
+    for (const [x, z, h] of [[0, 0, 0.9], [0.22, 0.12, 0.7], [-0.2, 0.1, 0.75], [0.05, -0.2, 0.8]])
+      block(0xc9d36a, x, 0, z, 0.1, h, 0.1);
+  } else {
+    block(0x4f9e5a, 0, 0, 0, 0.7, 0.35, 0.7);
+    block(0x6fcf7a, 0.1, 0.35, -0.05, 0.45, 0.2, 0.45);
+    block(0xe98fc6, -0.15, 0.45, 0.2, 0.14, 0.14, 0.14);
+  }
+  return g;
+}
+const nodeViews = new Map<string, { node: ResourceNode; view: T.Group }>();
+let nodeCenter: Point | null = null;
+let nodeMap: MapData | null = null;
+function refreshResources(force = false) {
+  if (!worldStream || !player) return;
+  if (
+    !force &&
+    nodeMap === map &&
+    nodeCenter &&
+    distance(nodeCenter, player) < 10
+  )
+    return;
+  nodeCenter = { x: player.x, z: player.z };
+  nodeMap = map;
+  const free = (p: Point) =>
+    worldStream.contains(p) && !blocked(p.x, p.z, 0.75);
+  const root = campaign.camps.find((c) => !c.parentId) ?? campaign.camps[0];
+  const list = [
+    ...starterNodes(root, free),
+    ...resourceNodes(map, campaign.origin, unproject(player, campaign.origin), player, 60, free),
+  ];
+  const keep = new Set(list.map((n) => n.key));
+  for (const [key, v] of nodeViews)
+    if (!keep.has(key) || force) {
+      scene.remove(v.view);
+      nodeViews.delete(key);
+    }
+  const now = Date.now();
+  for (const key of Object.keys(campaign.harvested ?? {}))
+    if (campaign.harvested![key] <= now) delete campaign.harvested![key];
+  for (const n of list) {
+    const old = nodeViews.get(n.key);
+    if (old && distance(old.node, n) < 0.5) continue;
+    if (old) scene.remove(old.view);
+    const view = nodeModel(n.kind);
+    view.position.set(n.x, 0, n.z);
+    view.rotation.y = (hash(n.key) % 628) / 100;
+    scene.add(view);
+    nodeViews.set(n.key, { node: n, view });
+  }
+  for (const v of nodeViews.values())
+    v.view.visible = (campaign.harvested?.[v.node.key] ?? 0) <= now;
+}
+/** A blow gathers every ready spot it reaches: goods to the Vault, the spot crumbles. */
+function harvestAt(hits: (p: Point) => boolean) {
+  const now = Date.now();
+  let got = false;
+  for (const { node, view } of nodeViews.values()) {
+    if (!view.visible || !hits(node)) continue;
+    view.visible = false;
+    campaign.harvested ??= {};
+    campaign.harvested[node.key] =
+      now + RESPAWN_MS * (safe(node) ? 2 : 1);
+    campaign.stock[node.kind] += YIELD[node.kind];
+    burst(node, NODE_COLORS[node.kind], 10);
+    floatingText(`+${YIELD[node.kind]} ${NODE_NAMES[node.kind][0]}`, node, "#ffe5ab", "xp");
+    got = true;
+  }
+  if (got) {
+    sound(330, 0.08, "square");
+    persist();
+  }
+  return got;
+}
+/** QA: the gathering spots near the hero. */
+function resourceSnapshot() {
+  return [...nodeViews.values()].map(({ node, view }) => ({ ...node, ready: view.visible }));
+}
 function populateEncounters() {
   if (!worldStream || qaFixtureActive) return;
   for (let i = enemies.length - 1; i >= 0; i--)
@@ -779,6 +895,7 @@ function updateWorld(dt: number) {
     enemies.length = 0;
     home = campaign.camps.find((c) => c.id === player.campId)!;
     cameraTarget.set(player.x, 0, player.z);
+    refreshResources(true);
     persist();
   }
   // The bundled Lublin fragment works offline; fetch geography before its edge.
@@ -799,6 +916,7 @@ function updateWorld(dt: number) {
     expedition.refreshWorld();
   }
   populateEncounters();
+  refreshResources();
 }
 // The hero stays visible behind buildings: a flat tinted copy drawn only where
 // something already drawn is nearer (depth test "greater"). The copy is drawn after
@@ -1279,6 +1397,21 @@ function updateAttack(dt: number) {
           hurtEnemy(e, (attack.sweep ? 24 : 16) + attackPower(player));
           hit = true;
         }
+      const a = attack;
+      if (
+        harvestAt(
+          (p) =>
+            inArc(
+              player,
+              p,
+              heading,
+              a.sweep ? R.sweepReach : R.reach,
+              a.sweep ? R.sweepHalfArc : R.halfArc,
+              0.6,
+            ) && lineClear(player, p),
+        )
+      )
+        hit = true;
       if (hit && attack.sweep) {
         shake = 0.16;
         sound(130, 0.15, "triangle");
@@ -1305,6 +1438,8 @@ function updateShots(dt: number) {
       hurtPlayer(s.damage);
       hit = true;
     }
+    if (!hit && !s.fromEnemy)
+      hit = harvestAt((q) => segmentHitsCircle(before, p, q, 0.7));
     if (!hit && !s.fromEnemy)
       for (const e of enemies)
         if (
@@ -1946,6 +2081,7 @@ async function init() {
           weapon,
           campaign: JSON.parse(JSON.stringify(campaign)),
           rope: expedition.rope,
+          resources: resourceSnapshot(),
           spots: expedition.spotCount,
           world: {
             origin: campaign.origin,
@@ -2065,6 +2201,28 @@ async function init() {
                 resolveForQA();
               },
               travel: (lat: number, lon: number) => travelTo({ lat, lon }),
+              // Stand next to a ready gathering spot, facing it.
+              faceNode: (kind: string) => {
+                refreshResources(true);
+                const v = [...nodeViews.values()].find(
+                  (v) => v.view.visible && v.node.kind === kind,
+                );
+                if (!v) return null;
+                for (let a = 0; a < Math.PI * 2; a += 0.3) {
+                  const p = {
+                    x: v.node.x + Math.sin(a) * 1.6,
+                    z: v.node.z + Math.cos(a) * 1.6,
+                  };
+                  if (!blocked(p.x, p.z, R.radius) && lineClear(p, v.node)) {
+                    player.x = p.x;
+                    player.z = p.z;
+                    heading = Math.atan2(v.node.x - p.x, v.node.z - p.z);
+                    cameraTarget.set(player.x, 0, player.z);
+                    return v.node.key;
+                  }
+                }
+                return null;
+              },
               grantGold: (n: number) => {
                 player.coins = n;
               },

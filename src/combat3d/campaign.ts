@@ -124,6 +124,8 @@ export type Campaign = {
   stock: Stock;
   offers: Offer[];
   encounters: Record<string, number>;
+  /** Gathering spots taken, by key → time (ms) they grow back. */
+  harvested?: Record<string, number>;
   serial: number;
 };
 export const roleName = (r: Role) =>
@@ -421,6 +423,13 @@ export function parseCampaign(raw: string): Campaign | null {
     // Saves from before gathering get the starting stock.
     s.stock = { ...BALANCE.startStock, ...(s.stock ?? {}) };
     if (STOCK_KEYS.some((k) => !Number.isFinite(s.stock[k]) || s.stock[k] < 0))
+      return null;
+    s.harvested ??= {};
+    if (
+      typeof s.harvested !== "object" ||
+      Array.isArray(s.harvested) ||
+      Object.values(s.harvested).some((n) => !Number.isFinite(n))
+    )
       return null;
     s.encounters ??= {};
     if (

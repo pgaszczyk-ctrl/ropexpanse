@@ -275,6 +275,23 @@ try {
     await page.getByRole("button", { name: "Skarbiec", exact: true }).click();
     assert.equal(await page.locator(".stock-cell").count(), 5, "wood, ore, fibre, herbs, rope");
     await page.screenshot({ path: `work/combat3d/${tag}-vault.png` });
+    // A blow gathers a spot: wood to the Vault, the spot waits to grow back.
+    await page.click("#panel-close");
+    await page.click('[data-weapon="sword"]');
+    await fixture("empty"); // auto-aim prefers enemies; clear them for this check
+    const woodBefore = (await snap()).campaign.stock.wood;
+    const nodeKey = await page.evaluate(() => window.__combat3d.faceNode("wood"));
+    assert.ok(nodeKey, "a wood spot near the camp");
+    await gameWait(0.3);
+    await page.screenshot({ path: `work/combat3d/${tag}-gather.png` });
+    await attack();
+    await gameWait(0.6);
+    assert.equal((await snap()).campaign.stock.wood, woodBefore + 3, "wood gathered");
+    assert.equal((await snap()).resources.find((n) => n.key === nodeKey).ready, false);
+    await page.evaluate(() => window.__combat3d.camp());
+    await gameWait(0.3);
+    await page.click("#action");
+    await page.getByRole("button", { name: "Skarbiec", exact: true }).click();
     await page.click("#panel-close");
     await page.click("#action");
     // Too close to the camp: green circles show where it may stand instead of a message.

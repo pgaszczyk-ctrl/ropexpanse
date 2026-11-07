@@ -20,7 +20,14 @@ export type MapData = {
     path: boolean;
     name: string;
   }[];
-  areas: { id?: string; rings: number[][][]; water: boolean; name: string }[];
+  areas: {
+    id?: string;
+    rings: number[][][];
+    water: boolean;
+    name: string;
+    /** OSM landuse / leisure / natural value (absent in the bundled extract = green). */
+    kind?: string;
+  }[];
 };
 export const WORLD_VERSION = 2,
   SCALE = 0.18,
@@ -234,6 +241,7 @@ export function convertElements(elements: Element[], origin: Geo): MapData {
           water:
             t.natural === "water" || !!t.water || t.landuse === "reservoir",
           name: t.name ?? "",
+          kind: t.landuse ?? t.leisure ?? t.natural,
         });
     }
   }
