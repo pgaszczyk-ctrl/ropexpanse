@@ -44,35 +44,49 @@ export function spendRope(s: Campaign, units: number, scale: number) {
   s.stock.rope -= metres;
   return true;
 }
-const GOODS = ["wood", "ore", "fiber", "herbs"] as const;
+/** Production keys: the four gathered goods plus rope from the ropemaker (metres). */
+const MADE = ["wood", "ore", "fiber", "herbs", "rope"] as const;
+export type Made = Record<(typeof MADE)[number], number>;
 export const PRODUCTION_CAP_HOURS = 10;
 /** Counts circle production since the last count (also time spent away), up to the cap.
  * Returns true when the buffer just became full. A clock moved backwards adds nothing. */
 export function accrue(s: Campaign, now: number) {
   const rates = s.rates;
-  s.pending ??= { wood: 0, ore: 0, fiber: 0, herbs: 0 };
+  const pending = (s.pending ??= {});
   const since = s.producedAt ?? now;
   s.producedAt = now;
   if (!rates || now <= since) return false;
   const hours = Math.min(PRODUCTION_CAP_HOURS, (now - since) / 3_600_000);
   let full = true,
-    wasFull = true;
-  for (const k of GOODS) {
-    const cap = rates[k] * PRODUCTION_CAP_HOURS;
+    wasFull = true,
+    any = false;
+  for (const k of MADE) {
+    const rate = rates[k] ?? 0,
+      cap = rate * PRODUCTION_CAP_HOURS;
     if (cap <= 0) continue;
-    if (s.pending[k] < cap - 1e-9) wasFull = false;
-    s.pending[k] = Math.min(cap, s.pending[k] + rates[k] * hours);
-    if (s.pending[k] < cap - 1e-9) full = false;
+    any = true;
+    const have = pending[k] ?? 0;
+    if (have < cap - 1e-9) wasFull = false;
+    let add = Math.min(cap - have, rate * hours);
+    // The ropemaker twists fibre from the Vault: no fibre, no rope.
+    if (k === "rope") {
+      add = Math.max(0, Math.min(add, s.stock.fiber * BALANCE.ropePerFiber));
+      s.stock.fiber -= Math.ceil(add / BALANCE.ropePerFiber - 1e-9);
+      s.stock.fiber = Math.max(0, s.stock.fiber);
+    }
+    pending[k] = have + Math.max(0, add);
+    if (pending[k]! < cap - 1e-9) full = false;
   }
-  return full && !wasFull && GOODS.some((k) => rates[k] > 0);
+  return any && full && !wasFull;
 }
 /** Moves whole units of collected production into the Vault stock. */
 export function collect(s: Campaign) {
-  const got = { wood: 0, ore: 0, fiber: 0, herbs: 0 };
+  const got: Made = { wood: 0, ore: 0, fiber: 0, herbs: 0, rope: 0 };
   if (!s.pending) return got;
-  for (const k of GOODS) {
-    const n = Math.floor(s.pending[k]);
-    s.pending[k] -= n;
+  for (const k of MADE) {
+    const n = Math.floor(s.pending[k] ?? 0);
+    if (!n) continue;
+    s.pending[k] = (s.pending[k] ?? 0) - n;
     s.stock[k] += n;
     got[k] = n;
   }
@@ -86,7 +100,18 @@ export function twistRope(s: Campaign, bundles: number) {
   s.stock.rope += n * BALANCE.ropePerFiber;
   return n * BALANCE.ropePerFiber;
 }
-export type Role = "warrior" | "mage" | "archer";
+export type Role =
+  | "warrior"
+  | "mage"
+  | "archer"
+  | "herbalist"
+  | "woodcutter"
+  | "miner"
+  | "ropemaker";
+export const ROLES: Role[] = ["warrior", "mage", "archer", "herbalist", "woodcutter", "miner", "ropemaker"];
+/** Camp folk do not fight: they stay in their camp and work (owner's design doc). */
+export const CAMP_ROLES: Role[] = ["woodcutter", "miner", "ropemaker"];
+export const isCampRole = (r: Role) => CAMP_ROLES.includes(r);
 export type Slot = "weapon" | "offhand" | "armor" | "helmet" | "boots";
 /** Display order of the five equipment places. */
 export const SLOTS: readonly Slot[] = [
@@ -173,8 +198,8 @@ export type Campaign = {
   encounters: Record<string, number>;
   /** Circle production per hour (last computed from the map), what waits to be collected,
    * and when it was last counted (ms). */
-  rates?: Record<"wood" | "ore" | "fiber" | "herbs", number>;
-  pending?: Record<"wood" | "ore" | "fiber" | "herbs", number>;
+  rates?: Partial<Made>;
+  pending?: Partial<Made>;
   producedAt?: number;
   /** Closed haze vents, by key → when they were closed (ms). They stay closed. */
   vents?: Record<string, number>;
@@ -183,7 +208,15 @@ export type Campaign = {
   serial: number;
 };
 export const roleName = (r: Role) =>
-  ({ warrior: "Wojownik", mage: "Mag", archer: "Łucznik" })[r];
+  ({
+    warrior: "Wojownik",
+    mage: "Mag",
+    archer: "Łucznik",
+    herbalist: "Zielarz",
+    woodcutter: "Drwal",
+    miner: "Górnik",
+    ropemaker: "Powroźnik",
+  })[r];
 export function xpThreshold(level: number) {
   const n = Math.max(0, level - 1);
   return Math.round(240 * n + 85 * n * n + 12 * n * n * n);
@@ -289,7 +322,11 @@ export const PARTY_SIZE = 3;
 /** The party's ids: the controlled character first, then up to two companions. */
 export function partyOf(s: Campaign) {
   const ids = [s.activeId, ...(s.party ?? []).filter((id) => id !== s.activeId)]
-    .filter((id, i, a) => a.indexOf(id) === i && s.characters.some((c) => c.id === id))
+    .filter(
+      (id, i, a) =>
+        a.indexOf(id) === i &&
+        s.characters.some((c) => c.id === id && (id === s.activeId || !isCampRole(c.role))),
+    )
     .slice(0, PARTY_SIZE);
   s.party = ids;
   return ids;
@@ -298,6 +335,8 @@ export function partyOf(s: Campaign) {
 export function toggleParty(s: Campaign, id: string) {
   const ids = partyOf(s);
   if (id === s.activeId) return false;
+  const c = s.characters.find((v) => v.id === id);
+  if (!c || isCampRole(c.role)) return false;
   if (ids.includes(id)) s.party = ids.filter((v) => v !== id);
   else if (ids.length < PARTY_SIZE) s.party = [...ids, id];
   else return false;
@@ -510,7 +549,9 @@ export function parseCampaign(raw: string): Campaign | null {
       if (
         v !== undefined &&
         (typeof v !== "object" ||
-          GOODS.some((k) => !Number.isFinite(v[k]) || v[k] < 0))
+          MADE.some(
+            (k) => v[k] !== undefined && (!Number.isFinite(v[k]) || v[k]! < 0),
+          ))
       )
         return null;
     }
@@ -569,7 +610,7 @@ export function parseCampaign(raw: string): Campaign | null {
         throw Error();
       if (
         i.affinity !== undefined &&
-        !["warrior", "mage", "archer"].includes(i.affinity)
+        !ROLES.includes(i.affinity)
       )
         throw Error();
       items.add(i.id);
@@ -612,7 +653,7 @@ export function parseCampaign(raw: string): Campaign | null {
         !point(c) ||
         ids.has(c.id) ||
         !s.camps.some((v) => v.id === c.campId) ||
-        !["warrior", "mage", "archer"].includes(c.role) ||
+        !ROLES.includes(c.role) ||
         typeof c.name !== "string" ||
         !Number.isFinite(c.appearance) ||
         ![c.exp, c.hp, c.coins, c.kills, c.fragments].every(
@@ -654,7 +695,7 @@ export function parseCampaign(raw: string): Campaign | null {
         (!Array.isArray(o.candidates) ||
           o.candidates.some(
             (c) =>
-              !["warrior", "mage", "archer"].includes(c.role) ||
+              !ROLES.includes(c.role) ||
               !Number.isInteger(c.level) ||
               c.level < 1 ||
               c.level > 100,

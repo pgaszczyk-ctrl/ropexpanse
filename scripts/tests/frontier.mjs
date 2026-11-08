@@ -71,9 +71,13 @@ const reward = {id:'reward',kind:'sword',name:'Miecz',slot:'weapon',icon:'sword'
 const offer = {id:'o',campId:'camp-1',gold:10,items:[],ceiling:10,readyAt:0,candidates:null,seed:1};
 const poor = recruitmentProfile(offer,0), rich = recruitmentProfile({...offer,gold:1000,items:[reward]},0);
 assert(rich.chance > poor.chance && rich.chance < 1);
-assert(recruitmentProfile({...offer,items:[reward]},0).roles.warrior > 0.65);
+// An item shifts the class: with seven classes (herbalist and camp folk too) the shift is
+// checked as 'the largest share and at least twice the base share'.
+const baseRoles = recruitmentProfile(offer,0).roles, withSword = recruitmentProfile({...offer,items:[reward]},0).roles;
+assert(withSword.warrior >= 2 * baseRoles.warrior && Object.values(withSword).every(v => v <= withSword.warrior));
 const scales = {...reward,kind:'scales',name:'Magiczne łuski',slot:'material',icon:'scales',affinity:'mage'};
-assert(recruitmentProfile({...offer,items:[scales]},0).roles.mage > 0.65);
+const withScales = recruitmentProfile({...offer,items:[scales]},0).roles;
+assert(withScales.mage >= 2 * baseRoles.mage && Object.values(withScales).every(v => v <= withScales.mage));
 assert(recruitmentProfile({...offer,gold:1000,items:[{...reward,rarity:'legendary'}]},0).maxLevel > rich.maxLevel);
 assert(recruitmentProfile({...offer,ceiling:2,gold:100000,items:[{...reward,rarity:'legendary'}]},0).maxLevel <= 2);
 let poorSuccess=0, richSuccess=0, warriors=0, total=0;
@@ -85,7 +89,7 @@ for (let i=1;i<=4000;i++) {
   total+=candidates.length; warriors+=candidates.filter(c=>c.role==='warrior').length;
 }
 assert(poorSuccess < richSuccess && poorSuccess > 0 && richSuccess < 4000);
-assert(warriors/total > .65,'sword bias is present in actual generated candidates');
+assert(warriors/total > 2 * baseRoles.warrior,'sword bias is present in actual generated candidates');
 const failedState = newCampaign({x:0,z:0},origin), hero=activeCharacter(failedState);
 const held=hero.bag[0];
 const failedOffer=postOffer(failedState,'camp-1',1,[held.id],0);

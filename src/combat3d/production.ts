@@ -46,3 +46,46 @@ export function circleRates(
   }
   return r;
 }
+
+/** Camp folk (owner's design doc): a woodcutter by a forest or a miner by industry works
+ * faster, but never stops (a miner by blocks of flats is just slower). The ropemaker
+ * twists rope from the Vault's fibre. Rates per hour. */
+export const WORKERS = {
+  woodcutter: { good: "wood", base: 2, kinds: ["forest", "wood", "scrub", "orchard", "park"] },
+  miner: { good: "ore", base: 1.5, kinds: ["quarry", "industrial", "construction", "railway", "brownfield", "landfill"] },
+  ropemaker: { good: "rope", base: 10, kinds: [] as string[] },
+} as const;
+export type Worker = {
+  role: string;
+  level: number;
+  trait?: string;
+  rarity?: string;
+  at: Point;
+};
+const TRAIT_K: Record<string, number> = { common: 0.5, rare: 1, epic: 1.5, legendary: 1.5 };
+/** Share of matching ground within ~20 units of a camp (0–1). */
+export function groundShare(at: Point, kinds: readonly string[], map: MapData) {
+  if (!kinds.length) return 1;
+  let hit = 0,
+    n = 0;
+  for (let x = -20; x <= 20; x += 5)
+    for (let z = -20; z <= 20; z += 5) {
+      if (x * x + z * z > 400) continue;
+      n++;
+      if (kinds.includes(areaKindAt(map, { x: at.x + x, z: at.z + z }) ?? "")) hit++;
+    }
+  return n ? hit / n : 0;
+}
+export function workerRates(workers: Worker[], map: MapData) {
+  const out: Record<string, number> = {};
+  for (const w of workers) {
+    const job = WORKERS[w.role as keyof typeof WORKERS];
+    if (!job) continue;
+    const share = groundShare(w.at, job.kinds, map);
+    const trait =
+      w.trait === "master" ? 2 : w.trait === "diligent" ? 1 + 0.2 * (TRAIT_K[w.rarity ?? "common"] ?? 0.5) : 1;
+    const rate = job.base * (job.kinds.length ? 0.4 + 1.6 * share : 1) * (1 + 0.05 * (w.level - 1)) * trait;
+    out[job.good] = (out[job.good] ?? 0) + rate;
+  }
+  return out;
+}

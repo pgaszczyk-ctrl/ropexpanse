@@ -1737,3 +1737,9 @@ canvas[data-interaction="camp"] {
   box-shadow: 0 0 0 3px var(--rarity, transparent);
   border-radius: 50%;
 }
+.party-job {
+  align-self: center;
+  color: #cbb48a;
+  font-size: 13px;
+  padding: 0 6px;
+}

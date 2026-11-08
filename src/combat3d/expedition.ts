@@ -20,6 +20,7 @@ import {
   connectCamps,
   partyOf,
   toggleParty,
+  isCampRole,
   PARTY_SIZE,
   ropeAvailable,
   spendRope,
@@ -397,7 +398,8 @@ export class Expedition {
         b.style.setProperty("--portrait-color", `hsl(${v.appearance % 360} 25% 47%)`);
         b.style.setProperty("--rarity", RARITY_COLORS[v.rarity ?? "common"]);
         row.append(b);
-        if (v.id !== c.id) {
+        if (v.id !== c.id && isCampRole(v.role)) row.append(node("span", "Pracuje w obozie", "party-job"));
+        else if (v.id !== c.id) {
           const t = button(inParty ? "Zostaw w obozie" : "Do drużyny", () => {
             if (!inParty && !nearCamp(s, c) && distance(v, c) > BALANCE.safeRadius) {
               this.h.notify("Wędrowiec czeka w obozie — idź po niego");
@@ -516,13 +518,15 @@ export class Expedition {
       col.append(twist);
       // What the closed circles produced (also while you were away).
       const rates = s.rates;
-      if (rates && Object.values(rates).some((v) => v > 0)) {
+      if (rates && Object.values(rates).some((v) => (v ?? 0) > 0)) {
         const made = node("div", "", "stock-row production");
-        for (const k of ["wood", "ore", "fiber", "herbs"] as const) {
-          if (rates[k] <= 0) continue;
+        for (const k of STOCK_KEYS) {
+          const rate = rates[k] ?? 0;
+          if (rate <= 0) continue;
           const cell = node("span", "", "stock-cell");
-          cell.innerHTML = `${stockIcon(k)}<b>+${Math.floor(s.pending?.[k] ?? 0)}</b><small>${rates[k].toFixed(1)}/h</small>`;
-          cell.setAttribute("aria-label", `${STOCK_NAMES[k]}: ${Math.floor(s.pending?.[k] ?? 0)} czeka, ${rates[k].toFixed(1)} na godzinę`);
+          const unit = k === "rope" ? " m" : "";
+          cell.innerHTML = `${stockIcon(k)}<b>+${Math.floor(s.pending?.[k] ?? 0)}${unit}</b><small>${rate.toFixed(1)}/h</small>`;
+          cell.setAttribute("aria-label", `${STOCK_NAMES[k]}: ${Math.floor(s.pending?.[k] ?? 0)} czeka, ${rate.toFixed(1)} na godzinę`);
           made.append(cell);
         }
         const take = button("Zbierz z kręgów", () => {
@@ -530,7 +534,7 @@ export class Expedition {
           this.h.save();
           this.render();
         });
-        take.disabled = !Object.values(s.pending ?? {}).some((v) => v >= 1);
+        take.disabled = !Object.values(s.pending ?? {}).some((v) => (v ?? 0) >= 1);
         col.append(made, take);
       }
     }
@@ -678,7 +682,7 @@ export class Expedition {
                 const hired = hire(s, o.id, v.id);
                 if (hired) {
                   // A new hire joins the party when there is room.
-                  if (partyOf(s).length < PARTY_SIZE) {
+                  if (partyOf(s).length < PARTY_SIZE && !isCampRole(hired.role)) {
                     toggleParty(s, hired.id);
                     this.h.party();
                   }
@@ -957,6 +961,10 @@ export class Expedition {
       c = activeCharacter(s);
     if (v.id === c.id) return;
     const inParty = partyOf(s).includes(v.id);
+    if (isCampRole(v.role)) {
+      this.h.notify(`${v.name} pracuje w obozie`);
+      return;
+    }
     if (this.rope || this.h.combat() || (!inParty && !nearCamp(s, c))) {
       this.h.notify(this.h.combat() ? "Najpierw zakończ walkę" : "Wróć do obozu");
       return;

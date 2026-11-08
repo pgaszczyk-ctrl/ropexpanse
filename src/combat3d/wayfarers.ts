@@ -44,12 +44,23 @@ export const TRAITS: Record<Role, Trait[]> = {
     { id: "firstCrit", name: "Pierwsza strzała", text: "pierwszy strzał w walce zawsze krytyczny" },
     { id: "evasion", name: "Zwinność", text: "czasem unika ciosu" },
   ],
+  herbalist: [
+    { id: "bloom", name: "Dobra ręka", text: "leczy mocniej" },
+    { id: "quickRevive", name: "Na nogi", text: "powaleni w drużynie wstają szybciej" },
+  ],
+  woodcutter: [{ id: "diligent", name: "Pracowitość", text: "pracuje szybciej" }],
+  miner: [{ id: "diligent", name: "Pracowitość", text: "pracuje szybciej" }],
+  ropemaker: [{ id: "diligent", name: "Pracowitość", text: "pracuje szybciej" }],
 };
 /** One legend per class, unlike anyone else's. */
 export const LEGENDS: Record<Role, Trait> = {
   warrior: { id: "unbroken", name: "Niezłomność", text: "ogłusza co 4. ciosem i nie spada poniżej 1 życia raz na walkę" },
   mage: { id: "lantern", name: "Latarnik", text: "wokół niego Mgła się przerzedza: wrogowie zadają mniej, spod nóg sypią się iskry" },
   archer: { id: "hawk", name: "Sokole oko", text: "każdy strzał po 3 s spokoju jest krytyczny, unika co piątego ciosu" },
+  herbalist: { id: "lifebloom", name: "Źródło", text: "leczy całą drużynę naraz, a powaleni wstają od razu po walce" },
+  woodcutter: { id: "master", name: "Mistrz", text: "pracuje dwa razy szybciej" },
+  miner: { id: "master", name: "Mistrz", text: "pracuje dwa razy szybciej" },
+  ropemaker: { id: "master", name: "Mistrz", text: "pracuje dwa razy szybciej" },
 };
 export const TITLES: Record<Role, [string, string, string][]> = {
   warrior: [
@@ -58,6 +69,10 @@ export const TITLES: Record<Role, [string, string, string][]> = {
   ],
   mage: [["Mądry", "Mądra", "the Wise"]],
   archer: [["Bystrooki", "Bystrooka", "the Keen-eyed"]],
+  herbalist: [["Dobry", "Dobra", "the Kind"]],
+  woodcutter: [["Pracowity", "Pracowita", "the Diligent"]],
+  miner: [["Pracowity", "Pracowita", "the Diligent"]],
+  ropemaker: [["Pracowity", "Pracowita", "the Diligent"]],
 };
 export function traitOf(role: Role, id?: string): Trait | undefined {
   return [...TRAITS[role], LEGENDS[role]].find((t) => t.id === id);

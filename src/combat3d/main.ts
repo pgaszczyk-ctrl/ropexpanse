@@ -15,12 +15,13 @@ import {
   makeItem,
   GEAR_KINDS,
   accrue,
+  isCampRole,
   distanceToSafeZone,
   partyOf,
   type Character,
 } from "./campaign";
 import { enclosedAreas } from "./territory-rules";
-import { circleRates } from "./production";
+import { circleRates, workerRates } from "./production";
 import { TRAIT_STRENGTH, RARITY_COLORS, fullName } from "./wayfarers";
 import {
   ventCells,
@@ -840,6 +841,7 @@ function harvestAt(hits: (p: Point) => boolean) {
 // Circle production: rates are re-read from the map when circles or ground change;
 // the buffer grows from saved time, so it also counts while the game is closed.
 let ratesFor: { circles: unknown; map: MapData | null } = { circles: null, map: null };
+let circlePart: Record<string, number> = {};
 let productionClock = 0;
 function updateProduction(dt: number) {
   productionClock += dt;
@@ -849,10 +851,26 @@ function updateProduction(dt: number) {
   if (ratesFor.circles !== circles || ratesFor.map !== map) {
     const rates = circleRates(circles, map, (p) => worldStream.contains(p));
     if (rates) {
-      campaign.rates = rates;
+      circlePart = rates;
       ratesFor = { circles, map };
     }
   }
+  // Camp folk add their work to what the circles give.
+  const workers = workerRates(
+    campaign.characters
+      .filter((c) => isCampRole(c.role))
+      .map((c) => ({
+        role: c.role,
+        level: levelOf(c.exp),
+        trait: c.trait,
+        rarity: c.rarity,
+        at: campaign.camps.find((v) => v.id === c.campId) ?? c,
+      })),
+    map,
+  );
+  const rates: Record<string, number> = { ...circlePart };
+  for (const [k, v] of Object.entries(workers)) rates[k] = (rates[k] ?? 0) + v;
+  campaign.rates = rates;
   if (accrue(campaign, Date.now())) notify("Skarbiec pełny — zajrzyj do obozu");
 }
 // ---- Passive traits (owner's design doc, Cecha): work alone, for the hero and companions ----
@@ -978,7 +996,15 @@ function updateCompanions(dt: number) {
       // Downed: lies until the fight is over (8 s of calm) or the leader is in a camp.
       p.y = -0.1;
       m.rig.root.rotation.z = Math.PI * 0.4;
-      if (time - lastCombat > 8 || safe(player)) {
+      const healers = [player, ...companions.map((o) => o.c)].filter(
+        (v) => v.role === "herbalist" && v.hp > 0,
+      );
+      const calm = healers.some((v) => v.trait === "lifebloom")
+        ? 0.5
+        : healers.some((v) => v.trait === "quickRevive")
+          ? 4
+          : 8;
+      if (time - lastCombat > calm || safe(player)) {
         c.hp = Math.round(maxHealth(c) * 0.3);
         m.rig.root.rotation.z = 0;
         p.y = 0;
@@ -987,6 +1013,17 @@ function updateCompanions(dt: number) {
       if (distance(p, player) > 25) {
         const f = formation(slot);
         p.set(f.x, 0, f.z);
+      }
+      // Herbalist: heal the most hurt party member within reach before fighting.
+      if (c.role === "herbalist" && m.cool <= 0) {
+        const hurt = [player, ...companions.map((o) => o.c)]
+          .filter((v) => v.hp > 0 && v.hp < maxHealth(v) * 0.7 && distance(v, p) < 9)
+          .sort((a, b) => a.hp / maxHealth(a) - b.hp / maxHealth(b));
+        if (hurt.length) {
+          healParty(c, c.trait === "lifebloom" ? hurt : [hurt[0]]);
+          m.cool = 2.2;
+          m.swing = 0.3;
+        }
       }
       const foe = enemies
         .filter(
@@ -1046,6 +1083,19 @@ function updateCompanions(dt: number) {
     m.bar.quaternion.copy(camera.quaternion);
     m.fill.scale.x = clamp(c.hp / maxHealth(c), 0, 1);
   });
+}
+/** A herbalist's healing: leaves spiral round each target, green numbers. */
+function healParty(by: Character, targets: Character[]) {
+  const amount = Math.round(
+    (12 + levelOf(by.exp) * 2) * (by.trait === "bloom" ? 1 + 0.3 * traitPower(by) : 1),
+  );
+  for (const v of targets) {
+    if (v.hp <= 0) continue;
+    v.hp = Math.min(maxHealth(v), v.hp + amount);
+    floatingText(`+${amount}`, v, "#9df29a");
+    burst(v, 0x8be05a, 8);
+  }
+  sound(720, 0.12, "sine");
 }
 /** Who an enemy goes for: the nearest of the party, a warrior counting as nearer (draws aggro). */
 function enemyTarget(p: Point): { at: Point; m?: Companion } {
@@ -1574,6 +1624,11 @@ function beginAttack(sweep = false, autoAim = false) {
       );
   }
   if (sweep) sweepReady = time + R.sweepCooldown;
+  if (sweep && player.role === "herbalist") {
+    healParty(player, [player, ...companions.map((m) => m.c)].filter((v) => distance(v, player) < 8));
+    lastAttack = time;
+    return;
+  }
   attack = {
     t: 0,
     duration: sweep ? 0.58 : R.attackDuration,
@@ -2638,11 +2693,11 @@ async function init() {
               },
               travel: (lat: number, lon: number) => travelTo({ lat, lon }),
               // A companion of the given role joins the party next to the hero.
-              companion: (role: "warrior" | "mage" | "archer") => {
+              companion: (role: "warrior" | "mage" | "archer" | "herbalist") => {
                 const c: Character = {
                   ...JSON.parse(JSON.stringify(player)),
                   id: `qa-${role}-${++campaign.serial}`,
-                  name: role === "warrior" ? "Bogdan" : role === "mage" ? "Bogna" : "Hugo",
+                  name: { warrior: "Bogdan", mage: "Bogna", archer: "Hugo", herbalist: "Zofia" }[role],
                   role,
                   appearance: 120 + campaign.serial,
                   bag: [],
@@ -2687,7 +2742,8 @@ async function init() {
               },
               // Circle production as if the hero had been away for `hours`.
               production: (rates: Record<string, number>, hours: number) => {
-                campaign.rates = { wood: 0, ore: 0, fiber: 0, herbs: 0, ...rates };
+                circlePart = { wood: 0, ore: 0, fiber: 0, herbs: 0, ...rates };
+                campaign.rates = circlePart;
                 campaign.producedAt = Date.now() - hours * 3_600_000;
                 ratesFor = { circles: enclosedAreas(campaign), map };
                 accrue(campaign, Date.now());
@@ -2713,6 +2769,11 @@ async function init() {
                   }
                 }
                 return null;
+              },
+              // Sets the leader's health and keeps the fight going (no calm regeneration).
+              setHp: (hp: number) => {
+                player.hp = hp;
+                lastCombat = time + 30;
               },
               grantGold: (n: number) => {
                 player.coins = n;

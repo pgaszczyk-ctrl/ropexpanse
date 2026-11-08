@@ -76,8 +76,22 @@ try {
   s = await snap();
   assert.equal(s.companions.length, 2, "old leader became a companion");
   assert.ok(!s.companions.some((m) => m.id === warrior));
+  // A herbalist companion heals a hurt leader.
+  await page.click("#panel-close").catch(() => {});
+  await page.click(".vitals #characters");
+  await page.getByRole("button", { name: "Zostaw w obozie" }).first().click();
+  await page.click("#panel-close");
+  await qa("companion", "herbalist");
+  await qa("fixture", "empty");
+  await qa("setHp", 30);
+  let healed = false;
+  for (let i = 0; i < 20 && !healed; i++) {
+    await gameWait(0.3);
+    healed = (await snap()).player.hp > 30;
+  }
+  assert.ok(healed, "herbalist healed the leader");
   assert.deepEqual(errors, []);
-  console.log("PASS: party of three follows, fights alone, draws enemy attacks, switch control from the panel");
+  console.log("PASS: party of three follows, fights alone, draws enemy attacks, switch control from the panel, herbalist heals");
 } finally {
   await browser.close();
   server.httpServer.close();

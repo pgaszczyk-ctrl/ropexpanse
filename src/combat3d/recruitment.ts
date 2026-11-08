@@ -7,12 +7,13 @@ export function itemAffinity(i: Item): Role | undefined {
 }
 export function recruitmentProfile(o: Pick<Offer, "gold" | "items" | "ceiling">, buildings: number) {
   const score = Math.max(0, o.gold) + o.items.reduce((n, i) => n + i.value * (1 + itemRarity(i) * 0.15), 0);
-  const weights: Record<Role, number> = { warrior: 1, mage: 1, archer: 1 };
+  // Fighters are the usual answer; herbalists and camp folk come less often.
+  const weights: Record<Role, number> = { warrior: 1, mage: 1, archer: 1, herbalist: 0.7, woodcutter: 0.45, miner: 0.45, ropemaker: 0.45 };
   for (const item of o.items) {
     const affinity = itemAffinity(item);
     if (affinity) weights[affinity] += Math.sqrt(item.value / 35) * (1 + itemRarity(item) * 0.25);
   }
-  const sum = weights.warrior + weights.mage + weights.archer;
+  const sum = Object.values(weights).reduce((a, b) => a + b, 0);
   const roles = Object.fromEntries(Object.entries(weights).map(([key, n]) => [key, n / sum])) as Record<Role, number>;
   const weaponBonus = Math.max(0, ...o.items.filter(i => i.slot === "weapon").map(i => Math.max(0, (i.level ?? Math.max(1, Math.floor(i.power / 3))) - 1) * 0.6 + itemRarity(i)));
   const maxLevel = Math.max(1, Math.min(100, o.ceiling, 1 + Math.floor(Math.sqrt(score / 120) + weaponBonus)));
@@ -36,7 +37,13 @@ export function candidatesFor(o: Offer, buildings: number, region: Region = "pl"
   const score = Math.max(0, o.gold) + o.items.reduce((n, i) => n + i.value, 0);
   const names = new Set(taken);
   return Array.from({ length: count }, (_, i) => {
-    const pick = rand(), role: Role = pick < profile.roles.warrior ? "warrior" : pick < profile.roles.warrior + profile.roles.mage ? "mage" : "archer";
+    const pick = rand();
+    let role: Role = "warrior", acc = 0;
+    for (const [r, w] of Object.entries(profile.roles) as [Role, number][]) {
+      acc += w;
+      role = r;
+      if (pick < acc) break;
+    }
     rand(); // formerly the name draw
     const appearance = Math.floor(rand() * 10000), level = Math.max(1, profile.maxLevel - Math.floor(rand() * Math.max(1, Math.ceil(profile.maxLevel * 0.4))));
     let who = (o.seed ^ Math.imul(i + 1, 2654435761)) | 0;
