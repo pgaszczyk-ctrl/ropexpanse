@@ -261,6 +261,8 @@ const templates = [
   ["Kostur bursztynowy", "weapon", 7, 260, "staff"],
   ["Drewniana tarcza", "offhand", 2, 70, "shield"],
   ["Kryształowy orb", "offhand", 2, 70, "orb"],
+  ["Topór", "weapon", 5, 180, "axe"],
+  ["Młot", "weapon", 6, 220, "hammer"],
 ] as const;
 export const GEAR_KINDS = templates.length;
 export function makeItem(s: Campaign, index: number, tier = 1): Item {
@@ -274,7 +276,7 @@ export function makeItem(s: Campaign, index: number, tier = 1): Item {
     level: tier,
     rarity: "common",
     affinity:
-      icon === "sword" || icon === "shield"
+      icon === "sword" || icon === "shield" || icon === "axe" || icon === "hammer"
         ? "warrior"
         : icon === "staff" || icon === "orb"
           ? "mage"

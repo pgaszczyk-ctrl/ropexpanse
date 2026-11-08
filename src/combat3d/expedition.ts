@@ -83,6 +83,10 @@ const paths: Record<string, string> = {
     '<path fill="#668b94" stroke="#3e5860" stroke-width="2" d="m15 10 9 5h8l9-5 9 14-8 7-3-5v23H17V26l-3 5-8-7Z"/><path stroke="#d4b575" stroke-width="3" d="M17 36h22"/>',
   helmet:
     '<path fill="#99a8ab" stroke="#53696f" stroke-width="2" d="M11 38V27a17 17 0 0 1 34 0v11l-10 8V29H21v17Z"/><path stroke="#d0aa63" stroke-width="4" d="M9 28h38"/>',
+  axe:
+    '<path stroke="#8b5c31" stroke-width="5" stroke-linecap="round" d="M14 48 38 12"/><path fill="#b9c3c6" stroke="#4c5b60" stroke-width="2" d="M33 8c9 0 15 6 15 15l-9 1-8-8Z"/>',
+  hammer:
+    '<path stroke="#8b5c31" stroke-width="5" stroke-linecap="round" d="M16 48 34 18"/><path fill="#9aa5a8" stroke="#4c5b60" stroke-width="2" d="m24 10 16-6 8 14-16 6Z"/>',
   shield:
     '<path fill="#9a6a3c" stroke="#5d452f" stroke-width="2" d="M28 6c8 4 14 5 20 5 0 19-6 31-20 39C14 42 8 30 8 11c6 0 12-1 20-5Z"/><path stroke="#c9ccc6" stroke-width="4" d="M28 9v38M12 22h32"/><circle cx="28" cy="22" r="5" fill="#d4b575"/>',
   orb: '<circle cx="28" cy="25" r="15" fill="#70c9e3" stroke="#2f6f85" stroke-width="2"/><circle cx="23" cy="20" r="4" fill="#e9fbff"/><path fill="#8b5c31" stroke="#5d452f" stroke-width="2" d="M17 40h22l-4 9H21Z"/>',

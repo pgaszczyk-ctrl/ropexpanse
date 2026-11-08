@@ -75,7 +75,7 @@ assert(c.bag.some((v) => v.id === sword.id));
 }
 // Five equipment places: weapon, second hand, armour, helmet, boots.
 assert.deepEqual(SLOTS, ["weapon", "offhand", "armor", "helmet", "boots"]);
-const shield = makeItem(s, GEAR_KINDS - 2);
+const shield = makeItem(s, 7); // "Drewniana tarcza"
 assert.equal(shield.slot, "offhand");
 c.bag.push(shield);
 const defence = armorPower(c);

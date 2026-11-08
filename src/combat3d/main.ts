@@ -25,6 +25,7 @@ import {
 } from "./campaign";
 import { enclosedAreas } from "./territory-rules";
 import { circleRates, workerRates } from "./production";
+import { weaponSkill, offhandSkill, SKILLS } from "./skills";
 import {
   TRAIT_STRENGTH,
   RARITY_COLORS,
@@ -113,6 +114,8 @@ type Shot = {
   damage: number;
   /** Who shot it (for traits). */
   by?: Character;
+  /** Fireball: bursts and hurts everyone within this radius. */
+  explode?: number;
 };
 type Particle = {
   node: T.Mesh;
@@ -886,6 +889,71 @@ function updateProduction(dt: number) {
   campaign.rates = rates;
   if (accrue(campaign, Date.now())) notify("Skarbiec pełny — zajrzyj do obozu");
 }
+// ---- Equipment skills (owner's design doc, Arsenał) ----
+let whirl = false,
+  skill2Ready = 0,
+  tauntUntil = 0,
+  manaShield = 0,
+  manaShieldUntil = 0;
+function useSkill(id: "charge" | "quake" | "fireball") {
+  const power = attackPower(player);
+  if (id === "charge") {
+    // A dash along the heading: everyone on the way is hurt and thrown aside.
+    const from = { x: player.x, z: player.z };
+    for (let i = 0; i < 50; i++) {
+      const nx = player.x + Math.sin(heading) * 0.1,
+        nz = player.z + Math.cos(heading) * 0.1;
+      if (blocked(nx, nz, R.radius)) break;
+      player.x = nx;
+      player.z = nz;
+    }
+    for (const e of enemies)
+      if (e.state !== "dead" && segmentHitsCircle(from, player, e.rig.root.position, 1.2)) {
+        hurtEnemy(e, dealtBy(player, 22 + power, e, false), player);
+        slideEnemy(e.rig.root.position, Math.sin(heading + 1.4) * 1.5, Math.cos(heading + 1.4) * 1.5);
+      }
+    burst(from, 0xd9c79a, 10);
+    sound(180, 0.15, "sawtooth", 0.04);
+  } else if (id === "quake") {
+    shake = 0.25;
+    burst(player, 0x8b6b45, 18);
+    for (const e of enemies)
+      if (e.state !== "dead" && distance(e.rig.root.position, player) < 3.5) {
+        hurtEnemy(e, dealtBy(player, 20 + power, e, false), player);
+        if ((e.state as string) !== "dead") {
+          e.state = "recover";
+          e.timer = Math.max(e.timer, 1.2);
+          e.warning.visible = false;
+        }
+      }
+    sound(90, 0.25, "triangle", 0.05);
+  } else {
+    fire({ x: player.x + Math.sin(heading) * 0.65, z: player.z + Math.cos(heading) * 0.65 }, heading, false);
+    const shot = shots[shots.length - 1];
+    shot.damage = 26 + power;
+    shot.explode = 2.5;
+    (shot.node.material as T.MeshBasicMaterial).color.set(0xff8a3d);
+    shot.node.scale.setScalar(1.6);
+  }
+}
+/** Second-hand skill (button R): shield taunt or mana shield. */
+function useSkill2() {
+  const id = offhandSkill(player);
+  if (!id || !started || paused || helpOpen || deathUntil > time || time < skill2Ready) return;
+  skill2Ready = time + SKILLS[id].cooldown;
+  if (id === "taunt") {
+    tauntUntil = time + 4;
+    for (const e of enemies)
+      if (e.state !== "dead" && distance(e.rig.root.position, player) < 8)
+        floatingText("!", e.rig.root.position, "#ff6b4a");
+    burst(player, 0xff7a1a, 12);
+  } else {
+    manaShield = 40 + attackPower(player) * 2;
+    manaShieldUntil = time + 6;
+    burst(player, 0x2e9bff, 14);
+  }
+  sound(440, 0.15, "sine");
+}
 // ---- Passive traits (owner's design doc, Cecha): work alone, for the hero and companions ----
 const traitRuntime = new Map<string, { hits: number; lastHit: number; saved: boolean }>();
 function traitState(c: Character) {
@@ -1112,6 +1180,7 @@ function healParty(by: Character, targets: Character[]) {
 }
 /** Who an enemy goes for: the nearest of the party, a warrior counting as nearer (draws aggro). */
 function enemyTarget(p: Point): { at: Point; m?: Companion } {
+  if (time < tauntUntil && distance(player, p) < 12) return { at: player };
   let best: { at: Point; m?: Companion } = { at: player },
     score = distance(player, p) * (player.role === "warrior" ? 0.7 : 1);
   for (const m of companions) {
@@ -1690,6 +1759,13 @@ function hurtEnemy(e: Enemy, damage: number, by?: Character) {
 function hurtPlayer(damage: number) {
   if (time < invincibleUntil || time < deathUntil || safe(player)) return;
   damage = takenBy(player, Math.max(1, Math.round(damage - armorPower(player) * 0.45)));
+  if (time < tauntUntil) damage = Math.round(damage * 0.7);
+  if (time < manaShieldUntil && manaShield > 0) {
+    const absorbed = Math.min(manaShield, damage);
+    manaShield -= absorbed;
+    damage -= absorbed;
+    if (absorbed) floatingText(`−${absorbed}`, player, "#8fc8ff");
+  }
   if (!damage) return;
   player.hp = Math.max(0, player.hp - damage);
   invincibleUntil = time + 0.35;
@@ -1743,12 +1819,20 @@ function beginAttack(sweep = false, autoAim = false) {
         e.rig.root.position.z - player.z,
       );
   }
-  if (sweep) sweepReady = time + R.sweepCooldown;
-  if (sweep && player.role === "herbalist") {
+  const skill = sweep ? weaponSkill(player) : null;
+  if (sweep) sweepReady = time + SKILLS[skill!].cooldown;
+  if (skill === "heal") {
     healParty(player, [player, ...companions.map((m) => m.c)].filter((v) => distance(v, player) < 8));
     lastAttack = time;
     return;
   }
+  if (skill === "charge" || skill === "quake" || skill === "fireball") {
+    useSkill(skill);
+    lastAttack = time;
+    lastCombat = time;
+    return;
+  }
+  whirl = skill === "whirl";
   attack = {
     t: 0,
     duration: sweep ? 0.58 : R.attackDuration,
@@ -1962,7 +2046,7 @@ function updateAttack(dt: number) {
             e.rig.root.position,
             heading,
             attack.sweep ? R.sweepReach : R.reach,
-            attack.sweep ? R.sweepHalfArc : R.halfArc,
+            attack.sweep ? (whirl ? Math.PI : R.sweepHalfArc) : R.halfArc,
           ) &&
           lineClear(player, e.rig.root.position)
         ) {
@@ -2036,6 +2120,12 @@ function updateShots(dt: number) {
           hit = true;
           break;
         }
+    if (hit && s.explode) {
+      burst(p, 0xff8a3d, 16);
+      for (const e of enemies)
+        if (e.state !== "dead" && distance(e.rig.root.position, p) < s.explode)
+          hurtEnemy(e, Math.round(s.damage * 0.6), s.by);
+    }
     if (hit || s.life <= 0) {
       burst(p, s.fromEnemy ? 0xe59a6b : 0xa4e8e4, 4);
       scene.remove(s.node);
@@ -2122,6 +2212,17 @@ function updateHud() {
   const sweepLeft = Math.max(0, sweepReady - time),
     healLeft = Math.max(0, potionReady - time);
   $<HTMLButtonElement>("sweep").disabled = sweepLeft > 0 || paused || helpOpen;
+  const s1 = SKILLS[weaponSkill(player)].name.toUpperCase();
+  if ($("sweep-name").textContent !== s1) $("sweep-name").textContent = s1;
+  const off = offhandSkill(player),
+    s2 = $<HTMLButtonElement>("skill2");
+  s2.hidden = !off;
+  if (off) {
+    const left = Math.max(0, skill2Ready - time);
+    s2.disabled = left > 0 || paused || helpOpen;
+    $("skill2-name").textContent = SKILLS[off].name.toUpperCase();
+    $("skill2-time").textContent = left ? `${left.toFixed(1)} s` : "GOTOWY";
+  }
   $("sweep-time").textContent = sweepLeft
     ? `${sweepLeft.toFixed(1)} s`
     : "GOTOWY";
@@ -2237,6 +2338,7 @@ function bindControls() {
     if (e.code === "Space") beginAttack(false, true);
     if (e.code === "KeyQ") beginAttack(true, true);
     if (e.code === "KeyH") usePotion();
+    if (e.code === "KeyR") useSkill2();
     if (e.code === "Digit1") selectWeapon("sword");
     if (e.code === "Digit2") selectWeapon("magic");
   });
@@ -2262,6 +2364,7 @@ function bindControls() {
   });
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
   $("sweep").onclick = () => beginAttack(true, true);
+  $("skill2").onclick = () => useSkill2();
   $("heal").onclick = usePotion;
   $("pause").onclick = () => setPause(!paused);
   document.querySelectorAll<HTMLButtonElement>("[data-weapon]").forEach(
@@ -2697,6 +2800,10 @@ async function init() {
             error: worldStream.error,
           },
           sweepReady,
+          skill: weaponSkill(player),
+          skill2: offhandSkill(player),
+          taunt: time < tauntUntil,
+          manaShield: time < manaShieldUntil ? manaShield : 0,
           potionReady,
           attack: attack ? { ...attack } : null,
           companions: companions.map((m) => ({
@@ -2901,6 +3008,14 @@ async function init() {
                 return null;
               },
               // Sets the leader's health and keeps the fight going (no calm regeneration).
+              // Puts an item from the templates straight into the hero's hands.
+              equipTemplate: (index: number) => {
+                const item = makeItem(campaign, index);
+                if (item.slot !== "material") player.equipment[item.slot] = item;
+                if (item.slot === "weapon") weapon = item.icon === "staff" ? "magic" : "sword";
+                selectWeapon(weapon);
+                return item.icon;
+              },
               setHp: (hp: number) => {
                 player.hp = hp;
                 lastCombat = time + 30;

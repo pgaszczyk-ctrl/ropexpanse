@@ -1743,3 +1743,15 @@ canvas[data-interaction="camp"] {
   font-size: 13px;
   padding: 0 6px;
 }
+/* Second-hand skill sits above the weapon skill. */
+.skill.skill2 {
+  bottom: 150px;
+}
+.skill2[hidden] {
+  display: none;
+}
+@media (pointer: coarse) {
+  .skill.skill2 {
+    bottom: 112px;
+  }
+}

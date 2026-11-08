@@ -39,13 +39,15 @@ Kolejność według dokumentu, od najważniejszego.
 - Wyziewy: od 150 m od bezpiecznego terenu, częściej dalej; fala 4–9 potworów, potem jeden cios wbija pal z latarnią; skrzynia: złoto, odłamki, ruda, przedmiot. Zamknięte zostają na zawsze. Wykonane.
 - Wartości (tempo produkcji, szanse, nagrody) są startowe do strojenia. Woda i boje — razem z łodziami (później).
 
-## Etap 3 — Drużyna i rozwój
+## Etap 3 — Drużyna i rozwój — ukończony 08.11.2026
 
-- Drużyna do 3, reszta sterowana przez AI, zmiana postaci tapnięciem portretu (dziś nieaktywne postacie nie walczą).
-- Profesje bojowe (wojownik, mag, łucznik, zielarz) i obozowe (drwal, górnik, powroźnik).
-- Poziom = tylko statystyki; umiejętności z broni i drugiej ręki (tabela Arsenał). Sloty (decyzja właściciela 07.11.2026): broń, druga ręka, zbroja, hełm, buty — wykonane.
-- Rzadkość przedmiotów i Wędrowców (ramki), cecha pasywna, imiona z kraju (pliki JSON), tytuły legendarnych.
-- Rekrutacja na mapie: uratowany Wędrowiec dołącza za darmo.
+- Drużyna do 3 (zapisana): towarzysze idą w szyku, wojownik walczy wręcz, mag/łucznik/zielarz z dystansu; wrogowie wybierają najbliższego z drużyny, wojownik ściąga ich chętniej. Powalony towarzysz wstaje po walce lub w obozie. Kontrola nad dowolnym członkiem drużyny poza walką (panel drużyny pod portretem). Towarzysze dostają XP za walki, w których biorą udział.
+- Profesje: wojownik, mag, łucznik, zielarz (leczy) oraz obozowi drwal, górnik, powroźnik — pracują w obozie, szybciej przy pasującym terenie, nigdy do zera; powroźnik skręca linę z włókna ze Skarbca.
+- Rzadkość Wędrowców (ramka w kolorach rzadkości przedmiotów), cecha pasywna z puli klasy (słaba/pełna/mocna), legendy z unikalną cechą i tytułem w formie płci; obóz nigdy nie daje legend.
+- Imiona z 12 regionów (zgrubne prostokąty), po 20+20, 1 na 5 z innego regionu, bez powtórzeń. Listy to szkic do sprawdzenia przez osoby z regionów.
+- Ratowanie Wędrowców otoczonych przez potwory, od 100 m od bezpiecznego terenu; dołączają za darmo z poziomem strefy, legendy tylko daleko od lin.
+- Umiejętności ze sprzętu: miecz szarża, topór wir, młot wstrząs z ogłuszeniem, laska kula ognia (Q); tarcza prowokacja, orb tarcza many (R). Nowe bronie: topór, młot.
+- Do zrobienia później: łuk/kusza/różdżka/berło/sierp i pozostałe typy z Arsenału (ikony i modele czekają na grafika), legendarne warianty umiejętności, zdjęcie sprzętu na figurce, animacja pracy postaci obozowych.
 
 ## Etap 4 — Wrogowie, biomy, pora dnia, pogoda
 
