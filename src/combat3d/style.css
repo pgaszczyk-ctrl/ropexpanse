@@ -1722,3 +1722,18 @@ canvas[data-interaction="camp"] {
   color: #cbb48a;
   margin: 0 0 10px;
 }
+/* Wayfarer rarity: a frame in the item rarity colours. */
+.character-choice,
+.candidate {
+  border-left: 5px solid var(--rarity, #9a9a9a) !important;
+}
+.trait-line {
+  display: block;
+  margin-top: 3px;
+  color: #cbb48a;
+  font-size: 12px;
+}
+.vitals .avatar {
+  box-shadow: 0 0 0 3px var(--rarity, transparent);
+  border-radius: 50%;
+}

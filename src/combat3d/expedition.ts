@@ -35,6 +35,7 @@ import {
 import { updateRope, routeLength, type Obstacle } from "./rope";
 import { distance, type Point } from "./rules";
 import { SCALE, type Geo } from "./world";
+import { RARITY_COLORS, RARITY_NAMES, fullName, traitOf } from "./wayfarers";
 type Hooks = {
   scene: T.Scene;
   camera: T.Camera;
@@ -105,6 +106,32 @@ const CAMP_ICONS = {
   recruit:
     '<circle cx="12" cy="10" r="5" fill="#e8c27a"/><path fill="#b0793c" d="M3 28c0-7 4-11 9-11s9 4 9 11z"/><path stroke="#8ff0bf" stroke-width="3" stroke-linecap="round" d="M25 9v10M20 14h10"/>',
 };
+/** Name (with a legend's title), class, level, rarity and trait of a Wayfarer. */
+function wayfarerLabel(
+  v: { name: string; title?: string; role: Character["role"]; rarity?: keyof typeof RARITY_NAMES; trait?: string },
+  level: number,
+  action = "",
+) {
+  const trait = traitOf(v.role, v.trait);
+  return [
+    node("strong", fullName(v)),
+    node(
+      "span",
+      ` · ${roleName(v.role)} · poz. ${level} · ${RARITY_NAMES[v.rarity ?? "common"]}${action ? ` — ${action}` : ""}`,
+    ),
+    ...(trait ? [node("small", `${trait.name}: ${trait.text}`, "trait-line")] : []),
+  ];
+}
+function withLabel(
+  b: HTMLButtonElement,
+  v: Parameters<typeof wayfarerLabel>[0],
+  level: number,
+  action: string,
+) {
+  b.append(...wayfarerLabel(v, level, action));
+  b.style.setProperty("--rarity", RARITY_COLORS[v.rarity ?? "common"]);
+  return b;
+}
 /** What an item gives, in a few words. */
 export function itemStat(item: Item) {
   return item.slot === "material"
@@ -364,13 +391,11 @@ export class Expedition {
       for (const v of s.characters) {
         const row = node("div", "", "character-row");
         const inParty = party.includes(v.id);
-        const b = button(
-          `${v.name} · ${roleName(v.role)} · ${levelOf(v.exp)}`,
-          () => void this.control(v),
-          "character-choice",
-        );
+        const b = button("", () => void this.control(v), "character-choice");
+        b.append(...wayfarerLabel(v, levelOf(v.exp)));
         b.classList.toggle("selected", v.id === c.id);
         b.style.setProperty("--portrait-color", `hsl(${v.appearance % 360} 25% 47%)`);
+        b.style.setProperty("--rarity", RARITY_COLORS[v.rarity ?? "common"]);
         row.append(b);
         if (v.id !== c.id) {
           const t = button(inParty ? "Zostaw w obozie" : "Do drużyny", () => {
@@ -648,9 +673,8 @@ export class Expedition {
           : "Brak zgłoszeń";
         for (const v of o.candidates)
           this.body.append(
-            button(
-              `${v.name} · ${roleName(v.role)} · ${v.level} — Zatrudnij`,
-              () => {
+            withLabel(
+              button("", () => {
                 const hired = hire(s, o.id, v.id);
                 if (hired) {
                   // A new hire joins the party when there is room.
@@ -662,8 +686,10 @@ export class Expedition {
                   this.refreshWorld();
                   this.render();
                 }
-              },
-              "candidate",
+              }, "candidate"),
+              v,
+              v.level,
+              "Zatrudnij",
             ),
           );
       } else {

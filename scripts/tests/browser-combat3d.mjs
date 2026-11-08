@@ -321,6 +321,8 @@ try {
     assert.equal((await snap()).player.coins, 500);
     await page.evaluate(() => window.__combat3d.advanceOffers(1));
     await page.waitForSelector(".candidate");
+    assert.match(await page.locator(".candidate").first().textContent(), /(Zwykły|Rzadki|Epicki)/, "candidate shows rarity");
+    await page.screenshot({ path: `work/combat3d/${tag}-candidates.png` });
     await page.locator(".candidate").first().click();
     assert.equal((await snap()).campaign.characters.length, 2);
     assert.equal((await snap()).campaign.offers.length, 0);

@@ -6,6 +6,8 @@ import {
 import { candidatesFor } from "./recruitment.ts";
 export { candidatesFor } from "./recruitment.ts";
 import { distance, type Point } from "./rules.ts";
+import { unproject } from "./world.ts";
+import { regionAt, type Rarity, type Region, type Sex } from "./wayfarers.ts";
 export const BALANCE = {
   slots: 24,
   safeRadius: 7.5,
@@ -106,7 +108,16 @@ export type Item = {
   value: number;
   icon: string;
 };
-export type Character = Point & {
+/** Who a Wayfarer is (owner's design doc): rarity frame, passive trait, local name,
+ * a title for legends. Optional so older saves stay valid. */
+export type WayfarerInfo = {
+  sex?: Sex;
+  rarity?: Rarity;
+  trait?: string;
+  title?: string;
+  region?: Region;
+};
+export type Character = Point & WayfarerInfo & {
   id: string;
   name: string;
   role: Role;
@@ -139,7 +150,7 @@ export type Offer = {
   ceiling: number;
   candidates: Candidate[] | null;
 };
-export type Candidate = {
+export type Candidate = WayfarerInfo & {
   id: string;
   name: string;
   role: Role;
@@ -414,9 +425,13 @@ export function resolveOffers(s: Campaign, now = Date.now()) {
   let changed = false;
   for (const o of s.offers)
     if (!o.candidates && now >= o.readyAt) {
+      const camp = s.camps.find((c) => c.id === o.campId);
+      const geo = camp ? unproject(camp, s.origin) : s.origin;
       o.candidates = candidatesFor(
         o,
-        s.camps.find((c) => c.id === o.campId)?.buildings ?? 0,
+        camp?.buildings ?? 0,
+        regionAt(geo.lat, geo.lon),
+        new Set(s.characters.map((c) => c.name)),
       );
       changed = true;
     }
@@ -434,6 +449,11 @@ export function hire(s: Campaign, offerId: string, candidateId: string) {
     name: v.name,
     role: v.role,
     appearance: v.appearance,
+    sex: v.sex,
+    rarity: v.rarity,
+    trait: v.trait,
+    title: v.title,
+    region: v.region,
     exp: xpThreshold(v.level),
     hp: 100 + (v.level - 1) * 8,
     coins: 0,
@@ -600,7 +620,13 @@ export function parseCampaign(raw: string): Campaign | null {
         ) ||
         !Array.isArray(c.bag) ||
         c.bag.length > BALANCE.slots ||
-        !c.equipment
+        !c.equipment ||
+        (c.rarity !== undefined &&
+          !["common", "rare", "epic", "legendary"].includes(c.rarity)) ||
+        (c.sex !== undefined && !["m", "f"].includes(c.sex)) ||
+        [c.trait, c.title, c.region].some(
+          (v) => v !== undefined && typeof v !== "string",
+        )
       )
         return null;
       ids.add(c.id);

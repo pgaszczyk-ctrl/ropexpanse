@@ -21,6 +21,7 @@ import {
 } from "./campaign";
 import { enclosedAreas } from "./territory-rules";
 import { circleRates } from "./production";
+import { TRAIT_STRENGTH, RARITY_COLORS, fullName } from "./wayfarers";
 import {
   ventCells,
   ventChance,
@@ -96,6 +97,8 @@ type Shot = {
   vz: number;
   life: number;
   damage: number;
+  /** Who shot it (for traits). */
+  by?: Character;
 };
 type Particle = {
   node: T.Mesh;
@@ -852,6 +855,52 @@ function updateProduction(dt: number) {
   }
   if (accrue(campaign, Date.now())) notify("Skarbiec pełny — zajrzyj do obozu");
 }
+// ---- Passive traits (owner's design doc, Cecha): work alone, for the hero and companions ----
+const traitRuntime = new Map<string, { hits: number; lastHit: number; saved: boolean }>();
+function traitState(c: Character) {
+  let t = traitRuntime.get(c.id);
+  if (!t) traitRuntime.set(c.id, (t = { hits: 0, lastHit: -99, saved: false }));
+  return t;
+}
+const traitPower = (c: Character) => TRAIT_STRENGTH[c.rarity ?? "common"];
+/** Damage a blow or shot of `c` deals, after its trait (crits, double bolts, stuns). */
+function dealtBy(c: Character | undefined, base: number, e: Enemy, rangedHit: boolean) {
+  if (!c?.trait) return base;
+  const t = traitState(c),
+    k = traitPower(c);
+  let dmg = base;
+  const calm = time - t.lastHit;
+  if (c.trait === "firstCrit" && calm > 5) dmg *= 1 + k;
+  if (c.trait === "hawk" && calm > 3) dmg *= 2.5;
+  if (c.trait === "doubleBolt" && rangedHit && Math.random() < 0.25 * k) dmg *= 2;
+  t.lastHit = time;
+  t.hits++;
+  if ((c.trait === "stun5" && t.hits % 5 === 0) || (c.trait === "unbroken" && t.hits % 4 === 0)) {
+    e.state = "recover";
+    e.timer = Math.max(e.timer, 0.8 * k);
+    e.warning.visible = false;
+    burst(e.rig.root.position, 0xffe27a, 6);
+  }
+  return Math.round(dmg);
+}
+/** Damage `c` takes after its trait (dodges, last stand, the lantern). 0 = dodged. */
+function takenBy(c: Character, damage: number) {
+  if (!c.trait) return damage;
+  const t = traitState(c),
+    k = traitPower(c);
+  if (time - lastCombat > 8) t.saved = false;
+  if ((c.trait === "evasion" && Math.random() < 0.1 * k) || (c.trait === "hawk" && Math.random() < 0.2)) {
+    floatingText("unik", c, "#bfe9ff");
+    return 0;
+  }
+  if (c.trait === "lastStand" && c.hp < maxHealth(c) * 0.3) damage *= 1 - 0.3 * k;
+  if (c.trait === "lantern") damage *= 0.8;
+  if (c.trait === "unbroken" && !t.saved && damage >= c.hp) {
+    t.saved = true;
+    damage = Math.max(0, c.hp - 1);
+  }
+  return Math.round(damage);
+}
 // ---- Party: up to two companions follow the controlled character and fight alone ----
 type Companion = {
   c: Character;
@@ -911,7 +960,8 @@ function syncCompanions() {
 }
 function hurtCompanion(m: Companion, damage: number) {
   if (m.c.hp <= 0 || safe(m.c)) return;
-  damage = Math.max(1, Math.round(damage - armorPower(m.c) * 0.45));
+  damage = takenBy(m.c, Math.max(1, Math.round(damage - armorPower(m.c) * 0.45)));
+  if (!damage) return;
   m.c.hp = Math.max(0, m.c.hp - damage);
   floatingText(String(damage), m.c, "#ff9b8a");
   lastCombat = time;
@@ -963,7 +1013,8 @@ function updateCompanions(dt: number) {
           if (ranged(c)) {
             fire({ x: p.x + Math.sin(m.heading) * 0.6, z: p.z + Math.cos(m.heading) * 0.6 }, m.heading, false);
             shots[shots.length - 1].damage = 10 + attackPower(c);
-          } else hurtEnemy(foe, 12 + attackPower(c));
+            shots[shots.length - 1].by = c;
+          } else hurtEnemy(foe, dealtBy(c, 12 + attackPower(c), foe, false), c);
         }
       } else {
         const f = formation(slot),
@@ -1419,7 +1470,7 @@ function burst(p: Point, color: number, n = 8) {
     });
   }
 }
-function hurtEnemy(e: Enemy, damage: number) {
+function hurtEnemy(e: Enemy, damage: number, by?: Character) {
   if (e.state === "dead") return;
   e.hp -= damage;
   e.flash = 0.13;
@@ -1434,6 +1485,13 @@ function hurtEnemy(e: Enemy, damage: number) {
     e.warning.visible = false;
     e.bar.visible = false;
     e.respawn = e.key.startsWith("vent:") ? Infinity : 30;
+    // Trait "Iskra": the fallen enemy bursts and hurts its neighbours (no chain).
+    if (by?.trait === "volatile") {
+      burst(e.rig.root.position, 0x9fd8ff, 12);
+      for (const o of enemies)
+        if (o !== e && o.state !== "dead" && distance(o.rig.root.position, e.rig.root.position) < 2.5)
+          hurtEnemy(o, Math.round(10 * traitPower(by)));
+    }
     player.kills++;
     const earned = Math.max(
       1,
@@ -1443,6 +1501,9 @@ function hurtEnemy(e: Enemy, damage: number) {
       ),
     );
     player.exp += earned;
+    // Everyone in the party who took part (nearby and standing) learns from the fight.
+    for (const m of companions)
+      if (m.c.hp > 0 && distance(m.c, e.rig.root.position) < 15) m.c.exp += earned;
     player.coins += e.boss ? 100 : e.elite ? 35 : 5 + e.tier * 2;
     campaign.encounters[e.key] = Date.now() + 45_000;
     if (
@@ -1458,7 +1519,8 @@ function hurtEnemy(e: Enemy, damage: number) {
 }
 function hurtPlayer(damage: number) {
   if (time < invincibleUntil || time < deathUntil || safe(player)) return;
-  damage = Math.max(1, Math.round(damage - armorPower(player) * 0.45));
+  damage = takenBy(player, Math.max(1, Math.round(damage - armorPower(player) * 0.45)));
+  if (!damage) return;
   player.hp = Math.max(0, player.hp - damage);
   invincibleUntil = time + 0.35;
   lastCombat = time;
@@ -1541,6 +1603,7 @@ function fire(p: Point, dir: number, fromEnemy: boolean) {
     vz: Math.cos(dir) * speed,
     life: fromEnemy ? 2.2 : 1.1,
     damage: fromEnemy ? 13 : 18 + attackPower(player),
+    by: fromEnemy ? undefined : player,
   });
 }
 function usePotion() {
@@ -1728,7 +1791,7 @@ function updateAttack(dt: number) {
           ) &&
           lineClear(player, e.rig.root.position)
         ) {
-          hurtEnemy(e, (attack.sweep ? 24 : 16) + attackPower(player));
+          hurtEnemy(e, dealtBy(player, (attack.sweep ? 24 : 16) + attackPower(player), e, false), player);
           hit = true;
         }
       const a = attack;
@@ -1794,7 +1857,7 @@ function updateShots(dt: number) {
           e.state !== "dead" &&
           segmentHitsCircle(before, p, e.rig.root.position, 0.7)
         ) {
-          hurtEnemy(e, s.damage);
+          hurtEnemy(e, dealtBy(s.by, s.damage, e, true), s.by);
           hit = true;
           break;
         }
@@ -1864,7 +1927,10 @@ function updateHud() {
   $("hp-label").textContent = `${Math.ceil(player.hp)} / ${maxHp()}`;
   $("level").textContent = String(levelOf(player.exp));
   const nameNode = document.querySelector(".hero-name")?.firstChild;
-  if (nameNode) nameNode.textContent = `${player.name} `;
+  if (nameNode) nameNode.textContent = `${fullName(player)} `;
+  document
+    .querySelector<HTMLElement>(".vitals")
+    ?.style.setProperty("--rarity", RARITY_COLORS[player.rarity ?? "common"]);
   $("xp-fill").style.width = `${share * 100}%`;
   const inSafe = safe(player);
   $("zone").className = `zone ${inSafe ? "safe" : "danger"}`;
