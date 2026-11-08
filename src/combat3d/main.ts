@@ -28,6 +28,7 @@ import { circleRates, workerRates } from "./production";
 import { weaponSkill, offhandSkill, SKILLS } from "./skills";
 import { timeOfDayAt, LIGHT } from "./sky";
 import { Elevation, HeightField, waterTest, VOXEL, CELL } from "./terrain";
+import { markSeen, cellOf, greyed } from "./explore";
 import { fetchWeather, WEATHER_NAMES } from "./weather";
 import {
   biomeAt,
@@ -767,10 +768,13 @@ function terraceMesh() {
     c = new T.Color();
   const kindColor = (x: number, z: number) =>
     water({ x, z }) ? 0x72acae : map.areas.some((a) => !a.water && inPolygon(x, z, a.rings)) ? 0x96af78 : 0xb8c397;
+  const cellOfVertex: number[] = [];
+  let cellIndex = 0;
   const quad = (pts: number[][], color: T.Color) => {
     for (const k of [0, 1, 2, 0, 2, 3]) {
       pos.push(...pts[k]);
       col.push(color.r, color.g, color.b);
+      cellOfVertex.push(cellIndex);
     }
   };
   for (let j = 0; j < w; j++)
@@ -781,6 +785,7 @@ function terraceMesh() {
         z1 = z0 + CELL,
         v = field.v[j * w + i],
         y = v * VOXEL;
+      cellIndex = j * w + i;
       c.setHex(kindColor(x0 + CELL / 2, z0 + CELL / 2));
       quad([[x0, y, z0], [x0, y, z1], [x1, y, z1], [x1, y, z0]], c);
       const side = c.clone().multiplyScalar(0.78);
@@ -800,7 +805,57 @@ function terraceMesh() {
   g.computeVertexNormals();
   const m = new T.Mesh(g, new T.MeshLambertMaterial({ vertexColors: true }));
   m.receiveShadow = true;
+  m.userData.baseColors = Float32Array.from(col);
+  m.userData.cellOfVertex = Int32Array.from(cellOfVertex);
+  terraceView = m;
   return m;
+}
+// ---- Fog of war: unexplored land greyed, colour returns once seen ----
+let terraceView: T.Mesh | null = null;
+let seen = new Set<string>();
+let seenClock = 0;
+const isSeen = (x: number, z: number) => seen.has(cellOf(unproject({ x, z }, campaign.origin)));
+function recolor() {
+  if (terraceView) {
+    const base = terraceView.userData.baseColors as Float32Array,
+      cells = terraceView.userData.cellOfVertex as Int32Array,
+      attr = terraceView.geometry.getAttribute("color") as T.BufferAttribute,
+      known = new Map<number, boolean>();
+    for (let v = 0; v < cells.length; v++) {
+      const ci = cells[v];
+      let ok = known.get(ci);
+      if (ok === undefined) {
+        const i = ci % field.w,
+          j = Math.floor(ci / field.w);
+        ok = isSeen(field.x0 + (i + 0.5) * CELL, field.z0 + (j + 0.5) * CELL);
+        known.set(ci, ok);
+      }
+      const [r, g, b] = ok
+        ? [base[v * 3], base[v * 3 + 1], base[v * 3 + 2]]
+        : greyed(base[v * 3], base[v * 3 + 1], base[v * 3 + 2]);
+      attr.setXYZ(v, r, g, b);
+    }
+    attr.needsUpdate = true;
+  }
+  for (const b of buildingViews) {
+    const ok = isSeen((b.box.x0 + b.box.x1) / 2, (b.box.z0 + b.box.z1) / 2);
+    for (const m of b.materials as T.MeshLambertMaterial[]) {
+      const base = (m.userData.base ??= m.color.clone()) as T.Color;
+      const [r, g, bb] = ok ? [base.r, base.g, base.b] : greyed(base.r, base.g, base.b);
+      m.color.setRGB(r, g, bb);
+    }
+  }
+}
+function updateSeen(dt: number) {
+  seenClock += dt;
+  if (seenClock < 1) return;
+  seenClock = 0;
+  let added = markSeen(seen, unproject(player, campaign.origin));
+  for (const m of companions) added += markSeen(seen, unproject(m.c, campaign.origin), 60);
+  if (added) {
+    campaign.explored = [...seen];
+    recolor();
+  }
 }
 /** Everything that walks or stands on the map follows the terraces. */
 function liftActors() {
@@ -833,6 +888,7 @@ function disposeTerrain() {
     if (o instanceof T.Mesh) o.geometry.dispose();
   });
   terrain.clear();
+  terraceView = null;
   buildingViews.length = 0;
   obstacleCells.clear();
 }
@@ -944,67 +1000,78 @@ function renderTerrain() {
         obstacleCells.set(key, cell);
       }
   }
-  // Sparse trees only on mapped green areas. Geometry is shared and instanced.
+  // Trees on mapped green areas: five types by ground (owner's design doc, Drzewa),
+  // each with size and turn variants; deciduous crowns follow the real season.
   let seed = 391;
   const rand = () => {
     seed = (Math.imul(seed, 1664525) + 1013904223) | 0;
     return (seed >>> 0) / 4294967296;
   };
-  const trees: Point[] = [];
-  for (let i = 0; i < 1900 && trees.length < 240; i++) {
+  type TreeKind = "round" | "spruce" | "pine" | "birch" | "bush";
+  const trees: (Point & { kind: TreeKind })[] = [];
+  const mix: Record<string, TreeKind[]> = {
+    forest: ["round", "spruce", "pine", "birch", "spruce"],
+    wood: ["spruce", "pine", "round", "birch", "spruce"],
+    scrub: ["bush", "bush", "birch"],
+    park: ["round", "round", "birch", "bush"],
+    cemetery: ["round", "spruce", "birch"],
+    green: ["round", "birch", "bush"],
+  };
+  for (let i = 0; i < 2600 && trees.length < 300; i++) {
     const x = player.x + (rand() * 2 - 1) * 95,
       z = player.z + (rand() * 2 - 1) * 95;
-    if (
-      !map.areas.some((a) => !a.water && inPolygon(x, z, a.rings)) ||
-      blocked(x, z, 0.9)
-    )
-      continue;
-    if (
-      map.roads.some((r) =>
-        r.pts.some((p) => Math.hypot(p[0] - x, p[1] - z) < 1.7),
-      )
-    )
-      continue;
-    trees.push({ x, z });
+    const area = map.areas.find((a) => !a.water && inPolygon(x, z, a.rings));
+    if (!area || blocked(x, z, 0.9)) continue;
+    if (map.roads.some((r) => r.pts.some((p) => Math.hypot(p[0] - x, p[1] - z) < 1.7))) continue;
+    const kinds = mix[area.kind ?? "green"] ?? mix.green;
+    trees.push({ x, z, kind: kinds[Math.floor(rand() * kinds.length)] });
   }
-  const trunks = new T.InstancedMesh(
-      new T.CylinderGeometry(0.12, 0.17, 1.25, 5),
-      material(0x756044),
-      trees.length,
-    ),
-    crowns = new T.InstancedMesh(
-      new T.IcosahedronGeometry(1, 0),
-      material(0x56764d),
-      trees.length,
-    ),
-    matrix = new T.Matrix4();
-  trees.forEach((p, i) => {
-    const gy = groundY(p.x, p.z);
-    matrix.compose(
-      new T.Vector3(p.x, 0.63 + gy, p.z),
-      new T.Quaternion(),
-      new T.Vector3(1, 1, 1),
-    );
-    trunks.setMatrixAt(i, matrix);
-    matrix.compose(
-      new T.Vector3(p.x, 2.1 + gy, p.z),
-      new T.Quaternion(),
-      new T.Vector3(
-        0.85 + rand() * 0.35,
-        1.3 + rand() * 0.7,
-        0.85 + rand() * 0.35,
-      ),
-    );
-    crowns.setMatrixAt(i, matrix);
-    crowns.setColorAt(
-      i,
-      new T.Color().setHSL(0.23 + rand() * 0.04, 0.22, 0.31 + rand() * 0.12),
-    );
-  });
-  crowns.castShadow = true;
-  trunks.castShadow = true;
-  terrain.add(trunks, crowns);
+  const geo = new Date().getUTCMonth(),
+    south = unproject(player, campaign.origin).lat < 0,
+    month = (geo + (south ? 6 : 0)) % 12,
+    season = month < 2 || month === 11 ? "winter" : month < 5 ? "spring" : month < 8 ? "summer" : "autumn";
+  const leaf = (base: number) => {
+    const c = new T.Color(base);
+    if (season === "spring") c.offsetHSL(0.02, 0.05, 0.1);
+    if (season === "autumn") c.setHSL(0.04 + rand() * 0.07, 0.6, 0.45);
+    return c;
+  };
+  const parts: { kind: TreeKind; trunk?: [T.BufferGeometry, number, number]; crown: [T.BufferGeometry, number, number] }[] = [
+    { kind: "round", trunk: [new T.CylinderGeometry(0.12, 0.17, 1.25, 5), 0x756044, 0.63], crown: [new T.IcosahedronGeometry(1, 0), 0x56764d, 2.1] },
+    { kind: "spruce", trunk: [new T.CylinderGeometry(0.1, 0.14, 0.7, 5), 0x5a4532, 0.35], crown: [new T.ConeGeometry(0.95, 2.8, 6), 0x2f5a3a, 2.05] },
+    { kind: "pine", trunk: [new T.CylinderGeometry(0.11, 0.15, 2.2, 5), 0x9a5b34, 1.1], crown: [new T.CylinderGeometry(1.1, 0.8, 0.6, 7), 0x4e7a44, 2.45] },
+    { kind: "birch", trunk: [new T.CylinderGeometry(0.08, 0.11, 1.5, 5), 0xe8e4da, 0.75], crown: [new T.IcosahedronGeometry(0.7, 0), 0x8fc46a, 2.0] },
+    { kind: "bush", crown: [new T.IcosahedronGeometry(0.75, 0), 0x5b8a46, 0.4] },
+  ];
+  const matrix = new T.Matrix4();
+  for (const part of parts) {
+    const list = trees.filter((t) => t.kind === part.kind);
+    if (!list.length) continue;
+    const deciduous = part.kind === "round" || part.kind === "birch" || part.kind === "bush";
+    const bare = season === "winter" && part.kind !== "bush" && deciduous;
+    const trunks = part.trunk && new T.InstancedMesh(part.trunk[0], material(part.trunk[1]), list.length);
+    const crowns = new T.InstancedMesh(part.crown[0], material(0xffffff), list.length);
+    list.forEach((p, i) => {
+      const gy = groundY(p.x, p.z),
+        size = 0.8 + rand() * 0.5,
+        turn = new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 1, 0), rand() * Math.PI * 2);
+      if (trunks)
+        trunks.setMatrixAt(i, matrix.compose(new T.Vector3(p.x, part.trunk![2] * size + gy, p.z), turn, new T.Vector3(size, size, size)));
+      const flat = part.kind === "bush" ? new T.Vector3(1.3 * size, 0.7 * size, 1.3 * size) : part.kind === "round" ? new T.Vector3(size, (1.3 + rand() * 0.5) * size, size) : new T.Vector3(size, size, size);
+      // Winter: deciduous trees lose their crowns (only a thin twig cluster stays).
+      if (bare) flat.multiplyScalar(0.35);
+      crowns.setMatrixAt(i, matrix.compose(new T.Vector3(p.x, part.crown[2] * size + gy, p.z), turn, flat));
+      crowns.setColorAt(i, bare ? new T.Color(0x6b5a4a) : deciduous ? leaf(part.crown[1]) : new T.Color(part.crown[1]).offsetHSL(0, 0, (rand() - 0.5) * 0.06));
+    });
+    crowns.castShadow = true;
+    if (trunks) {
+      trunks.castShadow = true;
+      terrain.add(trunks);
+    }
+    terrain.add(crowns);
+  }
 
+  recolor();
   if (renderer) {
     renderer.shadowMap.needsUpdate = true;
   }
@@ -2983,6 +3050,7 @@ function tick() {
     updateWorld(dt);
     updateSky(dt);
     updateTerrainField(dt);
+    updateSeen(dt);
     updateWeather(dt);
     if (safe(player)) {
       const camp = nearCamp(campaign, player);
@@ -3230,6 +3298,10 @@ async function init() {
     bindControls();
     resize();
     window.addEventListener("resize", resize);
+    seen = new Set(campaign.explored ?? []);
+    markSeen(seen, unproject(player, campaign.origin));
+    campaign.explored = [...seen];
+    recolor();
     syncCompanions();
     ready = true;
     $("loading-text").textContent = "";

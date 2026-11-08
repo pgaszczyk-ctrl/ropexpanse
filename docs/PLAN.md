@@ -58,11 +58,14 @@ Kolejność według dokumentu, od najważniejszego.
 - Pogoda z Open-Meteo (bez klucza, co 30 min na kwadrat ~25 km; offline = pogodnie): deszcz, śnieg, mgła, burza z błyskami, wiatr.
 - Wygląd wrogów: tymczasowe przebarwione modele; czeka na grafika (znaki Mgły: ubytki voxeli, fiolet). Przyprószenie śniegiem, kałuże, okna świecące nocą — później.
 
-## Etap 5 — Świat 3D: teren i kamera
+## Etap 5 — Świat 3D: teren i kamera — ukończony 08.11.2026
 
-- Wysokość z AWS Terrain Tiles (Terrarium), tarasy voxelowe, przesadzony relief na nizinach.
-- Obrót kamery dwoma palcami z dociąganiem do 45°, kompas, joystick względem ekranu.
-- Mgła wojny jako desaturacja, paleta mapy dnia, 5 typów drzew, pory roku.
+- Wysokość z AWS Terrain Tiles (Terrarium, bez klucza): tarasy voxelowe, relief mocniej na nizinach, |Δ| ≤ 1 stopień między polami (zawsze da się wejść), woda płaska, budynki na najniższym punkcie z cokołem; drogi, postacie, zasoby, obozy, liny i obrys strefy leżą na terenie; bez danych świat płaski.
+- Kamera: gest dwoma palcami, dociąganie do 45° (komputer: , i .), joystick/WASD/celowanie względem ekranu, kompas tylko poza północą.
+- Budynki przed drużyną półprzezroczyste + sylwetka bohatera (było wcześniej, działa z obrotem i tarasami).
+- Mgła wojny: nieodkryty teren i budynki ~70% szarsze, kolor po odkryciu (siatka ~55 m, zapisywana).
+- 5 typów drzew wg terenu (liściaste, świerk, sosna, brzoza, krzew), warianty wielkości i obrotu, korony wg prawdziwej pory roku (półkula południowa odwrócona), zimą liściaste bez koron.
+- Do zrobienia później: lekkie falowanie płaskiego terenu, serpentyny szlaków i urwiska z poręczówką liny, piętra roślinności w górach, mgła o świcie w dolinach, pełna paleta mapy z dokumentu (zmiana oprawy — z grafikiem).
 
 ## Etap 6 — AFK, Kotwice, sezony
 

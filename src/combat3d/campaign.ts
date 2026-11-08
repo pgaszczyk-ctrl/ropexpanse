@@ -201,6 +201,8 @@ export type Campaign = {
   rates?: Partial<Made>;
   pending?: Partial<Made>;
   producedAt?: number;
+  /** Fog of war: explored geographic cells (explore.ts). */
+  explored?: string[];
   /** Wayfarers already rescued on the map, by spot key → when (ms). */
   rescued?: Record<string, number>;
   /** Closed haze vents, by key → when they were closed (ms). They stay closed. */
@@ -570,6 +572,9 @@ export function parseCampaign(raw: string): Campaign | null {
       s.party !== undefined &&
       (!Array.isArray(s.party) || s.party.some((id) => typeof id !== "string"))
     )
+      return null;
+    s.explored ??= [];
+    if (!Array.isArray(s.explored) || s.explored.some((k) => typeof k !== "string"))
       return null;
     s.rescued ??= {};
     if (
