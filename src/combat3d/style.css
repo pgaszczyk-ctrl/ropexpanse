@@ -1755,3 +1755,29 @@ canvas[data-interaction="camp"] {
     bottom: 112px;
   }
 }
+/* Compass: only while the camera does not face north; tap = north again. */
+.compass {
+  position: absolute;
+  top: 160px;
+  right: max(26px, env(safe-area-inset-right));
+  width: 46px;
+  height: 46px;
+  z-index: 12;
+  background: var(--glass);
+  border: 1px solid #e7bf78;
+  box-shadow: var(--rim);
+}
+.compass[hidden] {
+  display: none;
+}
+.compass span {
+  display: block;
+  font: 700 16px "Trebuchet MS", sans-serif;
+  color: #ff7a5a;
+  transition: transform 0.1s;
+}
+@media (pointer: coarse) {
+  .compass {
+    top: 120px;
+  }
+}

@@ -648,6 +648,59 @@ function buildWorld() {
   selectWeapon(weapon);
   cameraTarget.set(player.x, 0, player.z);
 }
+// ---- Camera turn (owner's design doc, Kamera): two-finger twist, snaps to 45° ----
+let camYaw = 0,
+  camYawTarget = 0;
+const SNAP = Math.PI / 4;
+/** Screen direction (x right, z down) → world direction for the current camera turn. */
+function screenToWorld(sx: number, sz: number) {
+  const c = Math.cos(camYaw),
+    s = Math.sin(camYaw);
+  return { x: sx * c + sz * s, z: -sx * s + sz * c };
+}
+function snapYaw(yaw: number) {
+  return Math.round(yaw / SNAP) * SNAP;
+}
+function turnCamera(by: number) {
+  camYawTarget = snapYaw(camYawTarget + by);
+}
+/** The compass shows only while the camera does not face north; a tap turns it back. */
+function updateCompass() {
+  const el = document.getElementById("compass");
+  if (!el) return;
+  const off = Math.abs(Math.atan2(Math.sin(camYawTarget), Math.cos(camYawTarget))) > 0.01;
+  el.hidden = !off;
+  if (off) (el.firstElementChild as HTMLElement).style.transform = `rotate(${camYaw}rad)`;
+}
+/** Two-finger twist on the map turns the camera; on release it snaps to 45°. */
+function bindTwist(canvas: HTMLElement) {
+  const touches = new Map<number, { x: number; y: number }>();
+  let startAngle = 0,
+    startYaw = 0;
+  const angle = () => {
+    const [a, b] = [...touches.values()];
+    return Math.atan2(b.y - a.y, b.x - a.x);
+  };
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touches.size === 2) {
+      startAngle = angle();
+      startYaw = camYawTarget;
+    }
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!touches.has(e.pointerId)) return;
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touches.size === 2) camYawTarget = camYaw = startYaw - (angle() - startAngle);
+  });
+  const end = (e: PointerEvent) => {
+    if (!touches.delete(e.pointerId)) return;
+    if (touches.size < 2) camYawTarget = snapYaw(camYawTarget);
+  };
+  canvas.addEventListener("pointerup", end);
+  canvas.addEventListener("pointercancel", end);
+}
 // ---- Terrain heights: voxel terraces from real elevations (flat at 0 without data) ----
 const elevation = new Elevation();
 const field = new HeightField();
@@ -2700,7 +2753,10 @@ function bindControls() {
       nub.style.transform = `translate(${dx * k}px,${dy * k}px)`;
       if (len > 7) dragged = true;
       if (isAttack) {
-        if (len > 5) heading = Math.atan2(dx, dy);
+        if (len > 5) {
+          const w = screenToWorld(dx, dy);
+          heading = Math.atan2(w.x, w.z);
+        }
       } else move = { x: (dx * k) / r, z: (dy * k) / r };
     });
     el.addEventListener("pointerup", (e) => {
@@ -2735,6 +2791,8 @@ function bindControls() {
     if (e.code === "KeyQ") beginAttack(true, true);
     if (e.code === "KeyH") usePotion();
     if (e.code === "KeyR") useSkill2();
+    if (e.code === "Comma") turnCamera(-SNAP);
+    if (e.code === "Period") turnCamera(SNAP);
     if (e.code === "Digit1") selectWeapon("sword");
     if (e.code === "Digit2") selectWeapon("magic");
   });
@@ -2761,6 +2819,8 @@ function bindControls() {
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
   $("sweep").onclick = () => beginAttack(true, true);
   $("skill2").onclick = () => useSkill2();
+  bindTwist(canvas);
+  $("compass").onclick = () => (camYawTarget = 0);
   $("heal").onclick = usePotion;
   $("pause").onclick = () => setPause(!paused);
   document.querySelectorAll<HTMLButtonElement>("[data-weapon]").forEach(
@@ -2890,6 +2950,8 @@ function tick() {
         dx /= len;
         dz /= len;
       }
+      // "Up" on the stick or W always goes into the screen, whatever the camera turn.
+      ({ x: dx, z: dz } = screenToWorld(dx, dz));
       if (len > 0.08) {
         slide(
           player,
@@ -2953,7 +3015,13 @@ function tick() {
     new T.Vector3(player.x, groundY(player.x, player.z), player.z),
     1 - Math.exp(-dt * 10),
   );
-  camera.position.set(cameraTarget.x, 39 + cameraTarget.y, cameraTarget.z + 30);
+  camYaw += (camYawTarget - camYaw) * (1 - Math.exp(-dt * 12));
+  camera.position.set(
+    cameraTarget.x + Math.sin(camYaw) * 30,
+    39 + cameraTarget.y,
+    cameraTarget.z + Math.cos(camYaw) * 30,
+  );
+  updateCompass();
   camera.lookAt(cameraTarget.x, cameraTarget.y, cameraTarget.z);
   if (shake > 0) {
     camera.position.x += (Math.random() - 0.5) * shake;
@@ -3239,6 +3307,7 @@ async function init() {
           drawCalls: renderer.info.render.calls,
           timeOfDay,
           weather: weatherNow,
+          cameraYaw: camYawTarget,
           terrain: field.w
             ? {
                 cells: field.w,
