@@ -26,6 +26,7 @@ import {
 import { enclosedAreas } from "./territory-rules";
 import { circleRates, workerRates } from "./production";
 import { weaponSkill, offhandSkill, SKILLS } from "./skills";
+import { timeOfDayAt, LIGHT } from "./sky";
 import {
   biomeAt,
   pickSpecies,
@@ -512,8 +513,41 @@ function healthBar(width = 1.3, color = 0xb9d791) {
 }
 const heroBar = healthBar(1.4);
 scene.add(heroBar.group);
+// Sky: real sunrise/sunset at the hero's place sets the light; a warm lamp follows the
+// party and the camp's fire glows after dark (owner's design doc, Pory dnia).
+let sunLight: T.DirectionalLight, skyLight: T.HemisphereLight;
+const partyLamp = new T.PointLight(0xffc27a, 0, 18, 1.3);
+const campFire = new T.PointLight(0xffb347, 0, 16, 1.4);
+let skyClock = 99;
+const forcedTime = new URLSearchParams(location.search).get("time") as TimeOfDay | null;
+function updateSky(dt: number) {
+  skyClock += dt;
+  if (skyClock > 30) {
+    skyClock = 0;
+    const geo = unproject(player, campaign.origin);
+    const next = forcedTime ?? timeOfDayAt(Date.now(), geo.lat, geo.lon);
+    if (next !== timeOfDay) {
+      timeOfDay = next;
+      notify(next === "night" ? "Zapada noc — Mgła gęstnieje" : next === "twilight" ? "Zmierzch" : "Dzień");
+    }
+  }
+  const L = LIGHT[timeOfDay],
+    k = Math.min(1, dt * 1.5);
+  sunLight.intensity += (L.sun - sunLight.intensity) * k;
+  sunLight.color.lerp(new T.Color(L.sunColor), k);
+  skyLight.intensity += (L.sky - skyLight.intensity) * k;
+  skyLight.color.lerp(new T.Color(L.skyColor), k);
+  skyLight.groundColor.lerp(new T.Color(L.ground), k);
+  (scene.background as T.Color).lerp(new T.Color(L.fog), k);
+  scene.fog!.color.lerp(new T.Color(L.fog), k);
+  partyLamp.intensity += (L.lamp - partyLamp.intensity) * k;
+  partyLamp.position.set(player.x, 2.4, player.z);
+  campFire.intensity += (L.lamp * 1.3 - campFire.intensity) * k;
+  campFire.position.set(home.x, 1.4, home.z);
+}
 function buildWorld() {
   const sun = new T.DirectionalLight(0xffeed0, 2.4);
+  sunLight = sun;
   sun.position.set(-28, 55, 25);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
@@ -524,7 +558,8 @@ function buildWorld() {
   sun.shadow.normalBias = 0.06;
   sun.shadow.bias = -0.0002;
   scene.add(sun, sun.target);
-  scene.add(new T.HemisphereLight(0xe5f2df, 0x6b7557, 2));
+  skyLight = new T.HemisphereLight(0xe5f2df, 0x6b7557, 2);
+  scene.add(skyLight, partyLamp, campFire);
   scene.add(terrain);
   renderTerrain();
   if (!savedCampaign) {
@@ -2670,6 +2705,7 @@ function tick() {
         player.hp = Math.min(maxHp(), player.hp + dt * (safe(player) ? 22 : 4));
     }
     updateWorld(dt);
+    updateSky(dt);
     if (safe(player)) {
       const camp = nearCamp(campaign, player);
       if (camp) {
