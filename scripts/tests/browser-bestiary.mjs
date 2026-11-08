@@ -74,6 +74,7 @@ try {
     hit = (await snap()).player.hp < 100;
   }
   assert.ok(hit, "colossus slam hit the hero");
+  assert.equal((await snap()).weather, "clear", "no weather service = clear sky, the game goes on");
   assert.deepEqual(errors, []);
   console.log("PASS: archetypes → ambusher hides until close, thief steals gold, summoner calls biome servants, colossus slams the circle");
 } finally {

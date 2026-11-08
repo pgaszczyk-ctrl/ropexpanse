@@ -49,12 +49,14 @@ Kolejność według dokumentu, od najważniejszego.
 - Umiejętności ze sprzętu: miecz szarża, topór wir, młot wstrząs z ogłuszeniem, laska kula ognia (Q); tarcza prowokacja, orb tarcza many (R). Nowe bronie: topór, młot.
 - Do zrobienia później: łuk/kusza/różdżka/berło/sierp i pozostałe typy z Arsenału (ikony i modele czekają na grafika), legendarne warianty umiejętności, zdjęcie sprzętu na figurce, animacja pracy postaci obozowych.
 
-## Etap 4 — Wrogowie, biomy, pora dnia, pogoda
+## Etap 4 — Wrogowie, biomy, pora dnia, pogoda — ukończony 08.11.2026
 
-- Archetypy walki (stado, szarżownik, strzelec, zasadzka, przywoływacz, kolos, złodziej, zwodziciel); czerwony kształt = jedyne ostrzeżenie.
-- Bestiariusz Europy Słowiańskiej według biomów OSM; skalowanie +1 poziom co ~15 km i od odległości od lin.
-- Pora dnia z suncalc, pogoda z Open-Meteo, wrogowie zależni od pory i pogody.
-- Znaki Mgły na wrogach (ubytki voxeli, fiolet), rozpad na kostki.
+- Bestiariusz Europy Słowiańskiej: 23 wrogów w 6 biomach z OSM (las, łąki, woda, cmentarz, miasto, przemysł) + wrogowie pory dnia (ogniki, nietoperze, Nocnica, wilkołak), pogody (topielce w deszczu, lodowy upiór, Płanetnik) i dalecy od lin (Żmij, Licz).
+- Archetypy jak w dokumencie: stado (flankuje), szarżownik (czerwona linia, pęd), strzelec, czarownik, zasadzka (ukryta do 4 j.), przywoływacz (sługi swojego biomu), kolos (krąg), złodziej (kradnie i ucieka, oddaje po śmierci), zwodziciel (wybucha), wir (Południca).
+- Poziom: świat +1 co 15 km od startu + 1 co 350 m od lin; elitarni rzadko do 300 m od liny.
+- Pora dnia liczona lokalnie z prawdziwego słońca; światło dnia, zmierzchu i granatowej nocy; lampa drużyny i ognisko obozu.
+- Pogoda z Open-Meteo (bez klucza, co 30 min na kwadrat ~25 km; offline = pogodnie): deszcz, śnieg, mgła, burza z błyskami, wiatr.
+- Wygląd wrogów: tymczasowe przebarwione modele; czeka na grafika (znaki Mgły: ubytki voxeli, fiolet). Przyprószenie śniegiem, kałuże, okna świecące nocą — później.
 
 ## Etap 5 — Świat 3D: teren i kamera
 

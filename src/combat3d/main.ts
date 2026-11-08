@@ -27,6 +27,7 @@ import { enclosedAreas } from "./territory-rules";
 import { circleRates, workerRates } from "./production";
 import { weaponSkill, offhandSkill, SKILLS } from "./skills";
 import { timeOfDayAt, LIGHT } from "./sky";
+import { fetchWeather, WEATHER_NAMES } from "./weather";
 import {
   biomeAt,
   pickSpecies,
@@ -532,10 +533,12 @@ function updateSky(dt: number) {
     }
   }
   const L = LIGHT[timeOfDay],
-    k = Math.min(1, dt * 1.5);
-  sunLight.intensity += (L.sun - sunLight.intensity) * k;
+    k = Math.min(1, dt * 1.5),
+    dim = weatherNow === "rain" || weatherNow === "storm" ? 0.65 : weatherNow === "fog" ? 0.82 : 1;
+  sunLight.intensity += (L.sun * dim - sunLight.intensity) * k;
   sunLight.color.lerp(new T.Color(L.sunColor), k);
-  skyLight.intensity += (L.sky - skyLight.intensity) * k;
+  skyLight.intensity += (L.sky * (dim < 1 ? 0.9 : 1) - skyLight.intensity) * k;
+  if (flash > 0) skyLight.intensity = L.sky + 5 * (flash / 0.18);
   skyLight.color.lerp(new T.Color(L.skyColor), k);
   skyLight.groundColor.lerp(new T.Color(L.ground), k);
   (scene.background as T.Color).lerp(new T.Color(L.fog), k);
@@ -544,6 +547,73 @@ function updateSky(dt: number) {
   partyLamp.position.set(player.x, 2.4, player.z);
   campFire.intensity += (L.lamp * 1.3 - campFire.intensity) * k;
   campFire.position.set(home.x, 1.4, home.z);
+}
+// ---- Weather (real, from Open-Meteo): rain, snow, mist, storms with flashes, wind ----
+const forcedWeather = new URLSearchParams(location.search).get("weather") as Weather | null;
+let weatherClock = Infinity,
+  flashAt = 0,
+  flash = 0;
+const DROPS = 700;
+const rain = new T.LineSegments(
+  new T.BufferGeometry().setAttribute("position", new T.BufferAttribute(new Float32Array(DROPS * 6), 3)),
+  new T.LineBasicMaterial({ color: 0xbcd3e6, transparent: true, opacity: 0.55 }),
+);
+const snow = new T.Points(
+  new T.BufferGeometry().setAttribute("position", new T.BufferAttribute(new Float32Array(DROPS * 3), 3)),
+  new T.PointsMaterial({ color: 0xffffff, size: 4, sizeAttenuation: false, transparent: true, opacity: 0.95 }), // pixels: the camera is orthographic
+);
+rain.frustumCulled = snow.frustumCulled = false;
+rain.visible = snow.visible = false;
+const dropSeed = Array.from({ length: DROPS }, (_, i) => [((i * 7919) % 1000) / 1000, ((i * 104729) % 1000) / 1000, ((i * 1299709) % 1000) / 1000]);
+function setWeather(w: Weather) {
+  if (w === weatherNow) return;
+  weatherNow = w;
+  notify(WEATHER_NAMES[w]);
+}
+function updateWeather(dt: number) {
+  weatherClock += dt;
+  if (weatherClock > 60) {
+    // Ask at most every minute; the module keeps answers for 30 minutes per square.
+    weatherClock = 0;
+    if (forcedWeather) setWeather(forcedWeather);
+    else {
+      const geo = unproject(player, campaign.origin);
+      void fetchWeather(geo.lat, geo.lon).then(setWeather);
+    }
+  }
+  const wet = weatherNow === "rain" || weatherNow === "storm";
+  rain.visible = wet;
+  snow.visible = weatherNow === "snow";
+  // Fog distances count from the camera, which hangs ~55 units above the party:
+  // mist starts right past the party and thickens with distance.
+  const fogNear = weatherNow === "fog" ? 36 : wet ? 50 : 55,
+    fogFar = weatherNow === "fog" ? 72 : wet ? 102 : 115;
+  const fog = scene.fog as T.Fog;
+  fog.near += (fogNear - fog.near) * Math.min(1, dt);
+  fog.far += (fogFar - fog.far) * Math.min(1, dt);
+  if (rain.visible || snow.visible) {
+    const t = time,
+      wind = weatherNow === "storm" ? 0.35 : 0.12;
+    const pos = ((rain.visible ? rain : snow).geometry.getAttribute("position") as T.BufferAttribute).array as Float32Array;
+    for (let i = 0; i < DROPS; i++) {
+      const [a, b, c] = dropSeed[i];
+      const fall = rain.visible ? 22 : 2.2,
+        h = 18 - ((t * fall + c * 18) % 18);
+      const x = player.x + (a - 0.5) * 60 + (rain.visible ? wind * h : Math.sin(t + c * 6) * 0.6),
+        z = player.z + (b - 0.5) * 60;
+      if (rain.visible) {
+        pos.set([x, h, z, x - wind * 0.9, h + 0.9, z], i * 6);
+      } else pos.set([x, h, z], i * 3);
+    }
+    (rain.visible ? rain : snow).geometry.getAttribute("position").needsUpdate = true;
+  }
+  // Storm: a flash every 8–18 s.
+  if (weatherNow === "storm" && time > flashAt) {
+    flashAt = time + 8 + Math.random() * 10;
+    flash = 0.18;
+    sound(60, 0.4, "sawtooth", 0.03);
+  }
+  flash = Math.max(0, flash - dt);
 }
 function buildWorld() {
   const sun = new T.DirectionalLight(0xffeed0, 2.4);
@@ -559,7 +629,7 @@ function buildWorld() {
   sun.shadow.bias = -0.0002;
   scene.add(sun, sun.target);
   skyLight = new T.HemisphereLight(0xe5f2df, 0x6b7557, 2);
-  scene.add(skyLight, partyLamp, campFire);
+  scene.add(skyLight, partyLamp, campFire, rain, snow);
   scene.add(terrain);
   renderTerrain();
   if (!savedCampaign) {
@@ -2706,6 +2776,7 @@ function tick() {
     }
     updateWorld(dt);
     updateSky(dt);
+    updateWeather(dt);
     if (safe(player)) {
       const camp = nearCamp(campaign, player);
       if (camp) {

@@ -1,0 +1,22 @@
+// Weather: WMO codes map to the game's weather; cached per square; errors mean clear.
+import assert from "node:assert/strict";
+import { weatherFromCode, fetchWeather } from "../../src/combat3d/weather.ts";
+assert.equal(weatherFromCode(0), "clear");
+assert.equal(weatherFromCode(2, 12), "wind");
+assert.equal(weatherFromCode(45), "fog");
+assert.equal(weatherFromCode(61), "rain");
+assert.equal(weatherFromCode(81), "rain");
+assert.equal(weatherFromCode(73), "snow");
+assert.equal(weatherFromCode(95), "storm");
+const store = new Map();
+globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+let calls = 0;
+const fake = async (url) => (calls++, assert.match(url, /latitude=51\.25&longitude=22\.57/), { ok: true, json: async () => ({ current: { weather_code: 63, wind_speed_10m: 3 } }) });
+assert.equal(await fetchWeather(51.25, 22.57, 1000, fake), "rain");
+assert.equal(await fetchWeather(51.26, 22.58, 2000, fake), "rain");
+assert.equal(calls, 1, "kept for 30 minutes per square");
+assert.equal(await fetchWeather(51.25, 22.57, 1000 + 31 * 60_000, fake), "rain");
+assert.equal(calls, 2, "asked again after 30 minutes");
+assert.equal(await fetchWeather(10, 10, 0, async () => { throw Error("offline"); }), "clear", "offline = clear");
+assert.equal(await fetchWeather(11, 11, 0, async () => ({ ok: false })), "clear");
+console.log("PASS: weather codes, 30-minute cache per square, offline means clear");
