@@ -20,6 +20,13 @@ Aktualizacja: 08.11.2026 (plan poprawek dopisany po południu). Ta sekcja jest a
 - **Mruganie dachów i dróg:** budynek zasłaniający postać przełączał się co 0,1 s między pełnym a przezroczystym — teraz płynnie zanika i wraca (z opóźnieniem 0,6 s). Drogi dostały przesunięcie głębi, a wysokość terenu liczona jest po tych samych trójkątach co siatka gruntu (grunt nie przebija drogi).
 - Testy: `npm test` (15) i `npm run test:browser` (10 plików, komputer + telefon w emulacji) zaliczone; nowy test przeglądarkowy liny (zwijanie, brak liny, powrót na zużytej linie). Brak testu na fizycznym telefonie.
 
+## Druga runda uwag z 8 listopada
+
+- **Lina:** obozy co najmniej 500 m od siebie (`BALANCE.minCampDistance`), jeden odcinek do 1200 m (`ropeLength`). Start: 2500 m liny; 1 włókno = 25 m; powroźnik 50 m/h. Pasek zasobów pokazuje na żywo, ile liny zostało i ile jest rozwinięte; przy napiętej/skończonej linie komunikat. Za blisko obozu → „odejdź jeszcze N m” (zielone kółka tylko przy braku miejsca).
+- **Obrażenia:** każdy cios ±30% od wartości bazowej, 10% pudła dla bohaterów i towarzyszy, 8% dla wrogów; napis „pudło” (`rollDamage` w `rules.ts`). Ciosy zabijające natychmiast (99999) bez losowania. W `?qa=1` liczby są stałe, chyba że test włączy losowanie (`__combat3d.fixedRolls(false)`).
+- **Ekwipunek:** figurka postaci z polami na hełm, zbroję, broń, drugą rękę i buty, z ikonami założonych rzeczy; dotknięcie pokazuje szczegóły i „Zdejmij”.
+- Wartości (500 m, 1200 m, 2500 m, ±30%, 10%) są startowe do strojenia.
+
 ## Co jest w grze (skrót)
 
 - **Mapa:** kafle Protomaps PMTiles z archiwum erpeg (R2, odczyt Range, cache), Overpass tylko awaryjnie; dołączony fragment Lublina offline (`src/combat3d/osmTiles.ts`, `world.ts`).

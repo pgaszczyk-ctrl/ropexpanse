@@ -156,6 +156,10 @@ function offerShare(o: { readyAt: number }) {
     Math.min(100, 100 - ((o.readyAt - Date.now()) / BALANCE.recruitmentMs) * 100),
   );
 }
+/** Faint outline in an empty slot of the figure. */
+const SLOT_GHOST = { weapon: "sword", offhand: "shield", armor: "armor", helmet: "helmet", boots: "boots" } as const;
+/** The figure behind the equipment slots (simple, readable at phone size). */
+const DOLL_FIGURE = `<svg class="doll-figure" viewBox="0 0 180 300" aria-hidden="true"><g fill="#7c8b79" opacity=".28"><circle cx="90" cy="42" r="27"/><path d="M57 80 24 104 5 190 25 198 51 137 51 205 60 296 81 296 89 221 98 296 122 296 130 204 130 135 156 198 175 190 154 104 123 80Z"/></g></svg>`;
 function itemBadge(item: Item) {
   return item.slot === "material"
     ? ""
@@ -578,41 +582,69 @@ export class Expedition {
     col.append(grid);
     layout.append(col);
     const side = node("aside", "", "equipment");
+    // The hero with what they wear: helmet on the head, armour on the body, weapon and
+    // second hand at the sides, boots at the feet. A tap picks the piece (details below).
     if (!vault) {
+      const doll = node("div", "", "doll");
+      doll.innerHTML = DOLL_FIGURE;
       for (const [slot, label] of [
-        ["weapon", "Broń"],
-        ["offhand", "Druga ręka"],
-        ["armor", "Zbroja"],
         ["helmet", "Hełm"],
+        ["weapon", "Broń"],
+        ["armor", "Zbroja"],
+        ["offhand", "Druga ręka"],
         ["boots", "Buty"],
       ] as const) {
         const item = c.equipment[slot];
         const b = button(
-          item ? `${item.name} · ${item.power}` : label,
+          "",
           () => {
-            if (item && c.bag.length < BALANCE.slots) {
-              delete c.equipment[slot];
-              c.bag.push(item);
-              c.hp = Math.min(c.hp, maxHealth(c));
-              this.h.save();
-              this.render();
-            }
+            if (!item) return;
+            this.selectedItem = item.id;
+            this.render();
           },
-          "equipment-slot",
+          `doll-slot doll-${slot}`,
         );
-        side.append(b);
+        if (item) {
+          b.innerHTML = itemIcon(item) + itemBadge(item);
+          b.style.setProperty("--item-rarity", RARITY_COLORS[(item.rarity as keyof typeof RARITY_COLORS) ?? "common"] ?? RARITY_COLORS.common);
+          b.setAttribute("aria-label", `${label}: ${item.name}, ${itemStat(item)}`);
+          b.title = `${item.name} · ${itemStat(item)}`;
+          b.classList.add("filled");
+          b.classList.toggle("selected", this.selectedItem === item.id);
+        } else {
+          b.innerHTML = `<svg viewBox="0 0 56 56" aria-hidden="true">${paths[SLOT_GHOST[slot]]}</svg><small>${label}</small>`;
+          b.setAttribute("aria-label", `${label}: puste`);
+        }
+        doll.append(b);
       }
+      side.append(doll);
     }
-    const item = items.find((i) => i.id === this.selectedItem);
+    const worn = vault ? undefined : Object.entries(c.equipment).find(([, i]) => i?.id === this.selectedItem);
+    const item = items.find((i) => i.id === this.selectedItem) ?? worn?.[1];
     if (item) {
       side.append(
         node("h3", item.name),
         node(
           "p",
-          `${item.slot === "weapon" ? "Atak" : "Obrona"} ${item.power}`,
+          itemStat(item),
         ),
       );
-      if (!vault && item.slot !== "material")
+      if (worn)
+        side.append(
+          button("Zdejmij", () => {
+            if (c.bag.length >= BALANCE.slots) {
+              this.h.notify("Plecak jest pełny");
+              return;
+            }
+            delete c.equipment[worn[0] as keyof typeof c.equipment];
+            c.bag.push(item);
+            c.hp = Math.min(c.hp, maxHealth(c));
+            this.h.switch(c);
+            this.h.save();
+            this.render();
+          }),
+        );
+      else if (!vault && item.slot !== "material")
         side.append(
           button("Załóż", () => {
             equip(c, item.id);
@@ -621,7 +653,7 @@ export class Expedition {
             this.render();
           }),
         );
-      if (nearCamp(s, c))
+      if (nearCamp(s, c) && !worn)
         side.append(
           button(vault ? "Do plecaka" : "Do skarbca", () => {
             if (
@@ -985,10 +1017,9 @@ export class Expedition {
       return "";
     }
     if (!this.h.contains(c)) return "Mapa jeszcze się wczytuje";
-    if (
-      this.h.state.camps.some((v) => distance(v, c) < BALANCE.minCampDistance)
-    )
-      return "Za blisko obozu";
+    const nearest = Math.min(...this.h.state.camps.map((v) => distance(v, c)));
+    if (nearest < BALANCE.minCampDistance)
+      return `Za blisko obozu — odejdź jeszcze ${Math.ceil((BALANCE.minCampDistance - nearest) / SCALE)} m`;
     if (this.h.state.stock.wood < BALANCE.campWood)
       return `Potrzebujesz ${BALANCE.campWood} drewna`;
     if (routeLength(this.rope.points) > this.ropeMax())
@@ -1025,6 +1056,11 @@ export class Expedition {
       this.h.notify("Mapa tej postaci jest niedostępna");
     }
   }
+  /** Metres of rope run out right now (0 without the stake in hand). */
+  ropeUsed() {
+    return this.rope ? Math.ceil(routeLength(this.rope.points) / SCALE) : 0;
+  }
+  private tautNotice = 0;
   /** Longest rope the hero can run out now (stretch limit or what is left in the Vault). */
   private ropeMax() {
     return ropeAvailable(this.h.state, SCALE);
@@ -1096,7 +1132,17 @@ export class Expedition {
     if (!points) return false;
     // At the end of the rope the hero can still walk back (a step that shortens it).
     const length = routeLength(points);
-    if (length > this.ropeMax() && length > routeLength(this.rope.points)) return false;
+    if (length > this.ropeMax() && length > routeLength(this.rope.points)) {
+      if (Date.now() - this.tautNotice > 2500) {
+        this.tautNotice = Date.now();
+        this.h.notify(
+          this.ropeMax() < BALANCE.ropeLength
+            ? "Skończyła się lina — wbij palik albo wróć"
+            : `Lina napięta (${Math.round(BALANCE.ropeLength / SCALE)} m) — wbij palik`,
+        );
+      }
+      return false;
+    }
     this.rope.points = points;
     return true;
   }
@@ -1224,7 +1270,7 @@ export class Expedition {
     if (this.clock > 0.25) {
       const why = this.rope ? this.placementError() : "";
       this.spotList =
-        why === "Brak miejsca na obóz" || why === "Za blisko obozu"
+        why === "Brak miejsca na obóz"
           ? this.freeSpots()
           : [];
       this.clock = 0;

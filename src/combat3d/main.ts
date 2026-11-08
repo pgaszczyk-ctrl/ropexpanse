@@ -96,6 +96,7 @@ import {
   circleBlocked,
   segmentHitsCircle,
   type Point,
+  rollDamage,
 } from "./rules";
 
 type Enemy = {
@@ -1610,8 +1611,21 @@ function syncCompanions() {
   });
   expedition.refreshWorld();
 }
-function hurtCompanion(m: Companion, damage: number) {
+/** Rolls a blow: ±30% and a chance to miss (shown as "pudło"). Huge values (instant
+ * kills) and fixed QA rolls pass unchanged. Returns 0 for a miss. */
+// Test runs (?qa=1) keep exact numbers unless they switch rolls on (fixedRolls(false)).
+let fixedRolls = new URLSearchParams(location.search).has("qa");
+function roll(damage: number, at: Point, missChance?: number) {
+  if (fixedRolls || damage >= 9999) return damage;
+  const dealt = rollDamage(damage, missChance);
+  if (!dealt) floatingText("pudło", at, "#d9ddd2");
+  return dealt;
+}
+const ENEMY_MISS = 0.08;
+function hurtCompanion(m: Companion, damage: number, exact = false) {
   if (m.c.hp <= 0 || safe(m.c)) return;
+  if (!exact) damage = roll(damage, m.c, ENEMY_MISS);
+  if (!damage) return;
   damage = takenBy(m.c, Math.max(1, Math.round(damage - armorPower(m.c) * 0.45)));
   if (!damage) return;
   m.c.hp = Math.max(0, m.c.hp - damage);
@@ -2506,6 +2520,11 @@ function updateDrops(dt: number) {
 }
 function hurtEnemy(e: Enemy, damage: number, by?: Character) {
   if (e.state === "dead") return;
+  damage = roll(damage, e.rig.root.position);
+  if (!damage) {
+    sound(420, 0.04, "triangle", 0.02);
+    return;
+  }
   e.hp -= damage;
   e.flash = 0.13;
   burst(e.rig.root.position, e.elite ? 0xffd270 : 0xf3e2ab);
@@ -2557,8 +2576,13 @@ function hurtEnemy(e: Enemy, damage: number, by?: Character) {
     persist();
   }
 }
-function hurtPlayer(damage: number) {
+function hurtPlayer(damage: number, exact = false) {
   if (time < invincibleUntil || time < deathUntil || safe(player)) return;
+  if (!exact) damage = roll(damage, player, ENEMY_MISS);
+  if (!damage) {
+    invincibleUntil = time + 0.35; // one miss per swing, not a miss every frame
+    return;
+  }
   damage = takenBy(player, Math.max(1, Math.round(damage - armorPower(player) * 0.45)));
   if (time < tauntUntil) damage = Math.round(damage * 0.7);
   if (time < manaShieldUntil && manaShield > 0) {
@@ -3099,7 +3123,10 @@ function updateHud() {
       ? "Walka"
       : "Poza obozem";
   // Gold and shards are the hero's own; the rest is the shared Vault.
-  const stockLine = `${player.coins} tix · ${player.fragments} odł. · ${campaign.stock.wood} drewna · ${campaign.stock.rope} m liny`;
+  // While the stake is in hand the rope left goes down (and back up) with every step.
+  const used = expedition?.ropeUsed() ?? 0,
+    ropeText = used ? `${Math.max(0, campaign.stock.rope - used)} m liny (rozwinięte ${used} m)` : `${campaign.stock.rope} m liny`;
+  const stockLine = `${player.coins} tix · ${player.fragments} odł. · ${campaign.stock.wood} drewna · ${ropeText}`;
   if ($("loot").textContent !== stockLine) $("loot").textContent = stockLine;
   const sweepLeft = Math.max(0, sweepReady - time),
     healLeft = Math.max(0, potionReady - time);
@@ -3852,7 +3879,7 @@ async function init() {
                   player.hp = 25;
                 }
                 if (name === "death") {
-                  hurtPlayer(999);
+                  hurtPlayer(999, true);
                 }
                 if (name === "wall") {
                   const b = buildingViews.find((b) => Math.abs(b.box.x0) < 30);
@@ -4008,7 +4035,10 @@ async function init() {
                   lastCombat = time - 10;
                 }
               },
-              hurt: (n: number) => hurtPlayer(n),
+              hurt: (n: number) => hurtPlayer(n, true),
+              fixedRolls: (on = true) => {
+                fixedRolls = on;
+              },
               attack: (s = false) => beginAttack(s, true),
               potion: usePotion,
               loseContext: () => contextControl?.loseContext(),

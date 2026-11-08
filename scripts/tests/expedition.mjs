@@ -72,6 +72,15 @@ assert(c.bag.some((v) => v.id === sword.id));
   const legacy = JSON.parse(JSON.stringify(v));
   delete legacy.stock;
   assert.deepEqual(parseCampaign(JSON.stringify(legacy)).stock, BALANCE.startStock);
+  {
+    const old = JSON.parse(JSON.stringify(v));
+    delete old.longRope;
+    old.stock.rope = 0;
+    const up = parseCampaign(JSON.stringify(old));
+    assert.equal(up.stock.rope, BALANCE.startStock.rope, "old save without rope gets it topped up once");
+    up.stock.rope = 0;
+    assert.equal(parseCampaign(JSON.stringify(up)).stock.rope, 0, "only once");
+  }
   legacy.stock = { ...BALANCE.startStock, wood: -1 };
   assert.equal(parseCampaign(JSON.stringify(legacy)), null, "negative stock rejected");
 }
