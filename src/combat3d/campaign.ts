@@ -150,6 +150,8 @@ export type Campaign = {
   v: 2;
   origin: { lat: number; lon: number };
   activeId: string;
+  /** Who walks the rope together (ids, at most PARTY_SIZE, the controlled one included). */
+  party?: string[];
   characters: Character[];
   camps: Camp[];
   connections?: Connection[];
@@ -271,6 +273,24 @@ export function newCampaign(
   };
   c.bag.push(makeItem(s, 0), makeItem(s, 1), makeItem(s, 2));
   return s;
+}
+export const PARTY_SIZE = 3;
+/** The party's ids: the controlled character first, then up to two companions. */
+export function partyOf(s: Campaign) {
+  const ids = [s.activeId, ...(s.party ?? []).filter((id) => id !== s.activeId)]
+    .filter((id, i, a) => a.indexOf(id) === i && s.characters.some((c) => c.id === id))
+    .slice(0, PARTY_SIZE);
+  s.party = ids;
+  return ids;
+}
+/** Adds or removes a companion; the controlled character always stays. */
+export function toggleParty(s: Campaign, id: string) {
+  const ids = partyOf(s);
+  if (id === s.activeId) return false;
+  if (ids.includes(id)) s.party = ids.filter((v) => v !== id);
+  else if (ids.length < PARTY_SIZE) s.party = [...ids, id];
+  else return false;
+  return true;
 }
 export function activeCharacter(s: Campaign) {
   return s.characters.find((c) => c.id === s.activeId)!;
@@ -475,6 +495,11 @@ export function parseCampaign(raw: string): Campaign | null {
         return null;
     }
     if (s.producedAt !== undefined && !Number.isFinite(s.producedAt))
+      return null;
+    if (
+      s.party !== undefined &&
+      (!Array.isArray(s.party) || s.party.some((id) => typeof id !== "string"))
+    )
       return null;
     s.vents ??= {};
     if (

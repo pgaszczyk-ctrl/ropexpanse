@@ -18,6 +18,9 @@ import {
   cancelOffer,
   nextId,
   connectCamps,
+  partyOf,
+  toggleParty,
+  PARTY_SIZE,
   ropeAvailable,
   spendRope,
   twistRope,
@@ -44,6 +47,8 @@ type Hooks = {
   notify: (s: string) => void;
   save: () => void;
   switch: (c: Character) => void | Promise<void>;
+  /** Re-reads the party (companions appear or leave). */
+  party: () => void;
   panel: (open: boolean) => void;
   travel: (geo: Geo) => Promise<void>;
   retry: () => void;
@@ -351,34 +356,42 @@ export class Expedition {
       c = activeCharacter(s);
     el("characters").setAttribute("aria-label", `Wędrowcy · ${c.name}`);
     if (this.view === "characters") {
-      this.title.textContent = "Postacie";
+      this.title.textContent = "Drużyna";
+      const party = partyOf(s);
+      this.body.append(
+        node("p", `W drużynie ${party.length} / ${PARTY_SIZE}. Reszta czeka w obozach.`, "party-note"),
+      );
       for (const v of s.characters) {
+        const row = node("div", "", "character-row");
+        const inParty = party.includes(v.id);
         const b = button(
           `${v.name} · ${roleName(v.role)} · ${levelOf(v.exp)}`,
-          async () => {
-            if (v.id === c.id) return;
-            if (this.rope || !nearCamp(s, c) || this.h.combat()) {
-              this.h.notify("Wróć do obozu");
-              return;
-            }
-            this.h.save();
-            try {
-              await this.h.switch(v);
-              s.activeId = v.id;
-              this.refreshWorld();
-              this.close();
-            } catch {
-              this.h.notify("Mapa tej postaci jest niedostępna");
-            }
-          },
+          () => void this.control(v),
           "character-choice",
         );
         b.classList.toggle("selected", v.id === c.id);
-        b.style.setProperty(
-          "--portrait-color",
-          `hsl(${v.appearance % 360} 25% 47%)`,
-        );
-        this.body.append(b);
+        b.style.setProperty("--portrait-color", `hsl(${v.appearance % 360} 25% 47%)`);
+        row.append(b);
+        if (v.id !== c.id) {
+          const t = button(inParty ? "Zostaw w obozie" : "Do drużyny", () => {
+            if (!inParty && !nearCamp(s, c) && distance(v, c) > BALANCE.safeRadius) {
+              this.h.notify("Wędrowiec czeka w obozie — idź po niego");
+              return;
+            }
+            if (inParty) {
+              // Left behind: walks back to the nearest camp.
+              const camp = nearCamp(s, v, Infinity) ?? s.camps[0];
+              Object.assign(v, { x: camp.x + 1.5, z: camp.z + 1.5, campId: camp.id });
+            }
+            if (toggleParty(s, v.id)) {
+              this.h.party();
+              this.h.save();
+              this.render();
+            } else this.h.notify(`Drużyna ma najwyżej ${PARTY_SIZE} osoby`);
+          }, "party-toggle");
+          row.append(t);
+        }
+        this.body.append(row);
       }
       return;
     }
@@ -640,6 +653,11 @@ export class Expedition {
               () => {
                 const hired = hire(s, o.id, v.id);
                 if (hired) {
+                  // A new hire joins the party when there is room.
+                  if (partyOf(s).length < PARTY_SIZE) {
+                    toggleParty(s, hired.id);
+                    this.h.party();
+                  }
                   this.h.save();
                   this.refreshWorld();
                   this.render();
@@ -906,6 +924,31 @@ export class Expedition {
     if (this.h.blocked(c, 3.6)) return "Brak miejsca na obóz";
     return "";
   }
+  /** Takes control of a character: party members anywhere outside a fight,
+   * others only from a camp (they wait there). */
+  async control(v: Character) {
+    const s = this.h.state,
+      c = activeCharacter(s);
+    if (v.id === c.id) return;
+    const inParty = partyOf(s).includes(v.id);
+    if (this.rope || this.h.combat() || (!inParty && !nearCamp(s, c))) {
+      this.h.notify(this.h.combat() ? "Najpierw zakończ walkę" : "Wróć do obozu");
+      return;
+    }
+    // Swap places in the party: the new leader keeps the old one as a companion.
+    if (!inParty) s.party = [v.id, ...partyOf(s).filter((id) => id !== c.id), c.id].slice(0, PARTY_SIZE);
+    const previous = s.activeId;
+    s.activeId = v.id;
+    this.h.save();
+    try {
+      await this.h.switch(v);
+      this.refreshWorld();
+      this.close();
+    } catch {
+      s.activeId = previous;
+      this.h.notify("Mapa tej postaci jest niedostępna");
+    }
+  }
   /** Longest rope the hero can run out now (stretch limit or what is left in the Vault). */
   private ropeMax() {
     return ropeAvailable(this.h.state, SCALE);
@@ -1018,7 +1061,7 @@ export class Expedition {
     }
     this.waiting.clear();
     for (const c of this.h.state.characters) {
-      if (c.id === this.h.state.activeId || !this.h.contains(c)) continue;
+      if (partyOf(this.h.state).includes(c.id) || !this.h.contains(c)) continue;
       const rig = person(
         c.role === "warrior" ? "hero" : "archer",
         c.appearance,

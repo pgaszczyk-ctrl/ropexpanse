@@ -1708,3 +1708,17 @@ canvas[data-interaction="camp"] {
   font-size: 11px;
   margin-left: 2px;
 }
+.character-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 9px;
+}
+.character-row .character-choice {
+  flex: 1;
+  margin: 0;
+}
+.party-note {
+  color: #cbb48a;
+  margin: 0 0 10px;
+}

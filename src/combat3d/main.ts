@@ -16,6 +16,7 @@ import {
   GEAR_KINDS,
   accrue,
   distanceToSafeZone,
+  partyOf,
   type Character,
 } from "./campaign";
 import { enclosedAreas } from "./territory-rules";
@@ -715,6 +716,7 @@ async function switchCharacter(c: Character) {
   hero.root.position.set(c.x, 0, c.z);
   selectWeapon(weapon);
   populateEncounters();
+  syncCompanions();
 }
 function removeEnemy(e: Enemy) {
   scene.remove(e.rig.root, e.bar, e.warning);
@@ -849,6 +851,168 @@ function updateProduction(dt: number) {
     }
   }
   if (accrue(campaign, Date.now())) notify("Skarbiec pełny — zajrzyj do obozu");
+}
+// ---- Party: up to two companions follow the controlled character and fight alone ----
+type Companion = {
+  c: Character;
+  rig: Rig;
+  bar: T.Group;
+  fill: T.Mesh;
+  cool: number;
+  heading: number;
+  swing: number;
+  stuck: number;
+};
+const companions: Companion[] = [];
+const ranged = (c: Character) => c.role !== "warrior";
+function slideCompanion(p: Point, dx: number, dz: number) {
+  const steps = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.1));
+  for (let i = 0; i < steps; i++) {
+    const nx = p.x + dx / steps,
+      nz = p.z + dz / steps;
+    if (!blocked(nx, p.z, 0.45)) p.x = nx;
+    if (!blocked(p.x, nz, 0.45)) p.z = nz;
+  }
+}
+/** Where a companion walks: behind the leader, left or right. */
+function formation(slot: number): Point {
+  const back = heading + Math.PI + (slot ? 0.55 : -0.55);
+  return findFree({ x: player.x + Math.sin(back) * 1.8, z: player.z + Math.cos(back) * 1.8 });
+}
+function removeCompanion(m: Companion) {
+  scene.remove(m.rig.root, m.bar);
+  m.rig.root.traverse((o) => {
+    if (o instanceof T.Mesh) o.geometry.dispose();
+  });
+}
+/** Makes the companions match the saved party (after a switch, hire or panel change). */
+function syncCompanions() {
+  const ids = partyOf(campaign).filter((id) => id !== player.id);
+  for (let i = companions.length - 1; i >= 0; i--)
+    if (!ids.includes(companions[i].c.id)) {
+      removeCompanion(companions[i]);
+      companions.splice(i, 1);
+    }
+  ids.forEach((id, slot) => {
+    if (companions.some((m) => m.c.id === id)) return;
+    const c = campaign.characters.find((v) => v.id === id)!;
+    if (distance(c, player) > 12) Object.assign(c, formation(slot));
+    const rig = person(c.role === "archer" ? "archer" : "hero", c.appearance);
+    rig.sword.visible = !ranged(c);
+    rig.wand.visible = ranged(c);
+    rig.root.position.set(c.x, 0, c.z);
+    scene.add(rig.root);
+    addBlobShadow(rig);
+    const { group: bar, fill } = healthBar(1.3, 0x9bd27e);
+    scene.add(bar);
+    companions.push({ c, rig, bar, fill, cool: 0, heading: 0, swing: 0, stuck: 0 });
+  });
+  expedition.refreshWorld();
+}
+function hurtCompanion(m: Companion, damage: number) {
+  if (m.c.hp <= 0 || safe(m.c)) return;
+  damage = Math.max(1, Math.round(damage - armorPower(m.c) * 0.45));
+  m.c.hp = Math.max(0, m.c.hp - damage);
+  floatingText(String(damage), m.c, "#ff9b8a");
+  lastCombat = time;
+  if (m.c.hp <= 0) notify(`${m.c.name} padł — wstanie po walce`);
+}
+function updateCompanions(dt: number) {
+  companions.forEach((m, slot) => {
+    const c = m.c,
+      p = m.rig.root.position;
+    let moving = false;
+    m.cool -= dt;
+    m.swing = Math.max(0, m.swing - dt);
+    if (c.hp <= 0) {
+      // Downed: lies until the fight is over (8 s of calm) or the leader is in a camp.
+      p.y = -0.1;
+      m.rig.root.rotation.z = Math.PI * 0.4;
+      if (time - lastCombat > 8 || safe(player)) {
+        c.hp = Math.round(maxHealth(c) * 0.3);
+        m.rig.root.rotation.z = 0;
+        p.y = 0;
+      }
+    } else {
+      if (distance(p, player) > 25) {
+        const f = formation(slot);
+        p.set(f.x, 0, f.z);
+      }
+      const foe = enemies
+        .filter(
+          (e) =>
+            e.state !== "dead" &&
+            distance(e.rig.root.position, player) < 10 &&
+            lineClear(p, e.rig.root.position),
+        )
+        .sort((a, b) => distance(a.rig.root.position, p) - distance(b.rig.root.position, p))[0];
+      if (foe) {
+        const q = foe.rig.root.position,
+          d = distance(p, q);
+        m.heading = Math.atan2(q.x - p.x, q.z - p.z);
+        const want = ranged(c) ? 6 : 1.5;
+        if (Math.abs(d - want) > 0.6) {
+          const dir = d > want ? 1 : -1,
+            v = R.speed * 0.9 * dt * dir;
+          slideCompanion(p, Math.sin(m.heading) * v, Math.cos(m.heading) * v);
+          moving = true;
+        }
+        if (m.cool <= 0 && (ranged(c) ? d < 11 : d < R.reach + 0.5)) {
+          m.cool = 1.1;
+          m.swing = 0.3;
+          if (ranged(c)) {
+            fire({ x: p.x + Math.sin(m.heading) * 0.6, z: p.z + Math.cos(m.heading) * 0.6 }, m.heading, false);
+            shots[shots.length - 1].damage = 10 + attackPower(c);
+          } else hurtEnemy(foe, 12 + attackPower(c));
+        }
+      } else {
+        const f = formation(slot),
+          d = distance(p, f);
+        if (d > 0.9) {
+          m.heading = Math.atan2(f.x - p.x, f.z - p.z);
+          const v = Math.min(d, R.speed * (d > 5 ? 1.25 : 0.95) * dt);
+          const before = { x: p.x, z: p.z };
+          slideCompanion(p, Math.sin(m.heading) * v, Math.cos(m.heading) * v);
+          moving = true;
+          // No path finding: a companion stuck behind a wall, or out of sight and
+          // far behind, catches up by joining the leader (common in party games).
+          m.stuck = distance(before, p) < v * 0.3 ? m.stuck + dt : 0;
+          if ((m.stuck > 0.8 && d > 3) || (d > 8 && !lineClear(p, player))) {
+            p.set(f.x, 0, f.z);
+            m.stuck = 0;
+          }
+        }
+      }
+      if (c.hp < maxHealth(c) && (safe(c) || time - lastCombat > R.regenDelay))
+        c.hp = Math.min(maxHealth(c), c.hp + dt * (safe(c) ? 22 : 4));
+    }
+    c.x = p.x;
+    c.z = p.z;
+    m.rig.root.rotation.y = m.heading;
+    animate(m.rig, dt, moving, m.swing > 0 ? 0.5 : 0, false);
+    m.bar.visible = c.hp < maxHealth(c);
+    m.bar.position.set(p.x, 2.6, p.z);
+    m.bar.quaternion.copy(camera.quaternion);
+    m.fill.scale.x = clamp(c.hp / maxHealth(c), 0, 1);
+  });
+}
+/** Who an enemy goes for: the nearest of the party, a warrior counting as nearer (draws aggro). */
+function enemyTarget(p: Point): { at: Point; m?: Companion } {
+  let best: { at: Point; m?: Companion } = { at: player },
+    score = distance(player, p) * (player.role === "warrior" ? 0.7 : 1);
+  for (const m of companions) {
+    if (m.c.hp <= 0) continue;
+    const sc = distance(m.c, p) * (m.c.role === "warrior" ? 0.7 : 1);
+    if (sc < score) {
+      score = sc;
+      best = { at: m.c, m };
+    }
+  }
+  return best;
+}
+function hurtTarget(t: { at: Point; m?: Companion }, damage: number) {
+  if (t.m) hurtCompanion(t.m, damage);
+  else hurtPlayer(damage);
 }
 // ---- Haze vents: wake → wave → one blow drives in a stake with a lantern ----
 type VentView = {
@@ -1435,16 +1599,18 @@ function updateEnemies(dt: number) {
       continue;
     }
     const p = e.rig.root.position,
-      d = distance(player, p);
+      target = enemyTarget(p),
+      tgt = target.at,
+      d = distance(tgt, p);
     let moving = false;
     e.timer -= dt;
-    if (safe(player) || safe(p)) {
+    if (safe(tgt) || safe(p)) {
       e.state = "idle";
       e.timer = 0;
       e.hit = false;
     }
     if (e.state === "idle") {
-      if (distance(p, e.spawn) > 20 || safe(player) || safe(p) || d > 17) {
+      if (distance(p, e.spawn) > 20 || safe(tgt) || safe(p) || d > 17) {
         moving = wander(e, dt);
         if (d > 20) e.hp = Math.min(e.maxHp, e.hp + dt * 6);
       } else if (
@@ -1452,7 +1618,7 @@ function updateEnemies(dt: number) {
           (e.kind === "wolf" || e.kind === "raider" || e.kind === "heavy"
             ? 3.6
             : 10) &&
-        lineClear(p, player)
+        lineClear(p, tgt)
       ) {
         e.wanderTarget = null;
         e.state = "windup";
@@ -1462,10 +1628,10 @@ function updateEnemies(dt: number) {
             : e.kind === "wolf" || e.kind === "raider"
               ? 0.65
               : 0.85;
-        e.heading = Math.atan2(player.x - p.x, player.z - p.z);
+        e.heading = Math.atan2(tgt.x - p.x, tgt.z - p.z);
         e.hit = false;
       } else {
-        const a = Math.atan2(player.x - p.x, player.z - p.z);
+        const a = Math.atan2(tgt.x - p.x, tgt.z - p.z);
         e.heading = a;
         const sign = e.kind === "archer" && d < 5 ? -1 : 1;
         slideEnemy(
@@ -1503,8 +1669,9 @@ function updateEnemies(dt: number) {
           Math.sin(e.heading) * 10 * dt,
           Math.cos(e.heading) * 10 * dt,
         );
-        if (!e.hit && segmentHitsCircle(before, p, player, 0.95)) {
-          hurtPlayer(
+        if (!e.hit && segmentHitsCircle(before, p, tgt, 0.95)) {
+          hurtTarget(
+            target,
             Math.round(
               (e.boss ? 38 : e.elite ? 25 : e.kind === "heavy" ? 24 : 15) *
                 (1 + (e.tier - 1) * 0.22),
@@ -1612,6 +1779,13 @@ function updateShots(dt: number) {
       hurtPlayer(s.damage);
       hit = true;
     }
+    if (!hit && s.fromEnemy)
+      for (const m of companions)
+        if (m.c.hp > 0 && segmentHitsCircle(before, p, m.c, 0.6)) {
+          hurtCompanion(m, s.damage);
+          hit = true;
+          break;
+        }
     if (!hit && !s.fromEnemy)
       hit = harvestAt((q) => segmentHitsCircle(before, p, q, 0.7));
     if (!hit && !s.fromEnemy)
@@ -2013,6 +2187,7 @@ function tick() {
       }
     }
     updateEnemies(dt);
+    updateCompanions(dt);
     updateShots(dt);
     updateEffects(dt);
     if (worldStream && !qaFixtureActive) updateVents(dt, time);
@@ -2191,6 +2366,7 @@ async function init() {
       notify,
       save: persist,
       switch: switchCharacter,
+      party: () => syncCompanions(),
       panel: (open) => {
         helpOpen = open;
         resetInput();
@@ -2237,6 +2413,7 @@ async function init() {
     bindControls();
     resize();
     window.addEventListener("resize", resize);
+    syncCompanions();
     ready = true;
     $("loading-text").textContent = "";
     $("start").hidden = false;
@@ -2277,6 +2454,13 @@ async function init() {
           sweepReady,
           potionReady,
           attack: attack ? { ...attack } : null,
+          companions: companions.map((m) => ({
+            id: m.c.id,
+            x: m.c.x,
+            z: m.c.z,
+            hp: m.c.hp,
+            role: m.c.role,
+          })),
           enemies: enemies.map((e) => ({
             id: e.id,
             key: e.key,
@@ -2387,6 +2571,26 @@ async function init() {
                 resolveForQA();
               },
               travel: (lat: number, lon: number) => travelTo({ lat, lon }),
+              // A companion of the given role joins the party next to the hero.
+              companion: (role: "warrior" | "mage" | "archer") => {
+                const c: Character = {
+                  ...JSON.parse(JSON.stringify(player)),
+                  id: `qa-${role}-${++campaign.serial}`,
+                  name: role === "warrior" ? "Bogdan" : role === "mage" ? "Bogna" : "Hugo",
+                  role,
+                  appearance: 120 + campaign.serial,
+                  bag: [],
+                  equipment: {},
+                  weapon: role === "warrior" ? "sword" : "magic",
+                  coins: 0,
+                };
+                Object.assign(c, findFree({ x: player.x - 2, z: player.z - 2 }));
+                c.hp = maxHealth(c);
+                campaign.characters.push(c);
+                campaign.party = [...partyOf(campaign), c.id];
+                syncCompanions();
+                return c.id;
+              },
               // A haze vent 14 units away (ignores the placement rules).
               vent: () => {
                 const p = findFree({ x: player.x + 14, z: player.z }, 2.6);
