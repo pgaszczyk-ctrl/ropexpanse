@@ -1734,7 +1734,7 @@ function closeVentAt(hits: (p: Point) => boolean) {
     if (player.bag.length < BALANCE.slots)
       player.bag.push(makeItem(campaign, v.vent.seed % GEAR_KINDS, tier + 1));
     burst(v.vent, 0xffd27a, 18);
-    floatingText(`+${gold} zł · +${shards} odł.`, v.vent, "#ffe5ab", "xp");
+    floatingText(`+${gold} tix · +${shards} odł.`, v.vent, "#ffe5ab", "xp");
     sound(520, 0.25, "sine");
     persist();
     return true;
@@ -2177,7 +2177,7 @@ function hurtEnemy(e: Enemy, damage: number, by?: Character) {
     e.respawn = /^(vent|rescue|summon):/.test(e.key) ? Infinity : 30;
     if (e.stolen) {
       player.coins += e.stolen;
-      floatingText(`+${e.stolen} zł`, e.rig.root.position, "#ffd27a", "xp");
+      floatingText(`+${e.stolen} tix`, e.rig.root.position, "#ffd27a", "xp");
       e.stolen = 0;
     }
     // Trait "Iskra": the fallen enemy bursts and hurts its neighbours (no chain).
@@ -2544,7 +2544,7 @@ function updateEnemies(dt: number) {
             player.coins -= grab;
             e.stolen += grab;
             e.fleeUntil = time + 7;
-            floatingText(`−${grab} zł`, player, "#ffd27a");
+            floatingText(`−${grab} tix`, player, "#ffd27a");
           }
         }
       }
@@ -2754,7 +2754,7 @@ function updateHud() {
       ? "Walka"
       : "Poza obozem";
   // Gold and shards are the hero's own; the rest is the shared Vault.
-  const stockLine = `${player.coins} zł · ${player.fragments} odł. · ${campaign.stock.wood} drewna · ${campaign.stock.rope} m liny`;
+  const stockLine = `${player.coins} tix · ${player.fragments} odł. · ${campaign.stock.wood} drewna · ${campaign.stock.rope} m liny`;
   if ($("loot").textContent !== stockLine) $("loot").textContent = stockLine;
   const sweepLeft = Math.max(0, sweepReady - time),
     healLeft = Math.max(0, potionReady - time);

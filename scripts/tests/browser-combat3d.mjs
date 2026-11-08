@@ -313,8 +313,8 @@ try {
     await page.getByRole("button", { name: "Rekrutuj", exact: true }).click();
     // Gold is set without a keyboard: +50 steps, then the slider.
     await page.getByRole("button", { name: "+50", exact: true }).click();
-    assert.equal(await page.locator(".gold-readout").textContent(), "50 zł");
-    await page.getByLabel("Złoto w ofercie").fill("500");
+    assert.equal(await page.locator(".gold-readout").textContent(), "50 tix");
+    await page.getByLabel("Tix w ofercie").fill("500");
     await page.locator(".offer-grid .item-slot").first().click();
     assert.match(await page.locator(".offer-items").textContent(), /(Atak|Obrona) \d+/);
     await page.locator(".offer-grid .item-slot").first().click();
@@ -329,7 +329,7 @@ try {
     await page.locator(".candidate").first().click();
     assert.equal((await snap()).campaign.characters.length, 2);
     assert.equal((await snap()).campaign.offers.length, 0);
-    await page.getByLabel("Złoto w ofercie").fill("1");
+    await page.getByLabel("Tix w ofercie").fill("1");
     await page.getByRole("button", { name: "Wystaw", exact: true }).click();
     await page.evaluate(() => window.__combat3d.advanceOffers(1));
     await page

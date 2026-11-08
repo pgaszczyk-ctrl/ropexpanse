@@ -484,7 +484,7 @@ export class Expedition {
       "slot-count",
     );
     this.title.append(count);
-    const gold = node("div", `${vault ? s.bank : c.coins} zł`, "gold-line");
+    const gold = node("div", `${vault ? s.bank : c.coins} tix`, "gold-line");
     if (vault) {
       gold.append(
         button("Wpłać", () => {
@@ -677,7 +677,7 @@ export class Expedition {
     }
     const o = s.offers.find((v) => v.campId === camp.id);
     if (o) {
-      this.body.append(node("p", `${o.gold} zł · ${o.items.length} przedm.`));
+      this.body.append(node("p", `${o.gold} tix · ${o.items.length} przedm.`));
       if (o.candidates !== null) {
         this.title.textContent = o.candidates.length
           ? "Zgłoszenia"
@@ -740,12 +740,12 @@ export class Expedition {
     gold.step = "1";
     this.offerGold = Math.min(this.offerGold, c.coins);
     gold.value = String(this.offerGold);
-    gold.setAttribute("aria-label", "Złoto w ofercie");
-    const readout = node("output", `${this.offerGold} zł`, "gold-readout");
+    gold.setAttribute("aria-label", "Tix w ofercie");
+    const readout = node("output", `${this.offerGold} tix`, "gold-readout");
     const setGold = (v: number) => {
       this.offerGold = Math.max(0, Math.min(c.coins, Math.round(v)));
       gold.value = String(this.offerGold);
-      readout.textContent = `${this.offerGold} zł`;
+      readout.textContent = `${this.offerGold} tix`;
       updateProfile();
     };
     gold.oninput = () => setGold(Number(gold.value));
@@ -779,7 +779,7 @@ export class Expedition {
     if (chosen.length) {
       const list = node("ul", "", "offer-items");
       for (const i of chosen)
-        list.append(node("li", `${i.name} · ${itemStat(i)} · ${i.value} zł`));
+        list.append(node("li", `${i.name} · ${itemStat(i)} · ${i.value} tix`));
       form.append(list);
     }
     const submit = button("Wystaw", () => {});
@@ -818,7 +818,7 @@ export class Expedition {
       e.preventDefault();
       const o = postOffer(s, camp.id, this.offerGold, [...this.offerItems]);
       if (!o) {
-        this.h.notify("Dodaj złoto lub przedmiot");
+        this.h.notify("Dodaj tix lub przedmiot");
         return;
       }
       this.offerGold = 0;
