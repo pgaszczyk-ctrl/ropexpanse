@@ -1,8 +1,44 @@
 # ROPExpanse — stan projektu
 
-Aktualizacja: 07.11.2026.
+Aktualizacja: 08.11.2026. Ta sekcja jest aktualna; niżej („Historia”) zostają starsze notatki, częściowo nieaktualne.
 
-Plan prac według dokumentu projektowego właściciela: docs/PLAN.md (etap 1 ukończony: mapa z PMTiles, 5 slotów sprzętu, okna w stylu gry, zielone miejsca na obóz, czytelna walka, prostszy HUD, PWA). Testy przeglądarkowe działają z Chromium w /opt/pw-browsers (`BROWSER_EXECUTABLE=/opt/pw-browsers/chromium npm run test:browser`).
+## Przekazanie do nowego wątku
+
+- **Źródło ustaleń:** dokument właściciela „ROPExpanse — dokument projektowy”, zakładka Tab 1 (Claude Docs, artefakt `7afef21a-5678-46ff-9a61-a845ad16d2a4`). Plan etapów i stan: `docs/PLAN.md`.
+- **Gdzie praca:** PR #1, gałąź `feat/camps-world` (właściciel: „pracuj na PR #1”). Te same commity są na `ccr-b863d83f-6161ta`. `main` jest za nimi.
+- **Etapy 1–5 ukończone** (szczegóły w `docs/PLAN.md`). **Następny: etap 6** — AFK (ekran „Gdy cię nie było”, zajęcia Wędrowców: trening, wyprawy 1/4/8 h, 3 powiadomienia), Kotwice (zabytki z OSM wikidata, obrys, punktacja wg kolejności w mieście × odległość, komplet miasta, Kronika), sezony i ranking (dopiero po sprawdzeniu pętli), monetyzacja na końcu.
+- **Rytm pracy ustalony z właścicielem:** etapami; po każdym etapie raport i pauza, żeby właściciel sprawdził tygodniowy limit (umowa: pauza przy 20% tygodnia; asystent nie widzi licznika). Właściciel nie programuje: odpowiedzi po polsku, prosto.
+- **Podgląd gry:** https://pgaszczyk-ctrl.github.io/ropexpanse/ — workflow `.github/workflows/pages.yml` publiczuje każdy push do `main` i `feat/camps-world` na gałąź `gh-pages`. Właściciel musi raz włączyć Settings → Pages → Deploy from a branch → `gh-pages` / root (nie potwierdzono, czy włączył).
+- **Do sprawdzenia przez właściciela:** CORS kubełka R2 erpeg musi dopuszczać `https://pgaszczyk-ctrl.github.io` (inaczej mapa spoza Lublina idzie wolnym Overpass); listy imion regionów (szkic) do weryfikacji przez osoby z regionów; test na fizycznym telefonie.
+- **Grafika:** właściciel zamawia modele voxel chibi u grafika. Uwagi do pierwszej próbki (ciało bazowe): głowa ~40% wysokości, poza w gotowości, rzuty ortograficzne w jednej skali, 5–6 kolorów, potem pełny wojownik jako wzorzec. Wszystkie obecne modele (postacie, wrogowie, broń, zasoby, wyziewy) są tymczasowe z kodu — do podmiany na GLB, gdy przyjdą.
+
+## Co jest w grze (skrót)
+
+- **Mapa:** kafle Protomaps PMTiles z archiwum erpeg (R2, odczyt Range, cache), Overpass tylko awaryjnie; dołączony fragment Lublina offline (`src/combat3d/osmTiles.ts`, `world.ts`).
+- **Teren:** AWS Terrain Tiles → tarasy voxelowe, ≤1 stopień między polami, woda płaska, budynki z cokołem; kamera obracana (2 palce / , .), dociąganie 45°, kompas; mgła wojny; 5 typów drzew z porami roku (`terrain.ts`, `explore.ts`).
+- **Pętla:** obozy połączone liną (lina = surowiec w metrach, obóz kosztuje drewno), kręgi produkujące wg OSM (także offline, limit 10 h), wspólny Skarbiec (drewno, ruda, włókno, zioła, lina), zasoby na mapie zbierane ciosem, wyziewy (fala → pal z latarnią → skrzynia) (`campaign.ts`, `resources.ts`, `production.ts`, `vents.ts`).
+- **Drużyna:** do 3, towarzysze AI, profesje (wojownik, mag, łucznik, zielarz; obozowi drwal/górnik/powroźnik), rzadkość + cecha pasywna + imię z regionu, legendy z tytułem, ratowanie Wędrowców na mapie, umiejętności ze sprzętu (Q broń, R druga ręka), 5 slotów: broń, druga ręka, zbroja, hełm, buty (`wayfarers.ts`, `skills.ts`).
+- **Wrogowie:** bestiariusz słowiański wg biomów OSM + pora dnia + pogoda + dalecy od lin, archetypy walki; poziom +1 co 15 km od startu + odległość od lin (`bestiary.ts`, `encounters.ts`).
+- **Niebo:** pora dnia z prawdziwego słońca (`sky.ts`), pogoda z Open-Meteo (`weather.ts`); `?time=` i `?weather=` wymuszają.
+- **Interfejs:** okna w stylu HUD, menu obozu z ikonami, zielone miejsca na obóz, czytelna walka (osobne tory liczb), menu ☰ (pełny ekran, dźwięk), portret = panel drużyny, PWA (manifest, ikony).
+
+## Testy
+
+- `npm ci`, `npm run build`, `npm test` (14 testów reguł w Node, bez sieci).
+- `BROWSER_EXECUTABLE=/opt/pw-browsers/chromium npm run test:browser` po buildzie (8 plików: walka, świat/PMTiles, wyziewy+ratowanie, drużyna, umiejętności, bestiariusz, kamera). Testy przeglądarkowe blokują kafle wysokości i pogodę (świat płaski, offline); zrzuty w `work/`.
+- Tryb QA: `?qa=1` → `window.__combat3d` (snapshot + skróty testowe: fixture, travel, companion, spawnSpecies, equipTemplate, vent, rescue, production, setHp…).
+- Gra w headless Chromium biegnie wolniej niż zegar: w testach czekać na czas gry (`snapshot().time`), nie na sekundy.
+- Fixtury: `scripts/tests/fixtures/lublin.pmtiles` (Protomaps, ~3,9 MB), `scripts/tests/fixtures/terrarium/12/` (9 kafli Lublina).
+
+## Znane ograniczenia
+
+- Testowano tylko emulację; brak testu na fizycznym telefonie.
+- Towarzysze nie omijają budynków (dołączają skokiem, gdy utkną).
+- Wartości balansu (produkcja, nagrody, poziomy, szanse) są startowe.
+- Zmiana sterowanej postaci przez panel pod portretem; dokument chce tapnięcia w portret towarzysza (do dodania z HUD).
+- Prettier przeformatował przy okazji kilka starych plików (bez zmian działania).
+
+## Historia (starsze notatki)
 
 Samodzielna gra w `pgaszczyk-ctrl/ropexpanse`. Three.js, TypeScript, Vite; bez zależności od erpeg i bez zaplecza kont.
 
