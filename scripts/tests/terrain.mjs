@@ -1,9 +1,10 @@
-// Terrain: real Lublin elevations (Terrarium fixtures) become voxel terraces with steps
-// of at most one voxel, flat water, exaggerated lowland relief.
+// Terrain: real Lublin elevations (Terrarium fixtures) become gentle rolling ground:
+// continuous heights (no terrace steps), limited slope, flat water, a swell that calms
+// down at roads, exaggerated lowland relief.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { inflateSync } from "node:zlib";
-import { Elevation, HeightField, limitSteps, voxelsFor, VOXEL, CELL } from "../../src/combat3d/terrain.ts";
+import { Elevation, HeightField, limitSlope, heightFor, swell, MAX_RISE, CELL } from "../../src/combat3d/terrain.ts";
 
 // Minimal PNG decoder (8-bit RGB/RGBA, all five filters) for the test fixtures.
 function decodePng(buf) {
@@ -34,10 +35,14 @@ const decoder = async (url) => {
   try { return decodePng(await readFile(new URL(`./fixtures/terrarium/${k}`, import.meta.url))); } catch { return null; }
 };
 
-assert.ok(voxelsFor(10) > 0 && voxelsFor(40) - voxelsFor(10) > voxelsFor(1000) - voxelsFor(970), "lowland relief stronger than mountain");
-const v = new Int16Array([0, 9, 0, 0, 0, 0, 0, 0, 0]);
-limitSteps(v, 3, 3);
-assert.equal(v[1], 1, "a spike is lowered to one step");
+assert.ok(heightFor(10) > 0 && heightFor(40) - heightFor(10) > heightFor(1000) - heightFor(970), "lowland relief stronger than mountain");
+const v = new Float32Array([0, 9, 0, 0, 0, 0, 0, 0, 0]);
+limitSlope(v, 3, 3);
+assert.ok(Math.abs(v[1] - MAX_RISE) < 1e-6, "a spike is lowered to the steepest walkable rise");
+let sw = 0;
+for (let k = 0; k < 200; k++) sw = Math.max(sw, Math.abs(swell(k * 37.1, k * 11.3)));
+assert.ok(sw <= 1 && sw > 0.2, "swell stays in [-1, 1] and is not flat");
+assert.equal(swell(1234.5, 678.9), swell(1234.5, 678.9), "swell is deterministic");
 
 const origin = { lat: 51.2482, lon: 22.5681 };
 const el = new Elevation(decoder);
@@ -46,23 +51,38 @@ const ref = el.at(origin);
 assert.ok(ref > 150 && ref < 240, `Lublin Old Town ${ref} m`);
 const field = new HeightField();
 const water = (p) => p.x > 60 && p.x < 80 && p.z > -10 && p.z < 10; // a test pond
-assert.ok(field.build({ x: 0, z: 0 }, 120, origin, ref, el, water));
-let maxStep = 0, min = Infinity, max = -Infinity;
+const road = { pts: [[-100, -40], [100, -40]], width: 2 };
+assert.ok(field.build({ x: 0, z: 0 }, 120, origin, ref, el, water, { roads: [road], buildings: [] }));
+let maxRise = 0, min = Infinity, max = -Infinity, fractional = 0;
 for (let j = 0; j < field.w; j++)
   for (let i = 0; i < field.w; i++) {
     const a = field.v[j * field.w + i];
     min = Math.min(min, a); max = Math.max(max, a);
-    if (i) maxStep = Math.max(maxStep, Math.abs(a - field.v[j * field.w + i - 1]));
-    if (j) maxStep = Math.max(maxStep, Math.abs(a - field.v[(j - 1) * field.w + i]));
+    if (Math.abs(a / 0.6 - Math.round(a / 0.6)) > 0.05) fractional++;
+    if (i) maxRise = Math.max(maxRise, Math.abs(a - field.v[j * field.w + i - 1]));
+    if (j) maxRise = Math.max(maxRise, Math.abs(a - field.v[(j - 1) * field.w + i]));
   }
-assert.equal(maxStep <= 1, true, "neighbours differ by at most one voxel");
-assert.ok(max - min >= 4, `visible relief in Lublin: ${min}..${max} voxels`);
+assert.ok(maxRise <= MAX_RISE + 1e-4, `slope limited: ${maxRise.toFixed(3)} per cell`);
+assert.ok(fractional > field.w * field.w * 0.5, "heights are continuous, not whole terrace steps");
+assert.ok(max - min >= 2, `visible relief in Lublin: ${min.toFixed(2)}..${max.toFixed(2)}`);
+// Walking along a line, height changes smoothly (no step jumps between samples).
+let jump = 0;
+for (let x = -60; x < 60; x += 0.25) jump = Math.max(jump, Math.abs(field.at(x + 0.25, 20) - field.at(x, 20)));
+assert.ok(jump < 0.1, `no steps while walking: max ${jump.toFixed(3)} per 0.25`);
 const pond = new Set();
-for (let x = 62; x < 80; x += CELL) for (let z = -8; z < 10; z += CELL) pond.add(field.voxel(x, z));
+for (let x = 64; x < 78; x += CELL) for (let z = -6; z < 8; z += CELL) pond.add(field.at(x, z).toFixed(4));
 assert.equal(pond.size, 1, "water is flat");
-assert.equal(field.at(0, 0) % VOXEL < 1e-9 || Math.abs((field.at(0, 0) / VOXEL) - Math.round(field.at(0, 0) / VOXEL)) < 1e-9, true);
+assert.ok(field.at(0, 0) >= field.waterLevel, "dry land not under water");
+// Same build without the road: the swell differs only away from the road.
+const wild = new HeightField();
+wild.build({ x: 0, z: 0 }, 120, origin, ref, el, water, { roads: [], buildings: [] });
+let nearRoad = 0, farRoad = 0;
+for (let x = -50; x < 50; x += 4) {
+  nearRoad = Math.max(nearRoad, Math.abs(field.at(x, -40) - wild.at(x, -40)));
+}
+assert.ok(nearRoad > 0, "road calms the swell");
 // No data = flat world.
 const none = new HeightField();
 assert.equal(none.build({ x: 0, z: 0 }, 50, { lat: 10, lon: 10 }, 0, new Elevation(async () => null), () => false), false);
 assert.equal(none.at(5, 5), 0);
-console.log(`PASS: terrain → Lublin ${ref.toFixed(0)} m, terraces ${min}..${max} voxels, steps ≤ 1, flat water, flat world without data`);
+console.log(`PASS: terrain → Lublin ${ref.toFixed(0)} m, smooth ground ${min.toFixed(2)}..${max.toFixed(2)}, max rise ${maxRise.toFixed(2)}/cell, step ${jump.toFixed(3)}, flat water, flat world without data`);

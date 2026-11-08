@@ -27,7 +27,7 @@ import { enclosedAreas } from "./territory-rules";
 import { circleRates, workerRates } from "./production";
 import { weaponSkill, offhandSkill, SKILLS } from "./skills";
 import { timeOfDayAt, LIGHT } from "./sky";
-import { Elevation, HeightField, waterTest, VOXEL, CELL } from "./terrain";
+import { Elevation, HeightField, waterTest, CELL } from "./terrain";
 import { markSeen, cellOf, greyed } from "./explore";
 import { fetchWeather, WEATHER_NAMES } from "./weather";
 import {
@@ -83,7 +83,6 @@ import {
 import { mountHud, hudIcon } from "./hud";
 mountHud();
 import * as T from "three";
-import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { animate, material, person, sector, wolf, type Rig } from "./models";
 import {
   RULES as R,
@@ -702,7 +701,7 @@ function bindTwist(canvas: HTMLElement) {
   canvas.addEventListener("pointerup", end);
   canvas.addEventListener("pointercancel", end);
 }
-// ---- Terrain heights: voxel terraces from real elevations (flat at 0 without data) ----
+// ---- Terrain heights: gentle rolling ground from real elevations (flat at 0 without data) ----
 const elevation = new Elevation();
 const field = new HeightField();
 let fieldCenter: Point | null = null,
@@ -727,9 +726,24 @@ function drape(obj: T.Object3D) {
     o.geometry.computeBoundingSphere();
   });
 }
+// Redrawing the world is costly and swaps every mesh, so map tiles and height updates
+// that arrive close together share one redraw.
+let renderDue = Infinity;
+function requestRender(delay = 0.6) {
+  renderDue = Math.min(renderDue, time + delay);
+}
+function flushRender() {
+  if (time < renderDue || fieldBusy) return;
+  renderDue = Infinity;
+  renderTerrain();
+  expedition.countBuildings();
+  expedition.refreshWorld();
+  nodeMap = null;
+}
 function updateTerrainField(dt: number) {
   fieldClock += dt;
-  if (fieldBusy || fieldClock < 1) return;
+  // A new map snapshot rebuilds the heights at once, so its redraw waits for them.
+  if (fieldBusy || (fieldClock < 1 && !(field.w && fieldMap !== map))) return;
   fieldClock = 0;
   if (fieldCenter && fieldMap === map && distance(fieldCenter, player) < 30 && field.w) return;
   const start = campaign.camps[0];
@@ -748,65 +762,47 @@ function updateTerrainField(dt: number) {
     .then(() => {
       const ref = elevation.at(startGeo);
       if (ref === null || origin !== campaign.origin) return;
-      if (field.build(center, r, origin, ref, elevation, waterTest(builtFor))) {
+      if (field.build(center, r, origin, ref, elevation, waterTest(builtFor), builtFor)) {
         fieldCenter = center;
         fieldMap = builtFor;
-        renderTerrain();
-        expedition.refreshWorld();
-        nodeMap = null;
+        requestRender(0);
       }
     })
     .finally(() => (fieldBusy = false));
 }
-/** Terraced ground: one flat top per height cell, coloured by what OSM shows there,
- * with step faces down to lower neighbours. */
-function terraceMesh() {
+/** Smooth ground: one vertex per height cell, coloured by what OSM shows there,
+ * with shared (smoothed) normals so slopes shade softly instead of stepping. */
+function groundMesh() {
   const w = field.w,
-    pos: number[] = [],
-    col: number[] = [],
-    water = waterTest(map),
+    pos = new Float32Array(w * w * 3),
+    col = new Float32Array(w * w * 3),
     c = new T.Color();
-  const kindColor = (x: number, z: number) =>
-    water({ x, z }) ? 0x72acae : map.areas.some((a) => !a.water && inPolygon(x, z, a.rings)) ? 0x96af78 : 0xb8c397;
-  const cellOfVertex: number[] = [];
-  let cellIndex = 0;
-  const quad = (pts: number[][], color: T.Color) => {
-    for (const k of [0, 1, 2, 0, 2, 3]) {
-      pos.push(...pts[k]);
-      col.push(color.r, color.g, color.b);
-      cellOfVertex.push(cellIndex);
-    }
-  };
+  const kindColor = (x: number, z: number, k: number) =>
+    field.wet[k] ? 0x72acae : map.areas.some((a) => !a.water && inPolygon(x, z, a.rings)) ? 0x96af78 : 0xb8c397;
   for (let j = 0; j < w; j++)
     for (let i = 0; i < w; i++) {
-      const x0 = field.x0 + i * CELL,
-        z0 = field.z0 + j * CELL,
-        x1 = x0 + CELL,
-        z1 = z0 + CELL,
-        v = field.v[j * w + i],
-        y = v * VOXEL;
-      cellIndex = j * w + i;
-      c.setHex(kindColor(x0 + CELL / 2, z0 + CELL / 2));
-      quad([[x0, y, z0], [x0, y, z1], [x1, y, z1], [x1, y, z0]], c);
-      const side = c.clone().multiplyScalar(0.78);
-      const lower = (ni: number, nj: number) => {
-        if (ni < 0 || nj < 0 || ni >= w || nj >= w) return 0;
-        return field.v[nj * w + ni] * VOXEL;
-      };
-      const yE = lower(i + 1, j), yW = lower(i - 1, j), yS = lower(i, j + 1), yN = lower(i, j - 1);
-      if (yE < y) quad([[x1, y, z0], [x1, y, z1], [x1, yE, z1], [x1, yE, z0]], side);
-      if (yW < y) quad([[x0, y, z1], [x0, y, z0], [x0, yW, z0], [x0, yW, z1]], side);
-      if (yS < y) quad([[x1, y, z1], [x0, y, z1], [x0, yS, z1], [x1, yS, z1]], side);
-      if (yN < y) quad([[x0, y, z0], [x1, y, z0], [x1, yN, z0], [x0, yN, z0]], side);
+      const k = j * w + i,
+        x = field.x0 + (i + 0.5) * CELL,
+        z = field.z0 + (j + 0.5) * CELL;
+      pos.set([x, field.v[k], z], k * 3);
+      c.setHex(kindColor(x, z, k));
+      col.set([c.r, c.g, c.b], k * 3);
+    }
+  const index: number[] = [];
+  for (let j = 0; j < w - 1; j++)
+    for (let i = 0; i < w - 1; i++) {
+      const a = j * w + i, b = a + 1, d = a + w, e = d + 1;
+      index.push(a, d, b, b, d, e);
     }
   const g = new T.BufferGeometry();
-  g.setAttribute("position", new T.Float32BufferAttribute(pos, 3));
-  g.setAttribute("color", new T.Float32BufferAttribute(col, 3));
+  g.setAttribute("position", new T.BufferAttribute(pos, 3));
+  g.setAttribute("color", new T.BufferAttribute(col, 3));
+  g.setIndex(index);
   g.computeVertexNormals();
   const m = new T.Mesh(g, new T.MeshLambertMaterial({ vertexColors: true }));
   m.receiveShadow = true;
   m.userData.baseColors = Float32Array.from(col);
-  m.userData.cellOfVertex = Int32Array.from(cellOfVertex);
+  m.userData.cellOfVertex = Int32Array.from({ length: w * w }, (_, k) => k);
   terraceView = m;
   return m;
 }
@@ -857,7 +853,7 @@ function updateSeen(dt: number) {
     recolor();
   }
 }
-/** Everything that walks or stands on the map follows the terraces. */
+/** Everything that walks or stands on the map follows the ground. */
 function liftActors() {
   if (!field.w) return;
   const lift = (o: T.Object3D, extra = 0) => {
@@ -892,15 +888,18 @@ function disposeTerrain() {
   buildingViews.length = 0;
   obstacleCells.clear();
 }
+let renderCount = 0,
+  treeSpots: string[] = [];
 function renderTerrain() {
+  renderCount++;
   disposeTerrain();
   const land = new T.Mesh(new T.PlaneGeometry(1400, 1400), material(0xb8c397));
   land.rotation.x = -Math.PI / 2;
-  // Beyond the terrace window the plain lies at the lowest terrace.
-  land.position.set(player.x, field.w ? field.v.reduce((m, v) => Math.min(m, v), 0) * VOXEL - 0.02 : 0, player.z);
+  // Beyond the height window the plain lies at its lowest point.
+  land.position.set(player.x, field.w ? field.low() - 0.02 : 0, player.z);
   land.receiveShadow = true;
   terrain.add(land);
-  if (field.w) terrain.add(terraceMesh());
+  if (field.w) terrain.add(groundMesh());
   else for (const area of map.areas) {
     const m = new T.Mesh(
       new T.ShapeGeometry(polyShape(area.rings)),
@@ -911,56 +910,63 @@ function renderTerrain() {
     m.receiveShadow = true;
     terrain.add(m);
   }
-  const roadGeos: T.BufferGeometry[] = [],
-    pathGeos: T.BufferGeometry[] = [];
-  for (const road of map.roads)
+  // Roads are ribbons whose vertices follow the ground every half cell.
+  const ribbons = { road: { pos: [] as number[], idx: [] as number[] }, path: { pos: [] as number[], idx: [] as number[] } };
+  for (const road of map.roads) {
+    const r = road.path ? ribbons.path : ribbons.road,
+      lift = road.path ? 0.03 : 0.045,
+      half = road.width / 2;
     for (let i = 1; i < road.pts.length; i++) {
-      const a = road.pts[i - 1],
-        b = road.pts[i],
-        dx = b[0] - a[0],
-        dz = b[1] - a[1],
+      const [ax, az] = road.pts[i - 1],
+        [bx, bz] = road.pts[i],
+        dx = bx - ax,
+        dz = bz - az,
         len = Math.hypot(dx, dz);
       if (len < 0.02) continue;
-      // Short pieces follow the terraces (one piece on flat ground).
-      const pieces = field.w ? Math.max(1, Math.ceil(len / CELL)) : 1;
-      for (let k = 0; k < pieces; k++) {
-        const t0 = k / pieces,
-          t1 = (k + 1) / pieces,
-          mx = a[0] + dx * (t0 + t1) / 2,
-          mz = a[1] + dz * (t0 + t1) / 2;
-        const geo = new T.PlaneGeometry(road.width, len / pieces + 0.18);
-        geo.rotateX(-Math.PI / 2);
-        geo.rotateY(Math.atan2(dx, dz));
-        geo.translate(mx, 0.035 + groundY(mx, mz), mz);
-        (road.path ? pathGeos : roadGeos).push(geo);
+      const ux = dx / len, uz = dz / len, nx = -uz * half, nz = ux * half,
+        ext = 0.09, // small overlap so corners close
+        steps = field.w ? Math.max(1, Math.ceil(len / (CELL / 2))) : 1,
+        base = r.pos.length / 3;
+      for (let k = 0; k <= steps; k++) {
+        const t = -ext + ((len + 2 * ext) * k) / steps,
+          x = ax + ux * t,
+          z = az + uz * t;
+        r.pos.push(x + nx, lift + groundY(x + nx, z + nz), z + nz, x - nx, lift + groundY(x - nx, z - nz), z - nz);
+        if (k) {
+          const q = base + (k - 1) * 2;
+          r.idx.push(q, q + 2, q + 1, q + 1, q + 2, q + 3);
+        }
       }
     }
-  for (const [geos, color] of [
-    [roadGeos, 0xe1d5b9],
-    [pathGeos, 0xcabd96],
+  }
+  for (const [r, color] of [
+    [ribbons.road, 0xe1d5b9],
+    [ribbons.path, 0xcabd96],
   ] as const) {
-    if (!geos.length) continue;
-    const merged = mergeGeometries(geos);
-    if (merged) {
-      const m = new T.Mesh(merged, material(color));
-      m.receiveShadow = true;
-      terrain.add(m);
-    }
-    geos.forEach((g) => g.dispose());
+    if (!r.idx.length) continue;
+    const g = new T.BufferGeometry();
+    g.setAttribute("position", new T.Float32BufferAttribute(r.pos, 3));
+    g.setIndex(r.idx);
+    g.computeVertexNormals();
+    const m = new T.Mesh(g, material(color));
+    m.receiveShadow = true;
+    terrain.add(m);
   }
   const wallColors = [0xd9c4a0, 0xd1b68e, 0xc0c7b0, 0xd8ccaf, 0xc7af8e],
     roofColors = [0x657e72, 0x7e8975, 0x9a7052, 0x586f6c];
   map.buildings.forEach((b, i) => {
-    // Stands on the lowest point of its outline; a plinth fills the downhill side.
+    // Sits on the lowest point of its outline with a foundation sunk into the ground,
+    // so it never hangs on a slope; a plinth fills the downhill side.
     const hs = b.rings[0].map((p) => groundY(p[0], p[1])),
-      low = Math.min(...hs),
-      high = Math.max(...hs);
+      low = Math.min(...hs, groundY(b.rings[0].reduce((s, p) => s + p[0], 0) / b.rings[0].length, b.rings[0].reduce((s, p) => s + p[1], 0) / b.rings[0].length)),
+      high = Math.max(...hs),
+      sink = field.w ? 0.5 : 0;
     const g = new T.ExtrudeGeometry(polyShape(b.rings), {
-      depth: b.height + (high - low),
+      depth: b.height + (high - low) + sink,
       bevelEnabled: false,
     });
     g.rotateX(-Math.PI / 2);
-    g.translate(0, low, 0);
+    g.translate(0, low - sink, 0);
     const mats = [
       material(roofColors[i % 4]).clone(),
       material(wallColors[i % 5]).clone(),
@@ -1002,13 +1008,17 @@ function renderTerrain() {
   }
   // Trees on mapped green areas: five types by ground (owner's design doc, Drzewa),
   // each with size and turn variants; deciduous crowns follow the real season.
-  let seed = 391;
-  const rand = () => {
-    seed = (Math.imul(seed, 1664525) + 1013904223) | 0;
-    return (seed >>> 0) / 4294967296;
+  // Trees are anchored to the map: a fixed grid, each cell decides from its own hash
+  // whether it holds a tree, where exactly, which kind, size and turn. Redrawing the
+  // world never moves or swaps a tree.
+  const TREE_CELL = 3.4;
+  const cellRand = (cx: number, cz: number, salt: number) => {
+    let h = (Math.imul(cx | 0, 374761393) + Math.imul(cz | 0, 668265263) + Math.imul(salt, 1442695041)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
   };
   type TreeKind = "round" | "spruce" | "pine" | "birch" | "bush";
-  const trees: (Point & { kind: TreeKind })[] = [];
+  const trees: (Point & { kind: TreeKind; r: (salt: number) => number })[] = [];
   const mix: Record<string, TreeKind[]> = {
     forest: ["round", "spruce", "pine", "birch", "spruce"],
     wood: ["spruce", "pine", "round", "birch", "spruce"],
@@ -1017,20 +1027,37 @@ function renderTerrain() {
     cemetery: ["round", "spruce", "birch"],
     green: ["round", "birch", "bush"],
   };
-  for (let i = 0; i < 2600 && trees.length < 300; i++) {
-    const x = player.x + (rand() * 2 - 1) * 95,
-      z = player.z + (rand() * 2 - 1) * 95;
-    const area = map.areas.find((a) => !a.water && inPolygon(x, z, a.rings));
-    if (!area || blocked(x, z, 0.9)) continue;
-    if (map.roads.some((r) => r.pts.some((p) => Math.hypot(p[0] - x, p[1] - z) < 1.7))) continue;
-    const kinds = mix[area.kind ?? "green"] ?? mix.green;
-    trees.push({ x, z, kind: kinds[Math.floor(rand() * kinds.length)] });
-  }
+  const density: Record<string, number> = { forest: 0.55, wood: 0.55, scrub: 0.4, park: 0.28, cemetery: 0.3, green: 0.16 };
+  const roadNear = map.roads.filter((r) => r.pts.some((p) => Math.abs(p[0] - player.x) < 110 && Math.abs(p[1] - player.z) < 110));
+  const nearRoad = (x: number, z: number) =>
+    roadNear.some((r) => {
+      for (let k = 1; k < r.pts.length; k++) {
+        const [ax, az] = r.pts[k - 1], [bx, bz] = r.pts[k], dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
+        const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
+        if (Math.hypot(ax + dx * t - x, az + dz * t - z) < r.width / 2 + 1.1) return true;
+      }
+      return false;
+    });
+  const cx0 = Math.floor((player.x - 95) / TREE_CELL), cx1 = Math.floor((player.x + 95) / TREE_CELL),
+    cz0 = Math.floor((player.z - 95) / TREE_CELL), cz1 = Math.floor((player.z + 95) / TREE_CELL);
+  for (let cz = cz0; cz <= cz1; cz++)
+    for (let cx = cx0; cx <= cx1; cx++) {
+      const r = (salt: number) => cellRand(cx, cz, salt);
+      const x = (cx + 0.15 + r(1) * 0.7) * TREE_CELL,
+        z = (cz + 0.15 + r(2) * 0.7) * TREE_CELL;
+      const area = map.areas.find((a) => !a.water && inPolygon(x, z, a.rings));
+      if (!area || r(3) > (density[area.kind ?? "green"] ?? density.green)) continue;
+      if (blocked(x, z, 0.9)) continue;
+      if (nearRoad(x, z)) continue;
+      const kinds = mix[area.kind ?? "green"] ?? mix.green;
+      trees.push({ x, z, kind: kinds[Math.floor(r(4) * kinds.length)], r });
+    }
+  treeSpots = trees.map((t) => `${t.x.toFixed(2)},${t.z.toFixed(2)},${t.kind}`);
   const geo = new Date().getUTCMonth(),
     south = unproject(player, campaign.origin).lat < 0,
     month = (geo + (south ? 6 : 0)) % 12,
     season = month < 2 || month === 11 ? "winter" : month < 5 ? "spring" : month < 8 ? "summer" : "autumn";
-  const leaf = (base: number) => {
+  const leaf = (base: number, rand: () => number) => {
     const c = new T.Color(base);
     if (season === "spring") c.offsetHSL(0.02, 0.05, 0.1);
     if (season === "autumn") c.setHSL(0.04 + rand() * 0.07, 0.6, 0.45);
@@ -1052,6 +1079,8 @@ function renderTerrain() {
     const trunks = part.trunk && new T.InstancedMesh(part.trunk[0], material(part.trunk[1]), list.length);
     const crowns = new T.InstancedMesh(part.crown[0], material(0xffffff), list.length);
     list.forEach((p, i) => {
+      let salt = 5;
+      const rand = () => p.r(salt++);
       const gy = groundY(p.x, p.z),
         size = 0.8 + rand() * 0.5,
         turn = new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 1, 0), rand() * Math.PI * 2);
@@ -1061,7 +1090,7 @@ function renderTerrain() {
       // Winter: deciduous trees lose their crowns (only a thin twig cluster stays).
       if (bare) flat.multiplyScalar(0.35);
       crowns.setMatrixAt(i, matrix.compose(new T.Vector3(p.x, part.crown[2] * size + gy, p.z), turn, flat));
-      crowns.setColorAt(i, bare ? new T.Color(0x6b5a4a) : deciduous ? leaf(part.crown[1]) : new T.Color(part.crown[1]).offsetHSL(0, 0, (rand() - 0.5) * 0.06));
+      crowns.setColorAt(i, bare ? new T.Color(0x6b5a4a) : deciduous ? leaf(part.crown[1], rand) : new T.Color(part.crown[1]).offsetHSL(0, 0, (rand() - 0.5) * 0.06));
     });
     crowns.castShadow = true;
     if (trunks) {
@@ -1915,9 +1944,7 @@ function updateWorld(dt: number) {
   worldStream.request(player);
   if (worldStream.changed) {
     map = worldStream.snapshot();
-    renderTerrain();
-    expedition.countBuildings();
-    expedition.refreshWorld();
+    requestRender();
   }
   populateEncounters();
   refreshResources();
@@ -3050,6 +3077,7 @@ function tick() {
     updateWorld(dt);
     updateSky(dt);
     updateTerrainField(dt);
+    flushRender();
     updateSeen(dt);
     updateWeather(dt);
     if (safe(player)) {
@@ -3380,13 +3408,15 @@ async function init() {
           timeOfDay,
           weather: weatherNow,
           cameraYaw: camYawTarget,
+          renders: renderCount,
+          trees: treeSpots,
           terrain: field.w
             ? {
                 cells: field.w,
                 version: field.version,
                 min: field.v.reduce((m, v) => Math.min(m, v), 99),
                 max: field.v.reduce((m, v) => Math.max(m, v), -99),
-                here: field.voxel(player.x, player.z),
+                here: field.at(player.x, player.z),
               }
             : null,
         }),
