@@ -30,7 +30,10 @@ export function ventCells(
   radius: number,
   scale: number,
   allowed: (p: Point, seed: number) => boolean,
+  grid = VENT_GRID,
+  prefix = "v1",
 ): Vent[] {
+  const VENT_GRID = grid; // the same placement grid serves other world features
   const out: Vent[] = [];
   const latSpan = radius / (111320 * scale) + VENT_GRID;
   const y0 = Math.floor((centerGeo.lat - latSpan + 90) / VENT_GRID),
@@ -45,7 +48,7 @@ export function ventCells(
       n = Math.ceil((2 * lonSpan) / width);
     for (let i = 0; i <= n; i++) {
       const x = (x0 + i) % columns,
-        key = `v1:${x}:${y}`,
+        key = `${prefix}:${x}:${y}`,
         seed = hash(key);
       const geo = {
         lat: -90 + (y + 0.2 + (seed % 61) / 100) * VENT_GRID,
@@ -60,3 +63,17 @@ export function ventCells(
 }
 /** Roll for one cell: the same answer for everyone. */
 export const ventRoll = (seed: number) => ((seed >>> 12) % 1000) / 1000;
+
+// ---- Wayfarers in need (owner's design doc, Rekrutacja na mapie) ----
+export const RESCUE_GRID = 0.004; // ~440 m
+/** A lone Wayfarer surrounded by monsters: none near the safe land, more farther out. */
+export function rescueChance(frontierMeters: number) {
+  return frontierMeters < 100 ? 0 : Math.min(0.35, (frontierMeters - 100) / 2500);
+}
+/** Better Wayfarers wait farther from the ropes; legends only from active play far out. */
+export function rescueRarity(frontierMeters: number) {
+  return {
+    rarityLift: Math.min(1, frontierMeters / 1500),
+    legendChance: frontierMeters > 800 ? Math.min(0.1, 0.03 + (frontierMeters - 800) / 20000) : 0,
+  };
+}

@@ -201,6 +201,8 @@ export type Campaign = {
   rates?: Partial<Made>;
   pending?: Partial<Made>;
   producedAt?: number;
+  /** Wayfarers already rescued on the map, by spot key → when (ms). */
+  rescued?: Record<string, number>;
   /** Closed haze vents, by key → when they were closed (ms). They stay closed. */
   vents?: Record<string, number>;
   /** Gathering spots taken, by key → time (ms) they grow back. */
@@ -476,14 +478,11 @@ export function resolveOffers(s: Campaign, now = Date.now()) {
     }
   return changed;
 }
-export function hire(s: Campaign, offerId: string, candidateId: string) {
-  const o = s.offers.find((v) => v.id === offerId),
-    v = o?.candidates?.find((v) => v.id === candidateId),
-    camp = s.camps.find((c) => c.id === o?.campId);
-  if (!o || !v || !camp) return null;
+/** A new Wayfarer standing at `at`, belonging to camp `campId`. */
+export function addWayfarer(s: Campaign, v: Candidate, at: Point, campId: string) {
   const c: Character = {
-    x: camp.x,
-    z: camp.z,
+    x: at.x,
+    z: at.z,
     id: nextId(s, "hero"),
     name: v.name,
     role: v.role,
@@ -498,13 +497,21 @@ export function hire(s: Campaign, offerId: string, candidateId: string) {
     coins: 0,
     kills: 0,
     fragments: 0,
-    campId: camp.id,
+    campId,
     bag: [],
     equipment: {},
     weapon: v.role === "warrior" ? "sword" : "magic",
   };
   c.equipment.weapon = makeItem(s, v.role === "warrior" ? 0 : 1);
   s.characters.push(c);
+  return c;
+}
+export function hire(s: Campaign, offerId: string, candidateId: string) {
+  const o = s.offers.find((v) => v.id === offerId),
+    v = o?.candidates?.find((v) => v.id === candidateId),
+    camp = s.camps.find((c) => c.id === o?.campId);
+  if (!o || !v || !camp) return null;
+  const c = addWayfarer(s, v, camp, camp.id);
   s.offers = s.offers.filter((v) => v !== o);
   return c;
 }
@@ -560,6 +567,13 @@ export function parseCampaign(raw: string): Campaign | null {
     if (
       s.party !== undefined &&
       (!Array.isArray(s.party) || s.party.some((id) => typeof id !== "string"))
+    )
+      return null;
+    s.rescued ??= {};
+    if (
+      typeof s.rescued !== "object" ||
+      Array.isArray(s.rescued) ||
+      Object.values(s.rescued).some((n) => !Number.isFinite(n))
     )
       return null;
     s.vents ??= {};

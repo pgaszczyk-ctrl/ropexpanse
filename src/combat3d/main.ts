@@ -18,15 +18,28 @@ import {
   isCampRole,
   distanceToSafeZone,
   partyOf,
+  addWayfarer,
+  roleName,
+  PARTY_SIZE,
   type Character,
 } from "./campaign";
 import { enclosedAreas } from "./territory-rules";
 import { circleRates, workerRates } from "./production";
-import { TRAIT_STRENGTH, RARITY_COLORS, fullName } from "./wayfarers";
+import {
+  TRAIT_STRENGTH,
+  RARITY_COLORS,
+  RARITY_NAMES,
+  fullName,
+  rollWayfarer,
+  regionAt,
+} from "./wayfarers";
 import {
   ventCells,
   ventChance,
   ventRoll,
+  rescueChance,
+  rescueRarity,
+  RESCUE_GRID,
   waveSize,
   WAKE_RADIUS,
   type Vent,
@@ -1245,6 +1258,112 @@ function closeVentAt(hits: (p: Point) => boolean) {
   }
   return false;
 }
+// ---- Wayfarers in need: surrounded by monsters, join for free once saved ----
+type RescueView = { spot: Vent; rig: Rig; mark: T.Mesh; state: "waiting" | "wave" };
+const rescues = new Map<string, RescueView>();
+let rescueClock = 0;
+function addRescue(spot: Vent) {
+  const rig = person(spot.seed % 2 ? "archer" : "hero", spot.seed % 10000);
+  rig.sword.visible = rig.wand.visible = false;
+  rig.root.position.set(spot.x, 0, spot.z);
+  rig.root.scale.set(1, 0.78, 1); // kneeling, waiting for help
+  scene.add(rig.root);
+  addBlobShadow(rig);
+  const mark = new T.Mesh(nodeGeo, new T.MeshBasicMaterial({ color: 0xffd27a }));
+  mark.scale.set(0.22, 0.55, 0.22);
+  scene.add(mark);
+  rescues.set(spot.key, { spot, rig, mark, state: "waiting" });
+}
+function dropRescue(key: string) {
+  const r = rescues.get(key);
+  if (!r) return;
+  scene.remove(r.rig.root, r.mark);
+  r.rig.root.traverse((o) => {
+    if (o instanceof T.Mesh) o.geometry.dispose();
+  });
+  rescues.delete(key);
+}
+function updateRescues(dt: number, now: number) {
+  rescueClock += dt;
+  if (rescueClock > 1) {
+    rescueClock = 0;
+    const scale = map.scale;
+    const list = ventCells(
+      campaign.origin,
+      unproject(player, campaign.origin),
+      player,
+      80,
+      scale,
+      (p, seed) =>
+        worldStream.contains(p) &&
+        ventRoll(seed ^ 0x5bd1e995) < rescueChance(distanceToSafeZone(campaign, p, scale) / scale) &&
+        !blocked(p.x, p.z, 1.5),
+      RESCUE_GRID,
+      "w1",
+    ).filter((v) => !campaign.rescued?.[v.key]);
+    const keep = new Set(list.map((v) => v.key));
+    keep.add("qa:rescue");
+    for (const [key, r] of rescues)
+      if ((!keep.has(key) && r.state === "waiting") || distance(r.spot, player) > 110) dropRescue(key);
+    for (const spot of list) if (!rescues.has(spot.key)) addRescue(spot);
+  }
+  for (const r of rescues.values()) {
+    r.mark.position.set(r.spot.x, 2.6 + Math.sin(now * 4) * 0.15, r.spot.z);
+    r.mark.visible = r.state === "waiting";
+    if (r.state === "waiting" && distance(r.spot, player) < 10 && !safe(player)) {
+      r.state = "wave";
+      const tier = encounterProfile(campaign, r.spot, r.spot.key, map.scale).tier;
+      const n = Math.max(3, waveSize(tier) - 1);
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + 0.3;
+        const p = findFree({ x: r.spot.x + Math.sin(a) * 3.5, z: r.spot.z + Math.cos(a) * 3.5 });
+        spawnEnemy(p, r.spot.seed + i * 13, `rescue:${r.spot.key}:${i}`);
+      }
+    }
+    if (r.state === "wave") {
+      const wave = enemies.filter((e) => e.key.startsWith(`rescue:${r.spot.key}:`));
+      if (!wave.length && distance(r.spot, player) > 30) r.state = "waiting";
+      else if (wave.length && wave.every((e) => e.state === "dead")) freeWayfarer(r);
+    }
+  }
+}
+/** Saved: joins the party for free (or waits in the nearest camp), with the land's level. */
+function freeWayfarer(r: RescueView) {
+  const scale = map.scale,
+    frontier = distanceToSafeZone(campaign, r.spot, scale) / scale,
+    geo = unproject(r.spot, campaign.origin);
+  let seed = r.spot.seed | 0;
+  const rand = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) | 0) >>> 0) / 4294967296;
+  const roles = ["warrior", "mage", "archer", "herbalist"] as const;
+  const role = roles[Math.floor(rand() * roles.length)];
+  const odds = rescueRarity(frontier);
+  const w = rollWayfarer(rand, role, regionAt(geo.lat, geo.lon), new Set(campaign.characters.map((c) => c.name)), {
+    rarityLift: odds.rarityLift,
+    legendary: rand() < odds.legendChance,
+  });
+  const level = encounterProfile(campaign, r.spot, r.spot.key, scale).tier;
+  const camp = nearCamp(campaign, r.spot, Infinity) ?? campaign.camps[0];
+  const c = addWayfarer(
+    campaign,
+    { id: r.spot.key, ...w, role, appearance: r.spot.seed % 10000, level },
+    r.spot,
+    camp.id,
+  );
+  campaign.rescued ??= {};
+  campaign.rescued[r.spot.key] = Date.now();
+  dropRescue(r.spot.key);
+  if (partyOf(campaign).length < PARTY_SIZE) {
+    campaign.party = [...partyOf(campaign), c.id];
+    syncCompanions();
+    notify(`${fullName(c)} (${roleName(role)}, ${RARITY_NAMES[c.rarity ?? "common"]}) dołącza do drużyny`);
+  } else {
+    Object.assign(c, { x: camp.x + 1.5, z: camp.z + 1.5 });
+    expedition.refreshWorld();
+    notify(`${fullName(c)} czeka na Ciebie w obozie`);
+  }
+  burst(r.spot, 0xffd27a, 16);
+  persist();
+}
 /** QA: haze vents near the hero. */
 function ventSnapshot() {
   return [...ventViews.values()].map((v) => ({ key: v.vent.key, x: v.vent.x, z: v.vent.z, state: v.state }));
@@ -1259,6 +1378,7 @@ function populateEncounters() {
     if (
       distance(enemies[i].spawn, player) > 85 ||
       (!enemies[i].key.startsWith("vent:") &&
+        !enemies[i].key.startsWith("rescue:") &&
         !encounterAllowed(campaign, enemies[i].spawn, enemies[i].key, map.scale))
     ) {
       removeEnemy(enemies[i]);
@@ -1534,7 +1654,7 @@ function hurtEnemy(e: Enemy, damage: number, by?: Character) {
     e.timer = 0;
     e.warning.visible = false;
     e.bar.visible = false;
-    e.respawn = e.key.startsWith("vent:") ? Infinity : 30;
+    e.respawn = e.key.startsWith("vent:") || e.key.startsWith("rescue:") ? Infinity : 30;
     // Trait "Iskra": the fallen enemy bursts and hurts its neighbours (no chain).
     if (by?.trait === "volatile") {
       burst(e.rig.root.position, 0x9fd8ff, 12);
@@ -2311,7 +2431,10 @@ function tick() {
     updateCompanions(dt);
     updateShots(dt);
     updateEffects(dt);
-    if (worldStream && !qaFixtureActive) updateVents(dt, time);
+    if (worldStream && !qaFixtureActive) {
+      updateVents(dt, time);
+      updateRescues(dt, time);
+    }
     if (deathUntil > time) {
       hero.root.rotation.z =
         Math.min(1, (1.1 - (deathUntil - time)) * 3) * Math.PI * 0.4;
@@ -2564,6 +2687,7 @@ async function init() {
           resources: resourceSnapshot(),
           rates: campaign.rates ?? null,
           vents: ventSnapshot(),
+          rescues: [...rescues.values()].map((r) => ({ key: r.spot.key, x: r.spot.x, z: r.spot.z, state: r.state })),
           pending: campaign.pending ?? null,
           spots: expedition.spotCount,
           world: {
@@ -2725,7 +2849,13 @@ async function init() {
               },
               killWave: () => {
                 for (const e of enemies)
-                  if (e.key.startsWith("vent:") && e.state !== "dead") hurtEnemy(e, 99999);
+                  if ((e.key.startsWith("vent:") || e.key.startsWith("rescue:")) && e.state !== "dead")
+                    hurtEnemy(e, 99999);
+              },
+              rescue: () => {
+                const p = findFree({ x: player.x + 14, z: player.z }, 1.5);
+                addRescue({ key: "qa:rescue", x: p.x, z: p.z, seed: 987654 });
+                return p;
               },
               face: (x: number, z: number) => {
                 for (let a = 0; a < Math.PI * 2; a += 0.3) {

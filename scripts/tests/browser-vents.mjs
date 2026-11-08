@@ -46,7 +46,23 @@ try {
   await page.waitForTimeout(1500);
   assert.equal((await snap()).enemies.filter((e) => e.key.startsWith("vent:") && e.state !== "dead").length, 0);
   await page.screenshot({ path: "work/vents/closed.png" });
+  // A Wayfarer in need: walking close brings the monsters around them; once beaten they join.
+  const spot = await page.evaluate(() => window.__combat3d.rescue());
+  const party0 = (await snap()).campaign.party?.length ?? 1;
+  await page.evaluate(([x, z]) => window.__combat3d.face(x, z), [spot.x, spot.z]);
+  await page.waitForFunction(() => window.__combat3d.snapshot().rescues.find((r) => r.key === "qa:rescue")?.state === "wave", null, { timeout: 5000 });
+  assert.ok((await snap()).enemies.some((e) => e.key.startsWith("rescue:qa:rescue:") && e.state !== "dead"), "monsters around them");
+  await page.screenshot({ path: "work/vents/rescue.png" });
+  await page.evaluate(() => window.__combat3d.killWave());
+  await page.waitForFunction(() => !window.__combat3d.snapshot().rescues.some((r) => r.key === "qa:rescue"), null, { timeout: 5000 });
+  const saved = await snap();
+  assert.equal(saved.campaign.characters.length, 2, "rescued Wayfarer joined for free");
+  assert.equal(saved.campaign.party.length, party0 + 1, "and walks with the party");
+  const newcomer = saved.campaign.characters.at(-1);
+  assert.ok(newcomer.rarity && newcomer.trait && newcomer.name, "with rarity, trait and a local name");
+  assert.ok(saved.campaign.rescued["qa:rescue"] > 0);
   assert.deepEqual(errors, []);
+  console.log(`PASS: rescued ${newcomer.name} (${newcomer.role}, ${newcomer.rarity}) joined the party`);
   console.log(`PASS: haze vent wakes a wave of ${wave.length}, closes with one blow, pays ${after.player.coins - before.player.coins} gold + ${after.player.fragments - before.player.fragments} shards, stays closed`);
 } finally {
   await browser.close();
