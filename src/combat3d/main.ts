@@ -310,6 +310,64 @@ const buildingViews: {
   box: { x0: number; x1: number; z0: number; z1: number };
 }[] = [];
 const obstacleCells = new Map<string, typeof buildingViews>();
+const retiredMaterials: T.Material[] = [];
+const roadMaterials = new Map<number, T.MeshStandardMaterial>();
+const groundMaterial = new T.MeshLambertMaterial({ vertexColors: true });
+/** Hidden samples of materials that appear only later (smooth ground once heights
+ * arrive, loot and coins on the first kill), so their shaders compile while loading. */
+function addShaderSamples() {
+  const shelf = new T.Group();
+  shelf.visible = false;
+  const tiny = new T.BoxGeometry(0.01, 0.01, 0.01);
+  for (const m of [groundMaterial, new T.MeshLambertMaterial({ color: 0xffffff })]) {
+    const mesh = new T.Mesh(tiny, m);
+    mesh.receiveShadow = mesh.castShadow = true;
+    shelf.add(mesh);
+  }
+  scene.add(shelf);
+}
+/** Buildings standing between the camera and someone fade out smoothly, and back. */
+const hiddenUntil = new WeakMap<T.Object3D, number>();
+function fadeBuildings(dt: number) {
+  const step = dt * 5;
+  for (const b of buildingViews) {
+    const want = (hiddenUntil.get(b.node) ?? -1) > time ? 0.15 : 1,
+      m0 = b.materials[0];
+    if (m0.opacity === want) continue;
+    const opacity = want < m0.opacity ? Math.max(want, m0.opacity - step) : Math.min(want, m0.opacity + step);
+    for (const m of b.materials) {
+      m.opacity = opacity;
+      m.depthWrite = opacity >= 1;
+    }
+  }
+}
+/** Compiles shaders for everything in the scene that was not drawn yet, hidden things
+ * included (x-ray outlines, warnings, effects waiting off screen). Without it each new
+ * kind of object compiled its shader on the frame it first appeared — a hitch. */
+const warmed = new WeakMap<T.Material, number>();
+let warmClock = 0;
+function warmShaders(force = false) {
+  const now = performance.now();
+  if (!force && now - warmClock < 1000) return;
+  warmClock = now;
+  const fresh: T.Object3D[] = [];
+  scene.traverse((o) => {
+    if (!(o instanceof T.Mesh || o instanceof T.Line || o instanceof T.Points)) return;
+    const flag = o instanceof T.InstancedMesh ? (o.instanceColor ? 4 : 2) : 1;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      const seen = warmed.get(m) ?? 0;
+      if (seen & flag) continue;
+      warmed.set(m, seen | flag);
+      if (fresh.at(-1) !== o) fresh.push(o);
+    }
+  });
+  for (const o of fresh)
+    try {
+      renderer.compile(o, camera, scene);
+    } catch {
+      // A failing shader is reported by the normal draw; warming is only a head start.
+    }
+}
 const cellKey = (x: number, z: number) =>
   `${Math.floor(x / 8)},${Math.floor(z / 8)}`;
 const scratch = new T.Vector3(),
@@ -650,6 +708,7 @@ function buildWorld() {
   scene.add(sun, sun.target);
   skyLight = new T.HemisphereLight(0xe5f2df, 0x6b7557, 2);
   scene.add(skyLight, partyLamp, campFire, rain, snow);
+  addShaderSamples();
   scene.add(terrain);
   renderTerrain();
   if (!savedCampaign) {
@@ -789,6 +848,40 @@ function updateTerrainField(dt: number) {
     })
     .finally(() => (fieldBusy = false));
 }
+/** Which mapped area (park, forest, water…) lies under a point. Areas are bucketed by
+ * their bounding boxes once per map, so a lookup tests a few polygons instead of all. */
+let areaIndexFor: MapData | null = null,
+  areaBuckets = new Map<string, number[]>();
+const AREA_BUCKET = 8;
+function areaAt(x: number, z: number, water = false) {
+  if (areaIndexFor !== map) {
+    areaIndexFor = map;
+    areaBuckets = new Map();
+    map.areas.forEach((a, i) => {
+      let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+      for (const p of a.rings[0]) {
+        x0 = Math.min(x0, p[0]);
+        x1 = Math.max(x1, p[0]);
+        z0 = Math.min(z0, p[1]);
+        z1 = Math.max(z1, p[1]);
+      }
+      for (let bx = Math.floor(x0 / AREA_BUCKET); bx <= Math.floor(x1 / AREA_BUCKET); bx++)
+        for (let bz = Math.floor(z0 / AREA_BUCKET); bz <= Math.floor(z1 / AREA_BUCKET); bz++) {
+          const key = `${bx},${bz}`,
+            list = areaBuckets.get(key);
+          if (list) list.push(i);
+          else areaBuckets.set(key, [i]);
+        }
+    });
+  }
+  const list = areaBuckets.get(`${Math.floor(x / AREA_BUCKET)},${Math.floor(z / AREA_BUCKET)}`);
+  if (list)
+    for (const i of list) {
+      const a = map.areas[i];
+      if (a.water === water && inPolygon(x, z, a.rings)) return a;
+    }
+  return undefined;
+}
 /** Smooth ground: one vertex per height cell, coloured by what OSM shows there,
  * with shared (smoothed) normals so slopes shade softly instead of stepping. */
 function groundMesh() {
@@ -797,7 +890,7 @@ function groundMesh() {
     col = new Float32Array(w * w * 3),
     c = new T.Color();
   const kindColor = (x: number, z: number, k: number) =>
-    field.wet[k] ? WORLD_COLORS.water : map.areas.some((a) => !a.water && inPolygon(x, z, a.rings)) ? WORLD_COLORS.green : WORLD_COLORS.ground;
+    field.wet[k] ? WORLD_COLORS.water : areaAt(x, z) ? WORLD_COLORS.green : WORLD_COLORS.ground;
   for (let j = 0; j < w; j++)
     for (let i = 0; i < w; i++) {
       const k = j * w + i,
@@ -818,7 +911,7 @@ function groundMesh() {
   g.setAttribute("color", new T.BufferAttribute(col, 3));
   g.setIndex(index);
   g.computeVertexNormals();
-  const m = new T.Mesh(g, new T.MeshLambertMaterial({ vertexColors: true }));
+  const m = new T.Mesh(g, groundMaterial);
   m.receiveShadow = true;
   m.userData.baseColors = Float32Array.from(col);
   m.userData.cellOfVertex = Int32Array.from({ length: w * w }, (_, k) => k);
@@ -898,7 +991,10 @@ function liftActors() {
   campFire.position.y = 1.4 + groundY(home.x, home.z);
 }
 function disposeTerrain() {
-  for (const b of buildingViews) for (const m of b.materials) m.dispose();
+  // Disposing a material frees its compiled program once nothing uses it, and the new
+  // buildings would then compile it again (a visible hitch). Old materials go after the
+  // next frame, when the new ones already hold the programs.
+  for (const b of buildingViews) retiredMaterials.push(...b.materials);
   terrain.traverse((o) => {
     if (o instanceof T.Mesh) o.geometry.dispose();
   });
@@ -967,7 +1063,17 @@ function renderTerrain() {
     g.setAttribute("position", new T.Float32BufferAttribute(r.pos, 3));
     g.setIndex(r.idx);
     g.computeVertexNormals();
-    const m = new T.Mesh(g, material(color));
+    // Own material with a depth bias: the ribbon lies a few centimetres above the ground,
+    // and the bias keeps the ground from flickering through it as the camera moves.
+    let mat = roadMaterials.get(color);
+    if (!mat) {
+      mat = material(color).clone();
+      mat.polygonOffset = true;
+      mat.polygonOffsetFactor = -2;
+      mat.polygonOffsetUnits = color === WORLD_COLORS.road ? -8 : -4;
+      roadMaterials.set(color, mat);
+    }
+    const m = new T.Mesh(g, mat);
     m.receiveShadow = true;
     terrain.add(m);
   }
@@ -998,7 +1104,12 @@ function renderTerrain() {
       material(roofColors[i % roofColors.length]).clone(),
       material(wallColors[i % wallColors.length]).clone(),
     ];
-    for (const m of mats) m.vertexColors = true;
+    // Always drawn in the blended pass (at full opacity normally): fading a building that
+    // hides the hero then changes only a number, not the shader.
+    for (const m of mats) {
+      m.vertexColors = true;
+      m.transparent = true;
+    }
     const node = new T.Mesh(g, mats);
     node.castShadow = true;
     node.receiveShadow = true;
@@ -1073,7 +1184,7 @@ function renderTerrain() {
       const r = (salt: number) => cellRand(cx, cz, salt);
       const x = (cx + 0.15 + r(1) * 0.7) * TREE_CELL,
         z = (cz + 0.15 + r(2) * 0.7) * TREE_CELL;
-      const area = map.areas.find((a) => !a.water && inPolygon(x, z, a.rings));
+      const area = areaAt(x, z);
       if (!area || r(3) > (density[area.kind ?? "green"] ?? density.green)) continue;
       if (blocked(x, z, 0.9)) continue;
       if (nearRoad(x, z)) continue;
@@ -3422,21 +3533,19 @@ function tick() {
       for (const hit of sight.intersectObjects(nearbyBuildings, false))
         occluded.add(hit.object);
     }
-    for (const b of buildingViews) {
-      const near = occluded.has(b.node);
-      for (const m of b.materials) {
-        m.transparent = near;
-        m.opacity = near ? 0.15 : 1;
-        m.depthWrite = !near;
-      }
-    }
+    // A building stays see-through a moment after it stops hiding someone, so a ray
+    // grazing its edge does not make it blink on and off.
+    for (const n of occluded) hiddenUntil.set(n, time + 0.6);
   }
+  fadeBuildings(dt);
   if (time - lastHud > 0.1 || paused || helpOpen || !started) {
     updateHud();
     lastHud = time;
   }
   try {
     renderer.render(scene, camera);
+    if (retiredMaterials.length) for (const m of retiredMaterials.splice(0)) m.dispose();
+    warmShaders();
     if (frameChecks > 0) {
       checkDrawingBuffer();
       frameChecks--;
@@ -3767,9 +3876,15 @@ async function init() {
               advanceOffers: (seed?: number) => {
                 for (const o of campaign.offers) {
                   o.readyAt = Date.now() - 1;
-                  if (seed !== undefined) o.seed = seed;
+                  if (seed !== undefined) {
+                    o.seed = seed;
+                    delete o.pool; // drawn again from the new seed
+                  }
                 }
                 resolveForQA();
+              },
+              setRope: (metres: number) => {
+                campaign.stock.rope = metres;
               },
               travel: (lat: number, lon: number) => travelTo({ lat, lon }),
               // A companion of the given role joins the party next to the hero.

@@ -307,6 +307,38 @@ try {
     await gameWait(0.4);
     assert.ok((await snap()).spots > 0, "free camp spots shown");
     await page.screenshot({ path: `work/combat3d/${tag}-camp-spots.png` });
+    // Holding the stake by its own camp, the action rolls the rope back in (no Esc on a phone).
+    assert.equal(await page.locator("#action-label").textContent(), "Zwiń linę");
+    await page.click("#action");
+    await gameWait(0.3);
+    assert.equal((await snap()).rope, null, "rope rolled back in");
+    // Without rope the stake is not taken (it used to tie the hero to the tent).
+    await page.evaluate(() => window.__combat3d.setRope(0));
+    await page.click("#action");
+    await page.getByRole("button", { name: "Rozciągnij linę", exact: true }).click();
+    await gameWait(0.3);
+    assert.equal((await snap()).rope, null, "no rope, no stake");
+    assert.match(await page.locator("#toast").textContent(), /Za mało liny/);
+    await page.evaluate(() => window.__combat3d.setRope(500));
+    // At the end of the rope the hero can still walk back.
+    await page.click("#action");
+    await page.getByRole("button", { name: "Rozciągnij linę", exact: true }).click();
+    await page.keyboard.down("KeyD");
+    await gameWait(0.8);
+    await page.keyboard.up("KeyD");
+    await page.evaluate(() => window.__combat3d.setRope(1)); // rope ran out out there
+    const tied = (await snap()).player;
+    await page.keyboard.down("KeyD");
+    await gameWait(0.6);
+    await page.keyboard.up("KeyD");
+    const stuck = (await snap()).player;
+    assert.ok(Math.abs(stuck.x - tied.x) < 0.05, "no further than the rope allows");
+    await page.keyboard.down("KeyA");
+    await gameWait(0.6);
+    await page.keyboard.up("KeyA");
+    const back = (await snap()).player;
+    assert.ok(tied.x - back.x > 0.5, `walks back on a used-up rope (${tied.x.toFixed(2)} → ${back.x.toFixed(2)})`);
+    await page.evaluate(() => window.__combat3d.setRope(500));
     await page.keyboard.press("Escape");
     await gameWait(0.3);
     await page.click("#action");

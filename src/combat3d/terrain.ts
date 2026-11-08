@@ -201,7 +201,9 @@ export class HeightField {
       az = fz - j,
       v = this.v;
     const a = v[j * w + i], b = v[j * w + i + 1], c = v[(j + 1) * w + i], d = v[(j + 1) * w + i + 1];
-    return (a * (1 - ax) + b * ax) * (1 - az) + (c * (1 - ax) + d * ax) * az;
+    // Same two triangles per cell as the ground mesh (split from b to c), so roads,
+    // actors and overlays sit exactly on the drawn surface instead of dipping into it.
+    return ax + az <= 1 ? a + (b - a) * ax + (c - a) * az : d + (c - d) * (1 - ax) + (b - d) * (1 - az);
   }
   /** Lowest height in the window. */
   low() {
