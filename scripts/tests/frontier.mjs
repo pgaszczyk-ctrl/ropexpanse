@@ -54,11 +54,14 @@ const expected = encounterShare((12 - 7.5) / scale) * 10000;
 assert(Math.abs(nearCount - expected) < 300, `near camp density ${nearCount} ≈ ${expected.toFixed(0)}`);
 assert(encounterShare(0) === 0 && encounterShare(1) < 0.2 && encounterShare(300) === 1 && encounterShare(150) > encounterShare(50));
 assert(!encounterAllowed(base,{x:0,z:0},'home',scale));
-const near = difficultyAt(base,{x:15,z:0},scale), wild = difficultyAt(base,{x:600,z:0},scale);
+// 20 km from the start (3600 units at 0.18/m): world level 2 stays even beside a new camp.
+const near = difficultyAt(base,{x:15,z:0},scale), wild = difficultyAt(base,{x:3600,z:0},scale);
 assert(wild.tier > near.tier);
 assert.equal(near.bossChance,0); assert(wild.bossChance > 0);
-base.camps.push({id:'remote',parentId:'camp-1',x:590,z:0,route:[],buildings:0});
-const settled = difficultyAt(base,{x:600,z:0},scale);
+base.camps.push({id:'remote',parentId:'camp-1',x:3590,z:0,route:[],buildings:0});
+const settled = difficultyAt(base,{x:3600,z:0},scale);
+assert.equal(settled.worldTier, 2, '+1 level per 15 km');
+assert.equal(difficultyAt(base,{x:30*1000*scale*1.0+10,z:0},scale).worldTier, 3);
 assert(settled.tier < wild.tier, 'near new camp pressure is reduced');
 assert(settled.tier > near.tier, 'new camp does not erase distance from root');
 assert.equal(settled.bossChance,0,'no bosses at the settled frontier');
