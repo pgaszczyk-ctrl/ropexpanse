@@ -13,6 +13,7 @@ import {
   attackPower,
   armorPower,
   makeItem,
+  makeMaterial,
   GEAR_KINDS,
   accrue,
   isCampRole,
@@ -22,6 +23,7 @@ import {
   roleName,
   PARTY_SIZE,
   type Character,
+  type Item,
 } from "./campaign";
 import { enclosedAreas } from "./territory-rules";
 import { circleRates, workerRates } from "./production";
@@ -81,6 +83,7 @@ import {
   type Geo,
 } from "./world";
 import { mountHud, hudIcon, layoutArc } from "./hud";
+import { lootFor, coinSplit, isValuable, type ItemRarity } from "./loot";
 mountHud();
 import * as T from "three";
 import { animate, material, person, sector, wolf, type Rig } from "./models";
@@ -1728,11 +1731,9 @@ function closeVentAt(hits: (p: Point) => boolean) {
     const tier = encounterProfile(campaign, v.vent, v.vent.key, map.scale).tier;
     const gold = 20 + tier * 10,
       shards = 3 + Math.floor(tier / 2);
-    player.coins += gold;
     player.fragments += shards;
     campaign.stock.ore += 2;
-    if (player.bag.length < BALANCE.slots)
-      player.bag.push(makeItem(campaign, v.vent.seed % GEAR_KINDS, tier + 1));
+    spawnLoot(v.vent, gold, [makeItem(campaign, v.vent.seed % GEAR_KINDS, tier + 1, Math.random() < 0.3 ? "rare" : "common")]);
     burst(v.vent, 0xffd27a, 18);
     floatingText(`+${gold} tix · +${shards} odł.`, v.vent, "#ffe5ab", "xp");
     sound(520, 0.25, "sine");
@@ -2160,6 +2161,213 @@ function burst(p: Point, color: number, n = 8) {
     });
   }
 }
+// ---- Loot on the ground (owner's design doc, review of 8 Nov 2026, VFX wypadania łupu) ----
+// Loot jumps out of the enemy in an arc, bounces once and turns slowly. Tix are a few
+// small coins that fly to the hero after ~0.4 s and on to the HUD counter. Common things
+// fly to the hero too; valuable ones (rare and up) wait until the hero walks up, then
+// go to the backpack with a flash in their rarity colour. Rarity shows as an aura:
+// rare = soft ring + sparks, epic = + a pillar of light, legendary = a taller pillar,
+// a short slow-down of the fall and its own sound.
+type Drop = {
+  node: T.Group;
+  x: number;
+  z: number;
+  y: number;
+  vx: number;
+  vz: number;
+  vy: number;
+  bounced: boolean;
+  landed: boolean;
+  t: number;
+  slow: number;
+  coin?: number;
+  item?: Item;
+  sparks?: T.Points;
+};
+const drops: Drop[] = [];
+const RARITY_HEX: Record<ItemRarity, number> = { common: 0x9a9a9a, rare: 0x3f8fe0, epic: 0xc77dff, legendary: 0xe8b53a };
+const rarityOf = (i: Item) => (i.rarity === "uncommon" ? "rare" : (i.rarity ?? "common")) as ItemRarity;
+let bagFullSaid = 0;
+function dropModel(item?: Item) {
+  const g = new T.Group(),
+    body = new T.Group();
+  g.add(body);
+  if (!item) {
+    const coin = new T.Mesh(new T.CylinderGeometry(0.16, 0.16, 0.05, 10), new T.MeshLambertMaterial({ color: 0xf0c552, emissive: 0x5a3c08 }));
+    coin.rotation.x = Math.PI / 2.4;
+    body.add(coin);
+    return g;
+  }
+  const r = rarityOf(item),
+    tint = new T.Color(RARITY_HEX[r]);
+  const mat = new T.MeshLambertMaterial({ color: item.slot === "material" ? (item.icon === "fang" ? 0xf1e8d2 : 0x9a6b45) : 0xc8ccc8, emissive: tint.clone().multiplyScalar(r === "common" ? 0 : 0.35) });
+  const shape =
+    item.slot === "material"
+      ? new T.IcosahedronGeometry(0.22, 0)
+      : item.slot === "weapon"
+        ? new T.BoxGeometry(0.12, 0.9, 0.08)
+        : new T.BoxGeometry(0.5, 0.42, 0.24);
+  const m = new T.Mesh(shape, mat);
+  if (item.slot === "weapon") m.rotation.z = 0.5;
+  body.add(m);
+  if (r !== "common") {
+    const ring = new T.Mesh(
+      new T.RingGeometry(0.55, 0.95, 28),
+      new T.MeshBasicMaterial({ color: tint, transparent: true, opacity: 0.45, depthWrite: false, side: T.DoubleSide }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.userData.ground = true;
+    g.add(ring);
+  }
+  if (r === "epic" || r === "legendary") {
+    const h = r === "legendary" ? 7 : 4;
+    const pillar = new T.Mesh(
+      new T.CylinderGeometry(0.22, 0.32, h, 12, 1, true),
+      new T.MeshBasicMaterial({ color: tint, transparent: true, opacity: 0.32, depthWrite: false, blending: T.AdditiveBlending, side: T.DoubleSide }),
+    );
+    pillar.position.y = h / 2;
+    pillar.userData.ground = true;
+    g.add(pillar);
+  }
+  return g;
+}
+function spawnDrop(at: Point, coin?: number, item?: Item) {
+  const a = Math.random() * Math.PI * 2,
+    speed = item ? 1.2 + Math.random() * 1.2 : 1.5 + Math.random() * 2;
+  const node = dropModel(item);
+  scene.add(node);
+  const d: Drop = { node, x: at.x, z: at.z, y: groundY(at.x, at.z) + 0.9, vx: Math.sin(a) * speed, vz: Math.cos(a) * speed, vy: item ? 6 : 5, bounced: false, landed: false, t: 0, slow: 1, coin, item };
+  if (item) {
+    const r = rarityOf(item);
+    if (r === "legendary") {
+      d.slow = 0.35;
+      sound(523, 0.35, "sine", 0.05);
+      sound(784, 0.5, "sine", 0.04);
+    } else if (r === "epic") sound(660, 0.2, "sine", 0.04);
+    if (r !== "common") {
+      const pts = new Float32Array(30);
+      d.sparks = new T.Points(new T.BufferGeometry().setAttribute("position", new T.BufferAttribute(pts, 3)), new T.PointsMaterial({ color: RARITY_HEX[r], size: 4, sizeAttenuation: false, transparent: true, opacity: 0.9 }));
+      d.sparks.frustumCulled = false;
+      node.add(d.sparks);
+    }
+  }
+  drops.push(d);
+}
+/** Spreads what an enemy (or a chest) leaves on the ground. */
+function spawnLoot(at: Point, tix: number, items: Item[]) {
+  for (const part of coinSplit(tix)) spawnDrop(at, part);
+  for (const item of items) spawnDrop(at, undefined, item);
+}
+function removeDrop(d: Drop) {
+  scene.remove(d.node);
+  d.node.traverse((o) => {
+    if (o instanceof T.Mesh || o instanceof T.Points) {
+      o.geometry.dispose();
+      (o.material as T.Material).dispose();
+    }
+  });
+  drops.splice(drops.indexOf(d), 1);
+}
+/** A small coin flies from the hero on screen to the HUD counter, which pulses. */
+function coinToCounter() {
+  const target = $("loot").getBoundingClientRect(),
+    p = new T.Vector3(player.x, groundY(player.x, player.z) + 1.4, player.z).project(camera);
+  const el = document.createElement("i");
+  el.className = "fly-coin";
+  el.style.left = `${((p.x + 1) / 2) * innerWidth}px`;
+  el.style.top = `${((1 - p.y) / 2) * innerHeight}px`;
+  document.body.append(el);
+  requestAnimationFrame(() => {
+    el.style.left = `${target.left + 18}px`;
+    el.style.top = `${target.top + target.height / 2}px`;
+    el.style.opacity = "0.2";
+  });
+  setTimeout(() => {
+    el.remove();
+    const counter = $("loot");
+    counter.classList.remove("pulse");
+    void counter.offsetWidth;
+    counter.classList.add("pulse");
+  }, 450);
+}
+function collect(d: Drop) {
+  if (d.coin) {
+    player.coins += d.coin;
+    coinToCounter();
+    sound(980, 0.04, "sine", 0.02);
+  } else if (d.item) {
+    if (player.bag.length >= BALANCE.slots) {
+      if (time - bagFullSaid > 6) notify("Plecak pełny");
+      bagFullSaid = time;
+      return false;
+    }
+    player.bag.push(d.item);
+    const r = rarityOf(d.item),
+      hex = RARITY_HEX[r];
+    burst(player, hex, r === "common" ? 4 : 14);
+    floatingText(`+ ${d.item.name}`, player, `#${hex.toString(16).padStart(6, "0")}`, "xp");
+    sound(r === "common" ? 700 : 880, 0.12, "sine", 0.03);
+  }
+  removeDrop(d);
+  persist();
+  return true;
+}
+function updateDrops(dt: number) {
+  for (const d of [...drops]) {
+    const k = dt * d.slow,
+      ground = groundY(d.x, d.z) + 0.12;
+    if (!d.landed) {
+      d.vy -= 18 * k;
+      d.x += d.vx * k;
+      d.z += d.vz * k;
+      d.y += d.vy * k;
+      if (d.y <= ground) {
+        d.y = ground;
+        if (!d.bounced) {
+          d.bounced = true;
+          d.vy = Math.abs(d.vy) * 0.35;
+          d.vx *= 0.45;
+          d.vz *= 0.45;
+          d.slow = 1;
+        } else {
+          d.landed = true;
+          d.t = 0;
+        }
+      }
+    } else d.t += dt;
+    const flies = d.coin !== undefined || (d.item && !isValuable(rarityOf(d.item)));
+    if (d.landed && flies && d.t > 0.4) {
+      // Fly to the hero, then into the backpack / counter.
+      const dx = player.x - d.x,
+        dz = player.z - d.z,
+        dist = Math.hypot(dx, dz),
+        step = Math.min(dist, (8 + d.t * 18) * dt);
+      if (dist < 0.6) {
+        if (collect(d)) continue;
+      } else {
+        d.x += (dx / dist) * step;
+        d.z += (dz / dist) * step;
+        d.y = groundY(d.x, d.z) + 0.6 + Math.min(1, dist) * 0.4;
+      }
+    } else if (d.landed && d.item && isValuable(rarityOf(d.item)) && distance(player, d) < 1.3) {
+      if (collect(d)) continue;
+    }
+    d.node.position.set(d.x, d.landed && !flies ? groundY(d.x, d.z) : d.y, d.z);
+    const body = d.node.children[0];
+    if (d.landed && !flies) body.position.y = 0.45 + Math.sin(time * 2 + d.x) * 0.06;
+    else body.position.y = 0;
+    body.rotation.y += dt * (d.coin ? 6 : 1.5);
+    if (d.sparks) {
+      const pos = d.sparks.geometry.getAttribute("position") as T.BufferAttribute;
+      for (let i = 0; i < 10; i++) {
+        const a = time * 1.3 + i * 0.63,
+          h = (time * 0.8 + i * 0.37) % 1.6;
+        pos.setXYZ(i, Math.sin(a) * 0.7, h, Math.cos(a) * 0.7);
+      }
+      pos.needsUpdate = true;
+    }
+  }
+}
 function hurtEnemy(e: Enemy, damage: number, by?: Character) {
   if (e.state === "dead") return;
   e.hp -= damage;
@@ -2199,13 +2407,14 @@ function hurtEnemy(e: Enemy, damage: number, by?: Character) {
     // Everyone in the party who took part (nearby and standing) learns from the fight.
     for (const m of companions)
       if (m.c.hp > 0 && distance(m.c, e.rig.root.position) < 15) m.c.exp += earned;
-    player.coins += e.boss ? 100 : e.elite ? 35 : 5 + e.tier * 2;
     campaign.encounters[e.key] = Date.now() + 45_000;
-    if (
-      player.bag.length < BALANCE.slots &&
-      (player.kills % 3 === 0 || e.elite)
-    )
-      player.bag.push(makeItem(campaign, e.id % GEAR_KINDS, e.tier));
+    // Animals: tix and materials; humanoids: weapons and armour (loot.ts).
+    const rank = e.boss ? "boss" : e.elite ? "elite" : e.species.rank;
+    const loot = lootFor(e.species.look, rank, e.tier, Math.random);
+    spawnLoot(e.rig.root.position, loot.tix, [
+      ...loot.materials.map((m) => makeMaterial(campaign, m, e.tier)),
+      ...loot.gear.map((r, i) => makeItem(campaign, e.id + i * 3, e.tier, r)),
+    ]);
     player.fragments += e.elite ? 5 : 1;
     sound(640, 0.13, "sine");
     floatingText(`+${earned} XP`, e.rig.root.position, "#e6f3be", "xp");
@@ -3108,6 +3317,7 @@ function tick() {
       }
     }
     updateEnemies(dt);
+    updateDrops(dt);
     updateCompanions(dt);
     updateShots(dt);
     updateEffects(dt);
@@ -3429,6 +3639,7 @@ async function init() {
           weather: weatherNow,
           cameraYaw: camYawTarget,
           renders: renderCount,
+          drops: drops.map((d) => ({ coin: d.coin ?? 0, slot: d.item?.slot ?? null, rarity: d.item?.rarity ?? null, landed: d.landed, x: d.x, z: d.z })),
           trees: treeSpots,
           terrain: field.w
             ? {
@@ -3632,6 +3843,15 @@ async function init() {
                 if (item.slot !== "material") player.equipment[item.slot] = item;
                 selectWeapon(weaponMode(player));
                 return item.icon;
+              },
+              // Loot 3 units east of the hero: tix plus one item per rarity given.
+              dropLoot: (tix: number, rarities: ItemRarity[]) =>
+                spawnLoot({ x: player.x + 3, z: player.z }, tix, rarities.map((r, i) => makeItem(campaign, i, 1, r))),
+              // Fells the nearest living enemy as if the hero struck it.
+              killNearest: () => {
+                const e = enemies.filter((v) => v.state !== "dead").sort((a, b) => distance(a.rig.root.position, player) - distance(b.rig.root.position, player))[0];
+                if (e) hurtEnemy(e, 99999, player);
+                return e ? { look: e.species.look, rank: e.species.rank } : null;
               },
               setHp: (hp: number) => {
                 player.hp = hp;

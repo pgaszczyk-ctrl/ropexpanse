@@ -39,6 +39,8 @@ try {
   await page.evaluate(([x, z]) => window.__combat3d.face(x, z), [vent.x, vent.z]);
   await page.keyboard.press("Space");
   await page.waitForFunction(() => window.__combat3d.snapshot().vents.find((v) => v.key === "qa:vent").state === "closed", null, { timeout: 5000 });
+  // The chest's tix jump out as coins and fly to the hero.
+  await page.waitForFunction((c) => window.__combat3d.snapshot().player.coins > c, before.player.coins, { timeout: 30_000 });
   const after = await snap();
   assert.ok(after.player.coins > before.player.coins, "chest gold");
   assert.ok(after.player.fragments > before.player.fragments, "haze shards");

@@ -92,6 +92,8 @@ const paths: Record<string, string> = {
     '<path stroke="#8b5c31" stroke-width="5" stroke-linecap="round" d="M16 48 34 18"/><path fill="#9aa5a8" stroke="#4c5b60" stroke-width="2" d="m24 10 16-6 8 14-16 6Z"/>',
   shield:
     '<path fill="#9a6a3c" stroke="#5d452f" stroke-width="2" d="M28 6c8 4 14 5 20 5 0 19-6 31-20 39C14 42 8 30 8 11c6 0 12-1 20-5Z"/><path stroke="#c9ccc6" stroke-width="4" d="M28 9v38M12 22h32"/><circle cx="28" cy="22" r="5" fill="#d4b575"/>',
+  hide: '<path fill="#9a6b45" stroke="#5c3d26" stroke-width="2" d="M14 12 22 8l6 4 6-4 8 4-2 9 5 8-5 6 2 9-8 3-6-4-6 4-8-3 2-9-5-6 5-8Z"/><path stroke="#c99a6c" stroke-width="2" d="M22 20q6 4 12 0M21 32q7 4 14 0"/>',
+  fang: '<path fill="#f1e8d2" stroke="#7d6b55" stroke-width="2" d="M20 8q14 2 16 14-2 14-10 28-2-14-9-24Q14 14 20 8Z"/><path stroke="#c9b894" stroke-width="2" d="M24 16q6 3 7 10"/>',
   orb: '<circle cx="28" cy="25" r="15" fill="#70c9e3" stroke="#2f6f85" stroke-width="2"/><circle cx="23" cy="20" r="4" fill="#e9fbff"/><path fill="#8b5c31" stroke="#5d452f" stroke-width="2" d="M17 40h22l-4 9H21Z"/>',
   boots:
     '<path fill="#8e643f" stroke="#5d452f" stroke-width="2" d="m15 8 17 2-3 22 14 9v8H10V34Z"/><path stroke="#d4b575" stroke-width="3" d="M14 18h17"/>',
@@ -562,6 +564,7 @@ export class Expedition {
         );
       if (item) {
         b.innerHTML = itemIcon(item) + itemBadge(item);
+        b.style.setProperty("--item-rarity", RARITY_COLORS[(item.rarity as keyof typeof RARITY_COLORS) ?? "common"] ?? RARITY_COLORS.common);
         b.setAttribute("aria-label", `${item.name}, ${itemStat(item)}`);
         b.title = `${item.name} · ${itemStat(item)}`;
         b.classList.toggle("selected", this.selectedItem === item.id);

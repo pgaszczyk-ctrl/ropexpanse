@@ -1,3 +1,4 @@
+import { RARITY_POWER, RARITY_VALUE, type ItemRarity } from "./loot.ts";
 import {
   safeDistance,
   invalidateTerritory,
@@ -267,7 +268,18 @@ const templates = [
   ["Młot", "weapon", 6, 220, "hammer"],
 ] as const;
 export const GEAR_KINDS = templates.length;
-export function makeItem(s: Campaign, index: number, tier = 1): Item {
+/** Materials left by animals (owner's design doc: hides, fangs). */
+const MATERIALS = { skora: ["Skóra", "hide", 8], kiel: ["Kieł", "fang", 12] } as const;
+export function makeMaterial(s: Campaign, kind: keyof typeof MATERIALS, tier = 1): Item {
+  const [name, icon, value] = MATERIALS[kind];
+  return { id: nextId(s, "item"), kind: `mat-${kind}`, name, slot: "material", level: tier, rarity: "common", power: 0, value: value * tier, icon };
+}
+export function makeItem(
+  s: Campaign,
+  index: number,
+  tier = 1,
+  rarity: ItemRarity = "common",
+): Item {
   const [name, slot, power, value, icon] =
     templates[Math.abs(index) % templates.length];
   return {
@@ -276,15 +288,15 @@ export function makeItem(s: Campaign, index: number, tier = 1): Item {
     name,
     slot,
     level: tier,
-    rarity: "common",
+    rarity,
     affinity:
       icon === "sword" || icon === "shield" || icon === "axe" || icon === "hammer"
         ? "warrior"
         : icon === "staff" || icon === "orb"
           ? "mage"
           : undefined,
-    power: power + Math.max(0, tier - 1),
-    value: value * tier,
+    power: power + Math.max(0, tier - 1) + RARITY_POWER[rarity],
+    value: value * tier * RARITY_VALUE[rarity],
     icon,
   };
 }

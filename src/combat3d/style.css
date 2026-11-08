@@ -1806,3 +1806,34 @@ canvas[data-interaction="camp"] {
     left 0.15s ease-out,
     top 0.15s ease-out;
 }
+/* Loot: a coin flying to the counter, which pulses; rarity frames in the backpack. */
+.fly-coin {
+  position: fixed;
+  z-index: 40;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff3b8, #e7b13c 55%, #8a5a12);
+  box-shadow: 0 0 6px #ffd76a;
+  pointer-events: none;
+  transition:
+    left 0.42s ease-in,
+    top 0.42s ease-in,
+    opacity 0.42s ease-in;
+}
+#loot.pulse {
+  animation: loot-pulse 0.35s ease-out;
+}
+@keyframes loot-pulse {
+  40% {
+    transform: scale(1.18);
+    color: #fff2bf;
+  }
+}
+#loot {
+  display: inline-block;
+}
+.item-slot {
+  border-color: var(--item-rarity, #6f5532) !important;
+}
