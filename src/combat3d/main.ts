@@ -27,6 +27,16 @@ import { enclosedAreas } from "./territory-rules";
 import { circleRates, workerRates } from "./production";
 import { weaponSkill, offhandSkill, SKILLS } from "./skills";
 import {
+  biomeAt,
+  pickSpecies,
+  speciesById,
+  SERVANTS,
+  type Species,
+  type Behavior,
+  type TimeOfDay,
+  type Weather,
+} from "./bestiary";
+import {
   TRAIT_STRENGTH,
   RARITY_COLORS,
   RARITY_NAMES,
@@ -91,6 +101,13 @@ type Enemy = {
   hp: number;
   maxHp: number;
   kind: "wolf" | "archer" | "mage" | "raider" | "heavy";
+  /** Who it is (bestiary) and how it fights (archetype). */
+  species: Species;
+  behavior: Behavior;
+  hidden: boolean;
+  summonT: number;
+  stolen: number;
+  fleeUntil: number;
   tier: number;
   key: string;
   elite: boolean;
@@ -1446,8 +1463,7 @@ function populateEncounters() {
   for (let i = enemies.length - 1; i >= 0; i--)
     if (
       distance(enemies[i].spawn, player) > 85 ||
-      (!enemies[i].key.startsWith("vent:") &&
-        !enemies[i].key.startsWith("rescue:") &&
+      (!/^(vent|rescue|summon):/.test(enemies[i].key) &&
         !encounterAllowed(campaign, enemies[i].spawn, enemies[i].key, map.scale))
     ) {
       removeEnemy(enemies[i]);
@@ -1582,20 +1598,68 @@ function addBlobShadow(rig: Rig) {
   m.position.y = 0.045;
   rig.root.add(m);
 }
-function spawnEnemy(p: Point, id: number, key = `legacy-${id}`) {
-  const kind = (["wolf", "raider", "archer", "mage", "heavy"] as const)[id % 5],
-    { elite, boss, tier } = encounterProfile(campaign, p, key, map.scale),
+/** Time of day and weather now (set by the sky; day and clear until known). */
+let timeOfDay: TimeOfDay = "day",
+  weatherNow: Weather = "clear";
+const KIND_OF: Record<Behavior, Enemy["kind"]> = {
+  pack: "wolf",
+  charge: "raider",
+  shooter: "archer",
+  caster: "mage",
+  ambush: "raider",
+  summoner: "mage",
+  colossus: "heavy",
+  thief: "raider",
+  lure: "wolf",
+  whirl: "heavy",
+};
+const BASE_HP = { weak: 32, medium: 48, elite: 120, boss: 320 };
+function enemyHp(e: Pick<Enemy, "boss" | "elite" | "species" | "tier">) {
+  const rank = e.boss ? "boss" : e.elite ? "elite" : e.species.rank;
+  return BASE_HP[rank] * (rank === "medium" && e.species.behavior === "summoner" ? 0.6 : 1) * (1 + (e.tier - 1) * 0.35);
+}
+function enemyScale(e: Pick<Enemy, "boss" | "elite" | "species">) {
+  return e.species.size * (e.boss ? 1.5 : e.elite && e.species.rank !== "elite" ? 1.2 : 1);
+}
+/** Placeholder look: the current rigs tinted towards the species colour. */
+function tintRig(rig: Rig, color: number) {
+  const c = new T.Color(color);
+  rig.root.traverse((o) => {
+    if (o instanceof T.Mesh && o.material instanceof T.MeshLambertMaterial) {
+      o.material = o.material.clone();
+      o.material.color.lerp(c, 0.55);
+    } else if (o instanceof T.Mesh && o.material instanceof T.MeshStandardMaterial) {
+      o.material = o.material.clone();
+      o.material.color.lerp(c, 0.55);
+    }
+  });
+}
+function spawnEnemy(p: Point, id: number, key = `legacy-${id}`, forced?: Species) {
+  const { elite, boss, tier, frontierMeters } = encounterProfile(campaign, p, key, map.scale);
+  const roll = (hash(`${key}:species`) % 1000) / 1000;
+  const species =
+    forced ??
+    pickSpecies(
+      biomeAt(map, p),
+      boss ? "boss" : elite ? "elite" : roll < 0.6 ? "weak" : "medium",
+      timeOfDay,
+      weatherNow,
+      frontierMeters > 800,
+      (hash(`${key}:pick`) % 1000) / 1000,
+    );
+  const behavior = species.behavior,
+    kind = KIND_OF[behavior],
     rig =
-      kind === "wolf"
+      species.look === "wolf"
         ? wolf()
-        : person(kind === "archer" ? "archer" : "hero", id % 10000);
-  if (kind !== "wolf") {
+        : person(species.look === "archer" ? "archer" : "hero", id % 10000);
+  if (species.look !== "wolf") {
     rig.sword.visible = kind === "raider" || kind === "heavy";
     rig.wand.visible = !rig.sword.visible;
   }
-  if (kind === "heavy") rig.root.scale.setScalar(1.15);
+  tintRig(rig, species.color);
   rig.root.position.set(p.x, 0, p.z);
-  if (elite) rig.root.scale.setScalar(boss ? 1.65 : 1.25);
+  rig.root.scale.setScalar(enemyScale({ boss, elite, species }));
   scene.add(rig.root);
   addBlobShadow(rig);
   const { group: bar, fill } = healthBar(
@@ -1603,14 +1667,21 @@ function spawnEnemy(p: Point, id: number, key = `legacy-${id}`) {
     boss ? 0xe57975 : elite ? 0xf2bc68 : 0xd9a27e,
   );
   scene.add(bar);
+  // Red shape on the ground = "I am about to hit here" (the only warning language).
   const warning =
-    kind === "wolf" || kind === "raider" || kind === "heavy"
-      ? sector(elite ? 5 : 3.5, 0.38, 0xe66c43, 0.4)
-      : sector(11, 0.08, 0xe66c43, 0.3);
+    behavior === "charge"
+      ? sector(6.5, 0.14, 0xe66c43, 0.4)
+      : behavior === "colossus"
+        ? sector(3.2, Math.PI, 0xe66c43, 0.35)
+        : behavior === "whirl"
+          ? sector(2.7, Math.PI, 0xe66c43, 0.35)
+          : kind === "wolf" || kind === "raider" || kind === "heavy"
+            ? sector(elite ? 5 : 3.5, 0.38, 0xe66c43, 0.4)
+            : sector(11, 0.08, 0xe66c43, 0.3);
   warning.position.y = 0.07;
   warning.visible = false;
   scene.add(warning);
-  enemies.push({
+  const e: Enemy = {
     id,
     key,
     tier,
@@ -1619,30 +1690,16 @@ function spawnEnemy(p: Point, id: number, key = `legacy-${id}`) {
     spawn: { ...p },
     wanderTarget: null,
     wanderWait: Math.random() * 2,
-    hp:
-      (boss
-        ? 320
-        : elite
-          ? 120
-          : kind === "heavy"
-            ? 85
-            : kind === "wolf"
-              ? 40
-              : 36) *
-      (1 + (tier - 1) * 0.35),
-    maxHp:
-      (boss
-        ? 320
-        : elite
-          ? 120
-          : kind === "heavy"
-            ? 85
-            : kind === "wolf"
-              ? 40
-              : 36) *
-      (1 + (tier - 1) * 0.35),
+    hp: 0,
+    maxHp: 0,
     kind,
-    elite,
+    species,
+    behavior,
+    hidden: behavior === "ambush",
+    summonT: 3,
+    stolen: 0,
+    fleeUntil: 0,
+    elite: elite || species.rank === "elite",
     state: "idle",
     timer: 0,
     heading: 0,
@@ -1652,7 +1709,11 @@ function spawnEnemy(p: Point, id: number, key = `legacy-${id}`) {
     fill,
     warning,
     respawn: 0,
-  });
+  };
+  e.hp = e.maxHp = enemyHp(e);
+  if (e.hidden) rig.root.visible = false;
+  enemies.push(e);
+  return e;
 }
 function selectWeapon(w: "sword" | "magic") {
   weapon = w;
@@ -1723,7 +1784,12 @@ function hurtEnemy(e: Enemy, damage: number, by?: Character) {
     e.timer = 0;
     e.warning.visible = false;
     e.bar.visible = false;
-    e.respawn = e.key.startsWith("vent:") || e.key.startsWith("rescue:") ? Infinity : 30;
+    e.respawn = /^(vent|rescue|summon):/.test(e.key) ? Infinity : 30;
+    if (e.stolen) {
+      player.coins += e.stolen;
+      floatingText(`+${e.stolen} zł`, e.rig.root.position, "#ffd27a", "xp");
+      e.stolen = 0;
+    }
     // Trait "Iskra": the fallen enemy bursts and hurts its neighbours (no chain).
     if (by?.trait === "volatile") {
       burst(e.rig.root.position, 0x9fd8ff, 12);
@@ -1889,8 +1955,7 @@ function updateEnemies(dt: number) {
       e.timer += dt;
       e.rig.root.rotation.z = Math.min(1, e.timer * 5) * Math.PI * 0.45;
       e.rig.root.scale.setScalar(
-        (e.boss ? 1.65 : e.elite ? 1.25 : e.kind === "heavy" ? 1.15 : 1) *
-          Math.max(0, 1 - Math.max(0, e.timer - 0.6) * 2),
+        enemyScale(e) * Math.max(0, 1 - Math.max(0, e.timer - 0.6) * 2),
       );
       e.respawn -= dt;
       if (e.respawn <= 0 && distance(player, e.spawn) > 10 && !safe(e.spawn)) {
@@ -1898,25 +1963,16 @@ function updateEnemies(dt: number) {
         e.tier = profile.tier;
         e.boss = profile.boss;
         e.elite = profile.elite;
-        e.maxHp =
-          (e.boss
-            ? 320
-            : e.elite
-              ? 120
-              : e.kind === "heavy"
-                ? 85
-                : e.kind === "wolf"
-                  ? 40
-                  : 36) *
-          (1 + (e.tier - 1) * 0.35);
+        e.maxHp = enemyHp(e);
         e.state = "idle";
         e.hp = e.maxHp;
         e.timer = 0;
         e.rig.root.position.set(e.spawn.x, 0, e.spawn.z);
         e.rig.root.rotation.z = 0;
-        e.rig.root.scale.setScalar(
-          e.boss ? 1.65 : e.elite ? 1.25 : e.kind === "heavy" ? 1.15 : 1,
-        );
+        e.rig.root.scale.setScalar(enemyScale(e));
+        e.hidden = e.behavior === "ambush";
+        e.rig.root.visible = !e.hidden;
+        e.stolen = 0;
       }
       continue;
     }
@@ -1926,6 +1982,60 @@ function updateEnemies(dt: number) {
       d = distance(tgt, p);
     let moving = false;
     e.timer -= dt;
+    // Ambush: hidden in water, trees or under the ground until you come close.
+    if (e.hidden) {
+      e.rig.root.visible = false;
+      e.bar.visible = false;
+      if (d < 4 && !safe(tgt)) {
+        e.hidden = false;
+        e.rig.root.visible = true;
+        burst(p, e.species.color, 12);
+        e.state = "windup";
+        e.timer = 0.35;
+        e.heading = Math.atan2(tgt.x - p.x, tgt.z - p.z);
+        e.hit = false;
+      } else continue;
+    }
+    // Lure: draws you in and bursts next to the party.
+    if (e.behavior === "lure" && d < 1.6 && !safe(tgt)) {
+      burst(p, e.species.color, 18);
+      for (const t of [{ at: player as Point }, ...companions.filter((m) => m.c.hp > 0).map((m) => ({ at: m.c as Point, m }))])
+        if (distance(t.at, p) < 2.6) hurtTarget(t, Math.round(14 * (1 + (e.tier - 1) * 0.22)));
+      hurtEnemy(e, 99999);
+      continue;
+    }
+    // Summoner: calls servants of its biome (at most four), stays back itself.
+    if (e.behavior === "summoner" && d < 12 && !safe(tgt)) {
+      e.summonT -= dt;
+      const servants = enemies.filter((o) => o.key.startsWith(`summon:${e.key}:`) && o.state !== "dead");
+      if (e.summonT <= 0 && servants.length < 4) {
+        e.summonT = 6;
+        // Servants of its own biome (a leshy calls wolves wherever it stands).
+        const kind = speciesById(
+          SERVANTS[e.species.biome === "any" ? biomeAt(map, e.spawn) : e.species.biome],
+        );
+        for (let i = 0; i < 2; i++) {
+          const q = findFree({ x: p.x + Math.sin(e.heading + 1.5 + i * 3) * 1.6, z: p.z + Math.cos(e.heading + 1.5 + i * 3) * 1.6 });
+          spawnEnemy(q, e.id + 7919 * (servants.length + i + 1), `summon:${e.key}:${Date.now() % 100000}:${i}`, kind);
+        }
+        burst(p, 0x7c3aed, 12);
+      }
+    }
+    // Thief with loot: runs away fast, no fighting.
+    if (e.behavior === "thief" && time < e.fleeUntil) {
+      const a = Math.atan2(p.x - tgt.x, p.z - tgt.z);
+      e.heading = a;
+      slideEnemy(p, Math.sin(a) * 4.2 * dt, Math.cos(a) * 4.2 * dt);
+      e.state = "idle";
+      e.warning.visible = false;
+      e.rig.root.rotation.y = e.heading;
+      animate(e.rig, dt, true, 0, false);
+      e.bar.visible = d < 20;
+      e.bar.position.set(p.x, e.kind === "wolf" ? 1.8 : 2.8, p.z);
+      e.bar.quaternion.copy(camera.quaternion);
+      e.fill.scale.x = clamp(e.hp / e.maxHp, 0, 1);
+      continue;
+    }
     if (safe(tgt) || safe(p)) {
       e.state = "idle";
       e.timer = 0;
@@ -1937,24 +2047,36 @@ function updateEnemies(dt: number) {
         if (d > 20) e.hp = Math.min(e.maxHp, e.hp + dt * 6);
       } else if (
         d <
-          (e.kind === "wolf" || e.kind === "raider" || e.kind === "heavy"
-            ? 3.6
-            : 10) &&
+          (e.behavior === "charge"
+            ? 6
+            : e.behavior === "colossus" || e.behavior === "whirl"
+              ? 2.8
+              : e.kind === "wolf" || e.kind === "raider" || e.kind === "heavy"
+                ? 3.6
+                : 10) &&
         lineClear(p, tgt)
       ) {
         e.wanderTarget = null;
         e.state = "windup";
         e.timer =
-          e.kind === "heavy"
-            ? 1.1
-            : e.kind === "wolf" || e.kind === "raider"
-              ? 0.65
-              : 0.85;
+          e.behavior === "colossus"
+            ? 1.3
+            : e.behavior === "charge"
+              ? 0.8
+              : e.kind === "heavy"
+                ? 1.1
+                : e.kind === "wolf" || e.kind === "raider"
+                  ? 0.65
+                  : 0.85;
         e.heading = Math.atan2(tgt.x - p.x, tgt.z - p.z);
         e.hit = false;
       } else {
-        const a = Math.atan2(tgt.x - p.x, tgt.z - p.z);
+        let a = Math.atan2(tgt.x - p.x, tgt.z - p.z);
         e.heading = a;
+        // A pack circles in from the sides.
+        if (e.behavior === "pack" && d > 3) a += e.id % 2 ? 0.6 : -0.6;
+        // A summoner keeps its distance.
+        if (e.behavior === "summoner" && d < 7) a += Math.PI;
         const sign = e.kind === "archer" && d < 5 ? -1 : 1;
         slideEnemy(
           p,
@@ -1972,9 +2094,21 @@ function updateEnemies(dt: number) {
     } else if (e.state === "windup" && e.timer <= 0) {
       e.state = "strike";
       e.timer =
-        e.kind === "wolf" || e.kind === "raider" || e.kind === "heavy"
-          ? 0.32
-          : 0.12;
+        e.behavior === "charge"
+          ? 0.45
+          : e.kind === "wolf" || e.kind === "raider" || e.kind === "heavy"
+            ? 0.32
+            : 0.12;
+      // Colossus slam / whirl: the whole red circle is hit at once.
+      if (e.behavior === "colossus" || e.behavior === "whirl") {
+        const r = e.behavior === "colossus" ? 3.2 : 2.7;
+        shake = Math.max(shake, e.behavior === "colossus" ? 0.2 : 0.08);
+        burst(p, e.species.color, 14);
+        for (const t of [{ at: player as Point }, ...companions.filter((m) => m.c.hp > 0).map((m) => ({ at: m.c as Point, m }))])
+          if (distance(t.at, p) < r)
+            hurtTarget(t, Math.round((e.boss ? 38 : e.elite ? 28 : 22) * (1 + (e.tier - 1) * 0.22)));
+        e.hit = true;
+      }
       if (e.kind === "archer" || e.kind === "mage") {
         fire(p, e.heading, true);
         shots[shots.length - 1].damage = Math.round(
@@ -1984,12 +2118,17 @@ function updateEnemies(dt: number) {
         );
       }
     } else if (e.state === "strike") {
-      if (e.kind === "wolf" || e.kind === "raider" || e.kind === "heavy") {
+      if (
+        (e.kind === "wolf" || e.kind === "raider" || e.kind === "heavy") &&
+        e.behavior !== "colossus" &&
+        e.behavior !== "whirl"
+      ) {
         const before = { x: p.x, z: p.z };
+        const speed = e.behavior === "charge" ? 14 : 10;
         slideEnemy(
           p,
-          Math.sin(e.heading) * 10 * dt,
-          Math.cos(e.heading) * 10 * dt,
+          Math.sin(e.heading) * speed * dt,
+          Math.cos(e.heading) * speed * dt,
         );
         if (!e.hit && segmentHitsCircle(before, p, tgt, 0.95)) {
           hurtTarget(
@@ -2000,6 +2139,14 @@ function updateEnemies(dt: number) {
             ),
           );
           e.hit = true;
+          // Thief: grabs gold from the hero and runs.
+          if (e.behavior === "thief" && !target.m && player.coins > 0) {
+            const grab = Math.min(player.coins, Math.max(5, Math.round(player.coins * 0.1)));
+            player.coins -= grab;
+            e.stolen += grab;
+            e.fleeUntil = time + 7;
+            floatingText(`−${grab} zł`, player, "#ffd27a");
+          }
         }
       }
       if (e.timer <= 0) {
@@ -2816,6 +2963,9 @@ async function init() {
           enemies: enemies.map((e) => ({
             id: e.id,
             key: e.key,
+            species: e.species.id,
+            behavior: e.behavior,
+            hidden: e.hidden,
             x: e.rig.root.position.x,
             z: e.rig.root.position.z,
             hp: e.hp,
@@ -2832,6 +2982,8 @@ async function init() {
               : "bundled Lublin extract",
           },
           drawCalls: renderer.info.render.calls,
+          timeOfDay,
+          weather: weatherNow,
         }),
         ...(new URLSearchParams(location.search).has("qa")
           ? {
@@ -2859,6 +3011,11 @@ async function init() {
                 const e = enemies[0];
                 if (name !== "empty") {
                   e.rig.root.visible = true;
+                  // A plain fighter for the fixed QA scenarios (no ambush, summons or theft).
+                  e.hidden = false;
+                  e.behavior = e.kind === "wolf" ? "pack" : e.kind === "archer" ? "shooter" : e.kind === "mage" ? "caster" : "charge";
+                  if (e.behavior === "charge") e.behavior = "pack";
+                  e.fleeUntil = 0;
                   e.rig.root.scale.setScalar(1);
                   e.rig.root.rotation.z = 0;
                   e.state = "idle";
@@ -3008,6 +3165,12 @@ async function init() {
                 return null;
               },
               // Sets the leader's health and keeps the fight going (no calm regeneration).
+              // A creature of the given species `d` units in front of the hero.
+              spawnSpecies: (id: string, d = 5) => {
+                const q = findFree({ x: player.x + Math.sin(heading) * d, z: player.z + Math.cos(heading) * d });
+                const e = spawnEnemy(q, 4000 + enemies.length, `qa:${id}:${enemies.length}`, speciesById(id));
+                return e.key;
+              },
               // Puts an item from the templates straight into the hero's hands.
               equipTemplate: (index: number) => {
                 const item = makeItem(campaign, index);
