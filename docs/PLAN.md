@@ -67,11 +67,38 @@ Kolejność według dokumentu, od najważniejszego.
 - 5 typów drzew wg terenu (liściaste, świerk, sosna, brzoza, krzew), warianty wielkości i obrotu, korony wg prawdziwej pory roku (półkula południowa odwrócona), zimą liściaste bez koron.
 - Do zrobienia później: lekkie falowanie płaskiego terenu, serpentyny szlaków i urwiska z poręczówką liny, piętra roślinności w górach, mgła o świcie w dolinach, pełna paleta mapy z dokumentu (zmiana oprawy — z grafikiem).
 
-## Etap 6 — AFK, Kotwice, sezony
+## Etap 6 — Poprawki z przeglądu 8 listopada (przed AFK)
 
-- AFK liczone lokalnie: produkcja do Skarbca (ok. 10% aktywnej gry), zajęcia Wędrowców (trening, wyprawa 1/4/8 h), ekran „Gdy cię nie było”.
-- Kotwice z OSM (wikidata + zabytek), obrys budynku, punktacja według kolejności w mieście i odległości, komplet miasta, Kronika.
-- Sezony, ranking (jedna tabela), Przypływ Mgły — dopiero po sprawdzeniu pętli. Monetyzacja na końcu, tylko kosmetyki i wygoda.
+Źródło: Tab 1, podsekcja „Przegląd z 8 listopada: teren, HUD, loot, kolory”. Plan z 08.11.2026. Pięć paczek, po każdej build, testy, zrzuty z gry (komputer + telefon poziomo), commit i pauza.
+
+| # | Paczka | Co zmieniamy | Pliki | Uwagi z kodu |
+|---|---|---|---|---|
+| 6.1 | Teren: łagodne fale | Ciągła wysokość zamiast zaokrąglania do voxeli; siatka wygładzona (rozmycie 2–3 wierzchołki), wygładzone normalne; szum ±1–2 m na płaskim, wygasa przy drogach, budynkach i wodzie; fundament budynków wpuszczony w grunt | `terrain.ts`, `world.ts`, `main.ts` | Dekodowanie Terrarium (R·256+G+B/256−32768) i próbkowanie dwuliniowe już są. Schodki robi `voxelsFor` (Math.round) i ograniczenie ≤1 stopień. Zasadę „zawsze da się wejść” zastępuje limit nachylenia przy wygładzaniu |
+| 6.2 | HUD | Usunąć nazwę gry, przełącznik Miecz/Magia i przyciski testowe; prawy dół jako łuk wokół dużego Ataku: specjalny aktywnej postaci, mikstura, Obóz nad nimi; przycisk specjalny bierze ikonę, nazwę i cooldown z bohatera (Cięcie / Kula ognia / Salwa); portret przełącza postać | `index.html`, `hud.ts`, `style.css`, `skills.ts`, `main.ts` | Dziś w HUD: `.brand`, `data-weapon` Miecz/Magia, stała etykieta „CIĘCIE”. Klawisze 1/2 przejmie broń z ekwipunku |
+| 6.3 | Waluta: tix | „zł”/„złoto” → tix wszędzie (rekrutacja, skrzynie, Skarbiec, stare zapisy); pasek „40 tix · 0 odł. · 40 drewna · 500 m liny” | `expedition.ts`, `main.ts`, `wayfarers.ts`, `bestiary.ts`, `index.html` | Zapis: przemianowanie pola z migracją, wartości bez zmian |
+| 6.4 | Tabela łupów + VFX | Zwierzęta: tix i materiały (skóry, kły), nigdy broń/pancerz; humanoidy: broń i pancerz. Wypadanie łukiem z odbiciem; monety tix po 0,4 s lecą do postaci, licznik pulsuje; aury rzadkości (krąg + iskry / słup / wyższy słup, zwolnienie i dźwięk); cenne przedmioty podnosi się podejściem z błyskiem | `bestiary.ts`, `main.ts`, `models.ts` | Nowe materiały: skóra, kieł (ikony tymczasowe z kodu) |
+| 6.5 | Kolory świata | Dachy terakota ~#C8643C, ściany kremowe, trawa ~#7DAA4A, drogi jasne i ciepłe; ciepłe światło z lewej góry, chłodne cienie, lekka okluzja w narożnikach; korekcja +15% nasycenia i trochę kontrastu | `world.ts`, `sky.ts`, `main.ts` | Mgła wojny i noc muszą dalej działać na nowych kolorach |
+
+Kolejność: 6.1 → 6.2 → 6.3 → 6.4 → 6.5. Teren i HUD najbardziej zmieniają odczucie gry; tix przed lootem, bo loot pokazuje tix; kolory na końcu, żeby oceniać je na gotowym terenie.
+
+## Etap 7 — AFK
+
+1. Zajęcia Wędrowców w obozie (jedno tapnięcie): trening (powolne XP) albo wyprawa 1/4/8 h. Wyprawa wraca z lootem i surowcami z biomu obozu, nie da się na niej zginąć, najlepszy loot zostaje dla aktywnej walki.
+2. Produkcja AFK ok. 10% aktywnej gry: stałe stawki skalibrowane z typowego tempa zbierania; Skarbiec z limitem 8–12 h (dziś 10 h).
+3. Obóz żyje: postacie obozowe w pętli przy ognisku (tymczasowe animacje z brył), zielarz robi mikstury z ziół.
+4. Ekran „Gdy cię nie było”: ikony i liczby dla każdego obozu i wyprawy, jeden przycisk „Zbierz”; pełny Skarbiec pulsuje na mapie.
+5. Powiadomienia (Skarbiec pełny, wyprawa wróciła, kandydat), najwyżej 2 dziennie — patrz pytanie 4.
+
+## Etap 8 — Kotwice i Kronika
+
+1. Dane: skrypt (workflow GitHub) wyciąga zabytki z tagiem wikidata i typem zabytku, przypisuje gminę (admin_level=8), zapisuje małe pliki na kwadrat mapy. Najpierw Lublin i okolice, cały świat (plik ~80 GB) dopiero później.
+2. W grze: obrys budynku Kotwicy (niezdobyta / zdobyta), ikona zwrócona do kamery, zdobycie po dojściu.
+3. Punktacja: 100/30/10/5 wg kolejności w mieście × mnożnik odległości od startu; komplet miasta (min. 3) = odznaka + 20 pkt/Kotwicę, max 10.
+4. Kronika: album zdobytych Kotwic z krótkimi opisami (PL/EN).
+
+## Później (po sprawdzeniu pętli)
+
+Sezony i Przypływ Mgły, ranking (jedna tabela), na końcu monetyzacja: tylko wygląd i wygoda.
 
 ## Pytania do właściciela
 
@@ -79,3 +106,7 @@ Rozstrzygnięte 07.11.2026: mapa z archiwum erpeg (bezpiecznie, tylko odczyt, Ov
 
 1. **Grafika voxel chibi** — czekamy na ilustracje grafika (wojownik jako wzorzec). Do tego czasu zostają modele z brył.
 2. **CORS** — kubełek R2 erpeg musi dopuszczać adres, pod którym działa ROPExpanse; inaczej gra użyje zapasowego Overpass.
+3. **Teren (08.11.2026)** — sekcja „Teren i kamera” w dokumencie nadal opisuje tarasy voxelowe, a przegląd z 8 listopada chce łagodnych fal. Przyjmuję nowszy przegląd; sekcję „Teren” warto poprawić w dokumencie.
+4. **Powiadomienia AFK** — na stronie/PWA powiadomienie przy zamkniętej grze wymaga serwera wysyłającego (Web Push), a dokument zakłada brak serwera. Propozycja: na razie znaczniki w grze i ekran „Gdy cię nie było”, prawdziwe powiadomienia razem z aplikacją natywną albo małym serwerem.
+5. **Tix** — czy tix zastępuje też „Złoto” w tabeli Surowce i czy po angielsku też „tix”? Przyjmuję: tak i tak.
+6. **Gałąź** — plan leży na `ccr-df7caf8e-cfao1s` (z `feat/camps-world`). Podgląd na GitHub Pages publikuje tylko `main` i `feat/camps-world`; do wypchnięcia poprawek na PR #1 potrzebna zgoda.

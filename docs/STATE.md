@@ -1,12 +1,12 @@
 # ROPExpanse — stan projektu
 
-Aktualizacja: 08.11.2026. Ta sekcja jest aktualna; niżej („Historia”) zostają starsze notatki, częściowo nieaktualne.
+Aktualizacja: 08.11.2026 (plan poprawek dopisany po południu). Ta sekcja jest aktualna; niżej („Historia”) zostają starsze notatki, częściowo nieaktualne.
 
 ## Przekazanie do nowego wątku
 
 - **Źródło ustaleń:** dokument właściciela „ROPExpanse — dokument projektowy”, zakładka Tab 1 (Claude Docs, artefakt `7afef21a-5678-46ff-9a61-a845ad16d2a4`). Plan etapów i stan: `docs/PLAN.md`.
 - **Gdzie praca:** PR #1, gałąź `feat/camps-world` (właściciel: „pracuj na PR #1”). Te same commity są na `ccr-b863d83f-6161ta`. `main` jest za nimi.
-- **Etapy 1–5 ukończone** (szczegóły w `docs/PLAN.md`). **Następny: etap 6** — AFK (ekran „Gdy cię nie było”, zajęcia Wędrowców: trening, wyprawy 1/4/8 h, 3 powiadomienia), Kotwice (zabytki z OSM wikidata, obrys, punktacja wg kolejności w mieście × odległość, komplet miasta, Kronika), sezony i ranking (dopiero po sprawdzeniu pętli), monetyzacja na końcu.
+- **Etapy 1–5 ukończone** (szczegóły w `docs/PLAN.md`). **Następny: etap 6 = poprawki z przeglądu 8 listopada** (teren bez schodków, HUD, waluta tix, tabela łupów i VFX, kolory świata), potem etap 7 AFK, etap 8 Kotwice. Pierwotny opis „etapu 6”: AFK (ekran „Gdy cię nie było”, zajęcia Wędrowców: trening, wyprawy 1/4/8 h, 3 powiadomienia), Kotwice (zabytki z OSM wikidata, obrys, punktacja wg kolejności w mieście × odległość, komplet miasta, Kronika), sezony i ranking (dopiero po sprawdzeniu pętli), monetyzacja na końcu.
 - **Rytm pracy ustalony z właścicielem:** etapami; po każdym etapie raport i pauza, żeby właściciel sprawdził tygodniowy limit (umowa: pauza przy 20% tygodnia; asystent nie widzi licznika). Właściciel nie programuje: odpowiedzi po polsku, prosto.
 - **Podgląd gry:** https://pgaszczyk-ctrl.github.io/ropexpanse/ — workflow `.github/workflows/pages.yml` publikuje każdy push do `main` i `feat/camps-world` na gałąź `gh-pages`. Właściciel musi raz włączyć Settings → Pages → Deploy from a branch → `gh-pages` / root (nie potwierdzono, czy włączył).
 - **Do sprawdzenia przez właściciela:** CORS kubełka R2 erpeg musi dopuszczać `https://pgaszczyk-ctrl.github.io` (inaczej mapa spoza Lublina idzie wolnym Overpass); listy imion regionów (szkic) do weryfikacji przez osoby z regionów; test na fizycznym telefonie.
