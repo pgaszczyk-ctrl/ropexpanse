@@ -539,6 +539,8 @@ function updateSky(dt: number) {
   const L = LIGHT[timeOfDay],
     k = Math.min(1, dt * 1.5),
     dim = weatherNow === "rain" || weatherNow === "storm" ? 0.65 : weatherNow === "fog" ? 0.82 : 1;
+  sunLight.position.set(player.x + SUN_OFFSET.x, SUN_OFFSET.y, player.z + SUN_OFFSET.z);
+  sunLight.target.position.set(player.x, 0, player.z);
   sunLight.intensity += (L.sun * dim - sunLight.intensity) * k;
   sunLight.color.lerp(new T.Color(L.sunColor), k);
   skyLight.intensity += (L.sky * (dim < 1 ? 0.9 : 1) - skyLight.intensity) * k;
@@ -619,10 +621,24 @@ function updateWeather(dt: number) {
   }
   flash = Math.max(0, flash - dt);
 }
+/** Warm sun high from the left (west, a little south, so the walls facing the camera
+ * are lit), following the party so its shadows never run out. */
+const SUN_OFFSET = new T.Vector3(-32, 58, 16);
+/** World palette (review of 8 Nov 2026): terracotta roofs, cream walls, juicy grass,
+ * light warm roads; already ~15% more saturated than before. */
+const WORLD_COLORS = {
+  water: 0x5d9fb8,
+  green: 0x6f9a45,
+  ground: 0x9db06c,
+  road: 0xe6d8b8,
+  path: 0xcfbb92,
+  walls: [0xe8dcc0, 0xe0d0ae, 0xebe1ca, 0xdccaa6, 0xe4d6b8],
+  roofs: [0xb85f3e, 0xa95539, 0xc26b48, 0x9c4f37, 0xb46446],
+};
 function buildWorld() {
   const sun = new T.DirectionalLight(0xffeed0, 2.4);
   sunLight = sun;
-  sun.position.set(-28, 55, 25);
+  sun.position.set(SUN_OFFSET.x, SUN_OFFSET.y, SUN_OFFSET.z);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
   sun.shadow.camera.left = -55;
@@ -781,7 +797,7 @@ function groundMesh() {
     col = new Float32Array(w * w * 3),
     c = new T.Color();
   const kindColor = (x: number, z: number, k: number) =>
-    field.wet[k] ? 0x72acae : map.areas.some((a) => !a.water && inPolygon(x, z, a.rings)) ? 0x96af78 : 0xb8c397;
+    field.wet[k] ? WORLD_COLORS.water : map.areas.some((a) => !a.water && inPolygon(x, z, a.rings)) ? WORLD_COLORS.green : WORLD_COLORS.ground;
   for (let j = 0; j < w; j++)
     for (let i = 0; i < w; i++) {
       const k = j * w + i,
@@ -896,7 +912,7 @@ let renderCount = 0,
 function renderTerrain() {
   renderCount++;
   disposeTerrain();
-  const land = new T.Mesh(new T.PlaneGeometry(1400, 1400), material(0xb8c397));
+  const land = new T.Mesh(new T.PlaneGeometry(1400, 1400), material(WORLD_COLORS.ground));
   land.rotation.x = -Math.PI / 2;
   // Beyond the height window the plain lies at its lowest point.
   land.position.set(player.x, field.w ? field.low() - 0.02 : 0, player.z);
@@ -906,7 +922,7 @@ function renderTerrain() {
   else for (const area of map.areas) {
     const m = new T.Mesh(
       new T.ShapeGeometry(polyShape(area.rings)),
-      material(area.water ? 0x72acae : 0x96af78),
+      material(area.water ? WORLD_COLORS.water : WORLD_COLORS.green),
     );
     m.rotation.x = -Math.PI / 2;
     m.position.y = 0.014;
@@ -943,8 +959,8 @@ function renderTerrain() {
     }
   }
   for (const [r, color] of [
-    [ribbons.road, 0xe1d5b9],
-    [ribbons.path, 0xcabd96],
+    [ribbons.road, WORLD_COLORS.road],
+    [ribbons.path, WORLD_COLORS.path],
   ] as const) {
     if (!r.idx.length) continue;
     const g = new T.BufferGeometry();
@@ -955,8 +971,8 @@ function renderTerrain() {
     m.receiveShadow = true;
     terrain.add(m);
   }
-  const wallColors = [0xd9c4a0, 0xd1b68e, 0xc0c7b0, 0xd8ccaf, 0xc7af8e],
-    roofColors = [0x657e72, 0x7e8975, 0x9a7052, 0x586f6c];
+  const wallColors = WORLD_COLORS.walls,
+    roofColors = WORLD_COLORS.roofs;
   map.buildings.forEach((b, i) => {
     // Sits on the lowest point of its outline with a foundation sunk into the ground,
     // so it never hangs on a slope; a plinth fills the downhill side.
@@ -970,10 +986,19 @@ function renderTerrain() {
     });
     g.rotateX(-Math.PI / 2);
     g.translate(0, low - sink, 0);
+    // Soft ambient occlusion: walls darken towards the ground they stand on.
+    const pos = g.getAttribute("position"),
+      shade = new Float32Array(pos.count * 3);
+    for (let v = 0; v < pos.count; v++) {
+      const f = 0.7 + 0.3 * Math.min(1, Math.max(0, (pos.getY(v) - low) / 1.6));
+      shade.set([f, f, f], v * 3);
+    }
+    g.setAttribute("color", new T.BufferAttribute(shade, 3));
     const mats = [
-      material(roofColors[i % 4]).clone(),
-      material(wallColors[i % 5]).clone(),
+      material(roofColors[i % roofColors.length]).clone(),
+      material(wallColors[i % wallColors.length]).clone(),
     ];
+    for (const m of mats) m.vertexColors = true;
     const node = new T.Mesh(g, mats);
     node.castShadow = true;
     node.receiveShadow = true;
@@ -3464,8 +3489,9 @@ async function init() {
     renderer.shadowMap.enabled = !compatibility;
     renderer.shadowMap.type = T.PCFSoftShadowMap;
     renderer.outputColorSpace = T.SRGBColorSpace;
-    renderer.toneMapping = T.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
+    // Neutral tone mapping keeps colours saturated (ACES greyed them out).
+    renderer.toneMapping = T.NeutralToneMapping;
+    renderer.toneMappingExposure = 0.9;
     const response = await fetch("combat3d/lublin.json");
     if (!response.ok) throw new Error(`Mapa: HTTP ${response.status}`);
     map = (await response.json()) as MapData;

@@ -37,7 +37,8 @@ export function timeOfDayAt(when: number, lat: number, lon: number): TimeOfDay {
 }
 /** Light for each time of day (design doc palette: golden-pink dusk, navy night, never black). */
 export const LIGHT: Record<TimeOfDay, { sun: number; sunColor: number; sky: number; skyColor: number; ground: number; fog: number; lamp: number }> = {
-  day: { sun: 2.4, sunColor: 0xffeed0, sky: 2, skyColor: 0xe5f2df, ground: 0x6b7557, fog: 0xcbd5b8, lamp: 0 },
+  // Warm sun from the upper left, cooler shadows (review of 8 Nov 2026).
+  day: { sun: 2.3, sunColor: 0xffe4bf, sky: 1.45, skyColor: 0xeef3ff, ground: 0x66748a, fog: 0xcfdcc0, lamp: 0 },
   twilight: { sun: 1.3, sunColor: 0xffb38a, sky: 1.3, skyColor: 0xf1c6b8, ground: 0x5a4f6a, fog: 0xc9a9a4, lamp: 1.2 },
   night: { sun: 0.75, sunColor: 0x9fb4e6, sky: 1.7, skyColor: 0x7088c0, ground: 0x2c3d63, fog: 0x1b2a4a, lamp: 2.6 },
 };

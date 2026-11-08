@@ -67,7 +67,7 @@ Kolejność według dokumentu, od najważniejszego.
 - 5 typów drzew wg terenu (liściaste, świerk, sosna, brzoza, krzew), warianty wielkości i obrotu, korony wg prawdziwej pory roku (półkula południowa odwrócona), zimą liściaste bez koron.
 - Do zrobienia później: lekkie falowanie płaskiego terenu, serpentyny szlaków i urwiska z poręczówką liny, piętra roślinności w górach, mgła o świcie w dolinach, pełna paleta mapy z dokumentu (zmiana oprawy — z grafikiem).
 
-## Etap 6 — Poprawki z przeglądu 8 listopada (przed AFK)
+## Etap 6 — Poprawki z przeglądu 8 listopada (przed AFK) — ukończony 08.11.2026
 
 Źródło: Tab 1, podsekcja „Przegląd z 8 listopada: teren, HUD, loot, kolory”. Plan z 08.11.2026. Pięć paczek, po każdej build, testy, zrzuty z gry (komputer + telefon poziomo), commit i pauza.
 
@@ -82,6 +82,7 @@ Kolejność według dokumentu, od najważniejszego.
 | 6.4 | Tabela łupów + VFX | Zwierzęta: tix i materiały (skóry, kły), nigdy broń/pancerz; humanoidy: broń i pancerz. Wypadanie łukiem z odbiciem; monety tix po 0,4 s lecą do postaci, licznik pulsuje; aury rzadkości (krąg + iskry / słup / wyższy słup, zwolnienie i dźwięk); cenne przedmioty podnosi się podejściem z błyskiem | `bestiary.ts`, `main.ts`, `models.ts` | Nowe materiały: skóra, kieł (ikony tymczasowe z kodu) |
 | 6.4 ✔ | **Wykonane 08.11.2026** | `loot.ts`: zwierzęta → tix + skóra (35%) / kieł (20%), elitarne obie, nigdy broń; humanoidy → broń/pancerz (słabi 25%, średni 35%, elitarni 100%, boss 2 szt. rzadkie+), rzadkość losowana wg rangi (moc +0/+2/+4/+7). W grze łup wyskakuje łukiem, odbija się raz i obraca; tix to kilka monet lecących po 0,4 s do postaci i do licznika (puls); pospolite rzeczy lecą same, cenne czekają na podejście i wpadają z błyskiem w kolorze rzadkości; aury: krąg + iskry / słup / wyższy słup + zwolnienie i własny dźwięk. Skrzynia wyziewu też wysypuje łup. Ramki rzadkości w plecaku. Łup na ziemi nie jest zapisywany (znika po odświeżeniu strony) | | Testy: `loot.mjs`, `browser-loot.mjs` |
 | 6.5 | Kolory świata | Dachy terakota ~#C8643C, ściany kremowe, trawa ~#7DAA4A, drogi jasne i ciepłe; ciepłe światło z lewej góry, chłodne cienie, lekka okluzja w narożnikach; korekcja +15% nasycenia i trochę kontrastu | `world.ts`, `sky.ts`, `main.ts` | Mgła wojny i noc muszą dalej działać na nowych kolorach |
+| 6.5 ✔ | **Wykonane 08.11.2026** | Paleta `WORLD_COLORS`: dachy terakota, ściany kremowe, trawa soczysta, drogi jasne i ciepłe, woda nasycona. Mapowanie tonów ACES (odbarwiało kolory) → Neutral; korekcja nasycenia wpisana w paletę zamiast osobnego filtra (taniej na telefonach). Ciepłe słońce z lewej, chłodniejsze cienie; ściany ciemnieją przy gruncie (okluzja). Naprawiony błąd: słońce i cienie były przypięte do środka mapy i znikały ~55 j. dalej — teraz idą za drużyną | | Zrzuty dzień/noc w work/terrain/ |
 
 Kolejność: 6.1 → 6.2 → 6.3 → 6.4 → 6.5. Teren i HUD najbardziej zmieniają odczucie gry; tix przed lootem, bo loot pokazuje tix; kolory na końcu, żeby oceniać je na gotowym terenie.
 
