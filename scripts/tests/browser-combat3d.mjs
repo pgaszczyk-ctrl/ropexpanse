@@ -83,7 +83,7 @@ try {
     assert((await snap()).map.buildings > 100);
     assert.equal(await page.locator("#attack-symbol svg").count(), 1);
     assert.equal(await page.locator('.health').getAttribute('aria-valuenow'), '100');
-    const panels = await page.evaluate(() => ['.objective', '.loadout', '.vitals'].map(selector => {
+    const panels = await page.evaluate(() => ['.avatar-button', '.resources', '.menu', '#move-stick', '#attack-stick', '#sweep', '#heal'].map(selector => {
       const r = document.querySelector(selector).getBoundingClientRect();
       return {x: r.x, y: r.y, right: r.right, bottom: r.bottom};
     }));

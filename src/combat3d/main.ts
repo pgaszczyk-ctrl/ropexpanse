@@ -363,8 +363,18 @@ function healthBar(width = 1.3, color = 0xb9d791) {
   group.renderOrder = 10;
   return { group, fill };
 }
-const heroBar = healthBar(1.4);
-scene.add(heroBar.group);
+// The hero's HP is a DOM bar pinned above the model (see placeHeroHp).
+const heroHpAnchor = new T.Vector3();
+function placeHeroHp() {
+  const el = $("hero-hp");
+  el.hidden = !started || deathUntil > 0;
+  if (el.hidden) return;
+  camera.updateMatrixWorld();
+  heroHpAnchor.set(player.x, 2.9, player.z).project(camera);
+  const x = ((heroHpAnchor.x + 1) * innerWidth) / 2,
+    y = ((1 - heroHpAnchor.y) * innerHeight) / 2;
+  el.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px) translate(-50%,-100%)`;
+}
 function buildWorld() {
   const sun = new T.DirectionalLight(0xffeed0, 2.4);
   sun.position.set(-28, 55, 25);
@@ -1028,39 +1038,50 @@ function updateHud() {
   const xpShare = (player.exp % 60) / 60;
   document.querySelector<HTMLElement>(".avatar")?.style.setProperty("--xp", `${xpShare * 360}deg`);
   document.querySelector(".xp")?.setAttribute("aria-valuenow", String(Math.round(xpShare * 100)));
-  document.querySelector(".vitals")?.classList.toggle("low-health", hp < 0.3);
-  $("hp-label").textContent = `${Math.ceil(player.hp)} / ${maxHp()}`;
-  $("level").textContent = String(1 + Math.floor(player.exp / 60));
-  $("xp-fill").style.width = `${((player.exp % 60) / 60) * 100}%`;
+  $("hero-hp").classList.toggle("low-health", hp < 0.3);
+  const hpText = `${Math.ceil(player.hp)} / ${maxHp()}`,
+    level = String(1 + Math.floor(player.exp / 60));
+  $("hp-label").textContent = hpText;
+  $("level").textContent = level;
+  $("xp-fill").style.width = `${xpShare * 100}%`;
+  $("fragments").textContent = String(player.fragments);
+  $("coins").textContent = String(player.coins);
+  if (!$("character").hidden) {
+    $("card-level").textContent = level;
+    $("card-hp").textContent = hpText;
+    $("card-weapon").textContent = weapon === "magic" ? "Magia" : "Miecz";
+    $("card-kills").textContent = String(player.kills);
+    $("card-fragments").textContent = String(player.fragments);
+    $("card-coins").textContent = String(player.coins);
+  }
   const count = Math.min(6, player.kills);
   $("progress").textContent =
-    count < 6
-      ? `${count} / 6 · bursztynowy znacznik prowadzi do wroga`
-      : "6 / 6 · eksploruj, ćwicz i porównaj bronie";
+    count < 6 ? `${count} / 6` : "6 / 6 · eksploruj dalej";
   $("goal").textContent =
     count < 6
       ? "Opuść schronienie i pokonaj 6 przeciwników"
       : "Pierwsza wyprawa ukończona";
   const inSafe = safe(player);
-  $("zone").className = `zone ${inSafe ? "safe" : "danger"}`;
+  const fighting = time - lastCombat < R.regenDelay;
+  $("zone").className = `zone ${inSafe ? "safe" : fighting ? "combat" : "danger"}`;
   $("zone").textContent = inSafe
-    ? "SCHRONIENIE · regeneracja"
-    : time - lastCombat < R.regenDelay
-      ? "DZICZ · walka"
-      : "DZICZ · poza walką";
-  $("loot").textContent =
-    `${player.fragments} odłamków · ${player.coins} złota`;
+    ? "Strefa bezpieczna"
+    : fighting
+      ? "Walka"
+      : "Dzicz";
   const sweepLeft = Math.max(0, sweepReady - time),
-    healLeft = Math.max(0, potionReady - time);
-  $<HTMLButtonElement>("sweep").disabled = sweepLeft > 0 || paused || helpOpen;
-  $("sweep-time").textContent = sweepLeft
-    ? `${sweepLeft.toFixed(1)} s`
-    : "GOTOWY";
-  $<HTMLButtonElement>("heal").disabled =
+    healLeft = Math.max(0, potionReady - time),
+    sweepButton = $<HTMLButtonElement>("sweep"),
+    healButton = $<HTMLButtonElement>("heal");
+  sweepButton.disabled = sweepLeft > 0 || paused || helpOpen;
+  sweepButton.style.setProperty("--cd", (sweepLeft / R.sweepCooldown).toFixed(3));
+  sweepButton.classList.toggle("ready", sweepLeft === 0);
+  $("sweep-time").textContent = sweepLeft ? sweepLeft.toFixed(1) : "SALWA";
+  healButton.disabled =
     healLeft > 0 || player.hp >= maxHp() || paused || helpOpen;
-  $("heal-time").textContent = healLeft
-    ? `${Math.ceil(healLeft)} s`
-    : "MIKSTURA";
+  healButton.style.setProperty("--cd", (healLeft / R.potionCooldown).toFixed(3));
+  healButton.classList.toggle("ready", healLeft === 0);
+  $("heal-time").textContent = healLeft ? String(Math.ceil(healLeft)) : "";
   $("fps").textContent =
     `${Math.round(1 / (frames.reduce((a, b) => a + b, 0) / Math.max(1, frames.length) || 1))} FPS · ${map.buildings.length} brył OSM`;
   $("pause").textContent = paused ? "▶" : "Ⅱ";
@@ -1202,13 +1223,27 @@ function bindControls() {
     soundOn = !soundOn;
     if (soundOn) enableAudio();
     $("audio").setAttribute("aria-pressed", String(soundOn));
-    $("audio").textContent = soundOn ? "♫" : "♩";
+    $("audio").textContent = soundOn ? "♫ Dźwięk" : "♩ Dźwięk wył.";
   };
   $("help-button").onclick = () => {
     helpOpen = true;
     resetInput();
     $("help").hidden = false;
     updateHud();
+  };
+  $("character").querySelector(".avatar")!.innerHTML =
+    document.querySelector(".hero-portrait")!.outerHTML;
+  $("avatar-button").onclick = () => {
+    if (!started) return;
+    helpOpen = true;
+    resetInput();
+    $("character").hidden = false;
+    updateHud();
+  };
+  $("close-character").onclick = () => {
+    helpOpen = false;
+    $("character").hidden = true;
+    resetInput();
   };
   $("close-help").onclick = () => {
     helpOpen = false;
@@ -1364,9 +1399,7 @@ function tick() {
     camera.position.z += (Math.random() - 0.5) * shake;
     if (!paused && !helpOpen) shake = Math.max(0, shake - dt);
   }
-  heroBar.group.position.set(player.x, 2.9, player.z);
-  heroBar.group.quaternion.copy(camera.quaternion);
-  heroBar.fill.scale.x = clamp(player.hp / maxHp(), 0, 1);
+  placeHeroHp();
   const activeAttack = attack && !attack.ranged;
   aimView.visible = aiming || !!activeAttack;
   aimView.position.set(player.x, 0.065, player.z);

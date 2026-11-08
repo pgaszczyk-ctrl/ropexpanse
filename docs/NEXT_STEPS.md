@@ -29,3 +29,16 @@ Większy obszar, sensowny model podróży, kolejne lokalne historie i biomy. Bac
 ## Bieżący stan interfejsu (23.10.2026)
 
 Wykonano pierwszy HUD steampunk inspirowany starym EXP-LORE: mosiężne obramowania, nity, ciemne szkło, portret z pierścieniem XP, czerwone HP, wektorowe ikony broni, mikstury i cięcia. Funkcje walki pozostają dotychczasowe. Kolejna ocena: użytkownik sprawdza czytelność i charakter GUI na komputerze oraz rzeczywistym telefonie. Nadal otwarty jest test renderowania na jego Androidzie.
+
+## Mobilny HUD (08.11.2026)
+
+Mosiężny HUD zastąpiono mobilnym układem w stylu czytelnych gier arenowych: nasycone kolory, duże ikony, gruby ciemny obrys, bez złotych ramek. Mechaniki walki bez zmian.
+
+- Lewy górny róg: mały awatar z pierścieniem XP i poziomem; otwiera kartę postaci (pauzuje grę jak menu).
+- Pasek HP w HTML przypięty nad postacią (zastąpił pasek 3D bohatera; paski wrogów bez zmian).
+- Górna krawędź: liczniki odłamków i złota, wskaźnik strefy (Strefa bezpieczna / Dzicz / Walka), skrócony cel.
+- Prawy górny róg: przełącznik Miecz/Magia, pauza, menu (dźwięk i pełny ekran przeniesiono do menu).
+- Lewy dół: półprzezroczysty niebieski joystick. Prawy dół: duży czerwony Atak (przeciągnięcie nadal celuje), żółta Salwa (dawne „Cięcie”) i zielona Mikstura z pierścieniami odnowienia.
+- Miejsce nad grupą bojową i po lewej nad joystickiem zostawiono na przycisk Akcja i dymki łupu.
+
+Otwarte: w tym repo nie ma jeszcze liny, palików, obozów, drewna ani przedmiotów z rzadkością. Przycisk Akcja, liczniki drewna/liny, dymki łupu i legendarną kartę wdrożyć, gdy te mechaniki będą w kodzie lub zostaną ustalone ich zasady. Wygląd sprawdzono w emulacji telefonu poziomo (844×390) i na komputerze; test na fizycznym telefonie nadal do wykonania.

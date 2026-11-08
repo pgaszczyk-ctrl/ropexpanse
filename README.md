@@ -29,7 +29,7 @@ Po buildzie `npm run export:offline` zapisuje pojedynczy HTML do `work/combat3d/
 - Fragment Lublina z rzeczywistych obrysów OSM, bryły budynków, drogi, kolizje.
 - Proceduralne modele postaci, wilków i łuczników; animacje i zapowiedzi ataków.
 - Miecz, magia, sweep, mikstura, regeneracja, HP, XP, prosty cel sześciu zabójstw.
-- Klawiatura/mysz i dwa drążki dotykowe; pauza, obsługa zmiany orientacji.
+- Klawiatura/mysz, mobilny HUD z niebieskim joystickiem i przyciskami Atak/Salwa/Mikstura; karta postaci, pauza, obsługa zmiany orientacji.
 - Lokalny zapis, odrodzenie w schronieniu, utrata złota z plecaka i części XP.
 - Pełny ekran po starcie, lżejszy tryb mobilny i komunikaty błędów WebGL.
 
