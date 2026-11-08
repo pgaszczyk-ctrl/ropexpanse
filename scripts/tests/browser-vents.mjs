@@ -15,6 +15,7 @@ const browser = await chromium.launch({
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await page.route("https://fonts.googleapis.com/**", (r) => r.fulfill({ status: 200, body: "" }));
+  await page.route("**/elevation-tiles-prod/**", (r) => r.abort()); // offline, flat terrain
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("http://127.0.0.1:4180/?qa=1");

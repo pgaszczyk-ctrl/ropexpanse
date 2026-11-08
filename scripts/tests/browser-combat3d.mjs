@@ -33,6 +33,7 @@ try {
     await context.route("https://fonts.googleapis.com/**", (r) =>
       r.fulfill({ status: 200, body: "" }),
     );
+    await context.route("**/elevation-tiles-prod/**", (r) => r.abort()); // offline, flat terrain
     const page = await context.newPage();
     await page.addInitScript(() => {
       const original = Element.prototype.requestFullscreen;

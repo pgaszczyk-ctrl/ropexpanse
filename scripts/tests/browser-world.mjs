@@ -31,6 +31,7 @@ try {
   await page.route("https://fonts.googleapis.com/**", (r) =>
     r.fulfill({ status: 200, body: "" }),
   );
+  await page.route("**/elevation-tiles-prod/**", (r) => r.abort()); // offline, flat terrain
   await page.route(
     "**/overpass**",
     (r) => (overpass.push(r.request().url()), r.abort()),
