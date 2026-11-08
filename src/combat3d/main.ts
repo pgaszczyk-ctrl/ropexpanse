@@ -27,6 +27,7 @@ import { enclosedAreas } from "./territory-rules";
 import { circleRates, workerRates } from "./production";
 import { weaponSkill, offhandSkill, SKILLS } from "./skills";
 import { timeOfDayAt, LIGHT } from "./sky";
+import { Elevation, HeightField, waterTest, VOXEL, CELL } from "./terrain";
 import { fetchWeather, WEATHER_NAMES } from "./weather";
 import {
   biomeAt,
@@ -647,6 +648,132 @@ function buildWorld() {
   selectWeapon(weapon);
   cameraTarget.set(player.x, 0, player.z);
 }
+// ---- Terrain heights: voxel terraces from real elevations (flat at 0 without data) ----
+const elevation = new Elevation();
+const field = new HeightField();
+let fieldCenter: Point | null = null,
+  fieldMap: MapData | null = null,
+  fieldBusy = false,
+  fieldClock = 99;
+const groundY = (x: number, z: number) => field.at(x, z);
+/** Adds the ground height to every vertex of flat overlays (territory, ropes). */
+function drape(obj: T.Object3D) {
+  obj.updateMatrixWorld(true);
+  obj.traverse((o) => {
+    if (!(o instanceof T.Mesh || o instanceof T.Line)) return;
+    const pos = o.geometry.getAttribute("position") as T.BufferAttribute | undefined;
+    if (!pos) return;
+    const base = (o.userData.flatY ??= Float32Array.from({ length: pos.count }, (_, i) => pos.getY(i)));
+    const wp = new T.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      wp.set(pos.getX(i), base[i], pos.getZ(i)).applyMatrix4(o.matrixWorld);
+      pos.setY(i, base[i] + groundY(wp.x, wp.z));
+    }
+    pos.needsUpdate = true;
+    o.geometry.computeBoundingSphere();
+  });
+}
+function updateTerrainField(dt: number) {
+  fieldClock += dt;
+  if (fieldBusy || fieldClock < 1) return;
+  fieldClock = 0;
+  if (fieldCenter && fieldMap === map && distance(fieldCenter, player) < 30 && field.w) return;
+  const start = campaign.camps[0];
+  const center = { x: player.x, z: player.z },
+    r = 110,
+    a = unproject({ x: center.x - r, z: center.z + r }, campaign.origin),
+    b = unproject({ x: center.x + r, z: center.z - r }, campaign.origin),
+    startGeo = unproject(start, campaign.origin);
+  fieldBusy = true;
+  const origin = campaign.origin,
+    builtFor = map;
+  void Promise.all([
+    elevation.ensure({ south: a.lat, west: a.lon, north: b.lat, east: b.lon }),
+    elevation.ensure({ south: startGeo.lat - 0.001, west: startGeo.lon - 0.001, north: startGeo.lat + 0.001, east: startGeo.lon + 0.001 }),
+  ])
+    .then(() => {
+      const ref = elevation.at(startGeo);
+      if (ref === null || origin !== campaign.origin) return;
+      if (field.build(center, r, origin, ref, elevation, waterTest(builtFor))) {
+        fieldCenter = center;
+        fieldMap = builtFor;
+        renderTerrain();
+        expedition.refreshWorld();
+        nodeMap = null;
+      }
+    })
+    .finally(() => (fieldBusy = false));
+}
+/** Terraced ground: one flat top per height cell, coloured by what OSM shows there,
+ * with step faces down to lower neighbours. */
+function terraceMesh() {
+  const w = field.w,
+    pos: number[] = [],
+    col: number[] = [],
+    water = waterTest(map),
+    c = new T.Color();
+  const kindColor = (x: number, z: number) =>
+    water({ x, z }) ? 0x72acae : map.areas.some((a) => !a.water && inPolygon(x, z, a.rings)) ? 0x96af78 : 0xb8c397;
+  const quad = (pts: number[][], color: T.Color) => {
+    for (const k of [0, 1, 2, 0, 2, 3]) {
+      pos.push(...pts[k]);
+      col.push(color.r, color.g, color.b);
+    }
+  };
+  for (let j = 0; j < w; j++)
+    for (let i = 0; i < w; i++) {
+      const x0 = field.x0 + i * CELL,
+        z0 = field.z0 + j * CELL,
+        x1 = x0 + CELL,
+        z1 = z0 + CELL,
+        v = field.v[j * w + i],
+        y = v * VOXEL;
+      c.setHex(kindColor(x0 + CELL / 2, z0 + CELL / 2));
+      quad([[x0, y, z0], [x0, y, z1], [x1, y, z1], [x1, y, z0]], c);
+      const side = c.clone().multiplyScalar(0.78);
+      const lower = (ni: number, nj: number) => {
+        if (ni < 0 || nj < 0 || ni >= w || nj >= w) return 0;
+        return field.v[nj * w + ni] * VOXEL;
+      };
+      const yE = lower(i + 1, j), yW = lower(i - 1, j), yS = lower(i, j + 1), yN = lower(i, j - 1);
+      if (yE < y) quad([[x1, y, z0], [x1, y, z1], [x1, yE, z1], [x1, yE, z0]], side);
+      if (yW < y) quad([[x0, y, z1], [x0, y, z0], [x0, yW, z0], [x0, yW, z1]], side);
+      if (yS < y) quad([[x1, y, z1], [x0, y, z1], [x0, yS, z1], [x1, yS, z1]], side);
+      if (yN < y) quad([[x0, y, z0], [x1, y, z0], [x1, yN, z0], [x0, yN, z0]], side);
+    }
+  const g = new T.BufferGeometry();
+  g.setAttribute("position", new T.Float32BufferAttribute(pos, 3));
+  g.setAttribute("color", new T.Float32BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  const m = new T.Mesh(g, new T.MeshLambertMaterial({ vertexColors: true }));
+  m.receiveShadow = true;
+  return m;
+}
+/** Everything that walks or stands on the map follows the terraces. */
+function liftActors() {
+  if (!field.w) return;
+  const lift = (o: T.Object3D, extra = 0) => {
+    o.position.y = groundY(o.position.x, o.position.z) + extra;
+  };
+  lift(hero.root, deathUntil > time ? -0.1 : 0);
+  for (const m of companions) {
+    lift(m.rig.root, m.c.hp <= 0 ? -0.1 : 0);
+    m.bar.position.y = 2.6 + m.rig.root.position.y;
+  }
+  for (const e of enemies) {
+    lift(e.rig.root);
+    e.bar.position.y = (e.kind === "wolf" ? 1.8 : 2.8) + e.rig.root.position.y;
+    e.warning.position.y = 0.07 + e.rig.root.position.y;
+  }
+  for (const { view } of nodeViews.values()) lift(view);
+  for (const v of ventViews.values()) lift(v.view);
+  for (const r of rescues.values()) {
+    lift(r.rig.root);
+    r.mark.position.y += r.rig.root.position.y;
+  }
+  partyLamp.position.y = 2.4 + hero.root.position.y;
+  campFire.position.y = 1.4 + groundY(home.x, home.z);
+}
 function disposeTerrain() {
   for (const b of buildingViews) for (const m of b.materials) m.dispose();
   terrain.traverse((o) => {
@@ -660,10 +787,12 @@ function renderTerrain() {
   disposeTerrain();
   const land = new T.Mesh(new T.PlaneGeometry(1400, 1400), material(0xb8c397));
   land.rotation.x = -Math.PI / 2;
-  land.position.set(player.x, 0, player.z);
+  // Beyond the terrace window the plain lies at the lowest terrace.
+  land.position.set(player.x, field.w ? field.v.reduce((m, v) => Math.min(m, v), 0) * VOXEL - 0.02 : 0, player.z);
   land.receiveShadow = true;
   terrain.add(land);
-  for (const area of map.areas) {
+  if (field.w) terrain.add(terraceMesh());
+  else for (const area of map.areas) {
     const m = new T.Mesh(
       new T.ShapeGeometry(polyShape(area.rings)),
       material(area.water ? 0x72acae : 0x96af78),
@@ -683,11 +812,19 @@ function renderTerrain() {
         dz = b[1] - a[1],
         len = Math.hypot(dx, dz);
       if (len < 0.02) continue;
-      const geo = new T.PlaneGeometry(road.width, len + 0.18);
-      geo.rotateX(-Math.PI / 2);
-      geo.rotateY(Math.atan2(dx, dz));
-      geo.translate((a[0] + b[0]) / 2, 0.035, (a[1] + b[1]) / 2);
-      (road.path ? pathGeos : roadGeos).push(geo);
+      // Short pieces follow the terraces (one piece on flat ground).
+      const pieces = field.w ? Math.max(1, Math.ceil(len / CELL)) : 1;
+      for (let k = 0; k < pieces; k++) {
+        const t0 = k / pieces,
+          t1 = (k + 1) / pieces,
+          mx = a[0] + dx * (t0 + t1) / 2,
+          mz = a[1] + dz * (t0 + t1) / 2;
+        const geo = new T.PlaneGeometry(road.width, len / pieces + 0.18);
+        geo.rotateX(-Math.PI / 2);
+        geo.rotateY(Math.atan2(dx, dz));
+        geo.translate(mx, 0.035 + groundY(mx, mz), mz);
+        (road.path ? pathGeos : roadGeos).push(geo);
+      }
     }
   for (const [geos, color] of [
     [roadGeos, 0xe1d5b9],
@@ -705,11 +842,16 @@ function renderTerrain() {
   const wallColors = [0xd9c4a0, 0xd1b68e, 0xc0c7b0, 0xd8ccaf, 0xc7af8e],
     roofColors = [0x657e72, 0x7e8975, 0x9a7052, 0x586f6c];
   map.buildings.forEach((b, i) => {
+    // Stands on the lowest point of its outline; a plinth fills the downhill side.
+    const hs = b.rings[0].map((p) => groundY(p[0], p[1])),
+      low = Math.min(...hs),
+      high = Math.max(...hs);
     const g = new T.ExtrudeGeometry(polyShape(b.rings), {
-      depth: b.height,
+      depth: b.height + (high - low),
       bevelEnabled: false,
     });
     g.rotateX(-Math.PI / 2);
+    g.translate(0, low, 0);
     const mats = [
       material(roofColors[i % 4]).clone(),
       material(wallColors[i % 5]).clone(),
@@ -784,14 +926,15 @@ function renderTerrain() {
     ),
     matrix = new T.Matrix4();
   trees.forEach((p, i) => {
+    const gy = groundY(p.x, p.z);
     matrix.compose(
-      new T.Vector3(p.x, 0.63, p.z),
+      new T.Vector3(p.x, 0.63 + gy, p.z),
       new T.Quaternion(),
       new T.Vector3(1, 1, 1),
     );
     trunks.setMatrixAt(i, matrix);
     matrix.compose(
-      new T.Vector3(p.x, 2.1, p.z),
+      new T.Vector3(p.x, 2.1 + gy, p.z),
       new T.Quaternion(),
       new T.Vector3(
         0.85 + rand() * 0.35,
@@ -2023,7 +2166,7 @@ function fire(p: Point, dir: number, fromEnemy: boolean) {
     new T.IcosahedronGeometry(fromEnemy ? 0.14 : 0.23, 1),
     new T.MeshBasicMaterial({ color: fromEnemy ? 0xea845a : 0x87edee }),
   );
-  node.position.set(p.x, 1.1, p.z);
+  node.position.set(p.x, 1.1 + groundY(p.x, p.z), p.z);
   scene.add(node);
   const speed = fromEnemy ? 10 : 23;
   shots.push({
@@ -2517,6 +2660,7 @@ function pointerAim(clientX: number, clientY: number) {
     ),
     camera,
   );
+  ground.constant = -groundY(player.x, player.z);
   const p = ray.ray.intersectPlane(ground, scratch);
   if (p) heading = Math.atan2(p.x - player.x, p.z - player.z);
 }
@@ -2776,6 +2920,7 @@ function tick() {
     }
     updateWorld(dt);
     updateSky(dt);
+    updateTerrainField(dt);
     updateWeather(dt);
     if (safe(player)) {
       const camp = nearCamp(campaign, player);
@@ -2805,17 +2950,18 @@ function tick() {
   if (ready && started) expedition.tick(dt, time);
   if (!ready || contextLost || rendererFault) return;
   cameraTarget.lerp(
-    new T.Vector3(player.x, 0, player.z),
+    new T.Vector3(player.x, groundY(player.x, player.z), player.z),
     1 - Math.exp(-dt * 10),
   );
-  camera.position.set(cameraTarget.x, 39, cameraTarget.z + 30);
-  camera.lookAt(cameraTarget.x, 0, cameraTarget.z);
+  camera.position.set(cameraTarget.x, 39 + cameraTarget.y, cameraTarget.z + 30);
+  camera.lookAt(cameraTarget.x, cameraTarget.y, cameraTarget.z);
   if (shake > 0) {
     camera.position.x += (Math.random() - 0.5) * shake;
     camera.position.z += (Math.random() - 0.5) * shake;
     if (!paused && !helpOpen) shake = Math.max(0, shake - dt);
   }
-  heroBar.group.position.set(player.x, 2.9, player.z);
+  heroBar.group.position.set(player.x, 2.9 + groundY(player.x, player.z), player.z);
+  liftActors();
   heroBar.group.quaternion.copy(camera.quaternion);
   heroBar.fill.scale.x = clamp(player.hp / maxHp(), 0, 1);
   const activeAttack = attack && !attack.ranged;
@@ -2968,6 +3114,8 @@ async function init() {
       save: persist,
       switch: switchCharacter,
       party: () => syncCompanions(),
+      ground: (x: number, z: number) => groundY(x, z),
+      drape: (o: T.Object3D) => drape(o),
       panel: (open) => {
         helpOpen = open;
         resetInput();
@@ -3091,6 +3239,15 @@ async function init() {
           drawCalls: renderer.info.render.calls,
           timeOfDay,
           weather: weatherNow,
+          terrain: field.w
+            ? {
+                cells: field.w,
+                version: field.version,
+                min: field.v.reduce((m, v) => Math.min(m, v), 99),
+                max: field.v.reduce((m, v) => Math.max(m, v), -99),
+                here: field.voxel(player.x, player.z),
+              }
+            : null,
         }),
         ...(new URLSearchParams(location.search).has("qa")
           ? {

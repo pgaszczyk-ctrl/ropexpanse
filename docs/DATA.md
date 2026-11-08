@@ -41,3 +41,11 @@ Bezpieczeństwo i ograniczenia:
 - Testy: `scripts/tests/osm-tiles.mjs` i `browser-world.mjs` na próbce `scripts/tests/fixtures/lublin.pmtiles` (Protomaps 4.15, wycinek Lublina z erpeg, build 20261011, ~3,9 MB). Nie wymagają sieci.
 
 Cała Ziemia nie jest dołączana do repo. Dane nadal podlegają ODbL i wymagają widocznej atrybucji (© OpenStreetMap contributors; Protomaps).
+
+## Wysokość terenu
+
+`src/combat3d/terrain.ts` pobiera kafle Terrarium (zoom 12, ~24 m na piksel) z AWS Terrain Tiles: https://registry.opendata.aws/terrain-tiles/ — darmowe, cały świat, bez klucza. Atrybucja w stopce gry: „Mapzen / AWS Terrain Tiles” (źródła: SRTM, GMTED, ETOPO1 i inne, lista w dokumentacji rejestru). Kafle trzymamy w pamięci; bez danych świat jest płaski.
+
+Gra zamienia metry na tarasy: `round(5·asinh(Δh/12 m))` stopni po 0,6 jednostki (mocniej na nizinach, słabiej w górach), sąsiednie pola (2 jednostki ≈ 11 m) różnią się najwyżej o 1 stopień, woda płaska. Budynek stoi na najniższym punkcie obrysu z cokołem. Wartości do strojenia.
+
+Testy: `scripts/tests/terrain.mjs` na 9 kaflach Lublina w `scripts/tests/fixtures/terrarium/12/` (~0,9 MB, pobrane z tego samego rejestru).

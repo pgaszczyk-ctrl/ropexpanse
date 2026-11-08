@@ -51,6 +51,9 @@ type Hooks = {
   switch: (c: Character) => void | Promise<void>;
   /** Re-reads the party (companions appear or leave). */
   party: () => void;
+  /** Ground height (terraces) and draping of flat overlays onto it. */
+  ground: (x: number, z: number) => number;
+  drape: (o: T.Object3D) => void;
   panel: (open: boolean) => void;
   travel: (geo: Geo) => Promise<void>;
   retry: () => void;
@@ -1081,6 +1084,7 @@ export class Expedition {
     this.h.scene.remove(this.territory);
     this.disposeGeometry(this.territory);
     this.territory = territoryModel(this.h.state, this.h.contains);
+    this.h.drape(this.territory);
     this.h.scene.add(this.territory);
     for (const v of this.campViews.values()) {
       this.group.remove(v);
@@ -1090,6 +1094,7 @@ export class Expedition {
     for (const c of this.h.state.camps) {
       if (!this.h.contains(c)) continue;
       const g = campModel(c);
+      g.position.y = this.h.ground(c.x, c.z);
       this.campViews.set(c.id, g);
       this.group.add(g);
     }
@@ -1104,7 +1109,7 @@ export class Expedition {
         c.role === "warrior" ? "hero" : "archer",
         c.appearance,
       );
-      rig.root.position.set(c.x + 2.4, 0, c.z);
+      rig.root.position.set(c.x + 2.4, this.h.ground(c.x + 2.4, c.z), c.z);
       rig.sword.visible = c.weapon === "sword";
       rig.wand.visible = c.weapon === "magic";
       this.waiting.set(c.id, rig);
@@ -1118,7 +1123,9 @@ export class Expedition {
           points.push(list[i - 1], list[i]);
     }
     this.connections.geometry.dispose();
-    this.connections.geometry = new T.BufferGeometry().setFromPoints(points);
+    this.connections.geometry = new T.BufferGeometry().setFromPoints(
+      points.map((p) => p.clone().setY(p.y + this.h.ground(p.x, p.z))),
+    );
     el("characters").setAttribute(
       "aria-label",
       `Wędrowcy · ${activeCharacter(this.h.state).name}`,
@@ -1152,14 +1159,16 @@ export class Expedition {
     this.marker.visible = !!this.rope;
     if (this.rope) {
       const target = this.connectionTarget() ?? c;
-      this.marker.position.set(target.x, 0.09, target.z);
+      this.marker.position.set(target.x, 0.09 + this.h.ground(target.x, target.z), target.z);
       (this.marker.material as T.MeshBasicMaterial).color.set(
         this.placementError() ? 0xb57b69 : 0xe3c574,
       );
       if (this.clock > 0.05) {
         this.liveLine.geometry.dispose();
         this.liveLine.geometry = new T.BufferGeometry().setFromPoints(
-          ropeLine(this.rope.points, time, true),
+          ropeLine(this.rope.points, time, true).map((p) =>
+            p.setY(p.y + this.h.ground(p.x, p.z)),
+          ),
         );
       }
     }
@@ -1169,7 +1178,7 @@ export class Expedition {
       const p = this.spotList[i];
       spot.visible = !!p;
       if (!p) return;
-      spot.position.set(p.x, 0.08, p.z);
+      spot.position.set(p.x, 0.08 + this.h.ground(p.x, p.z), p.z);
       spot.scale.setScalar(1 + Math.sin(time * 4) * 0.04 + this.spotPulse * 0.25);
     });
     if (this.clock > 0.25) {
