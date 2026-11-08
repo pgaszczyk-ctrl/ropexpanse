@@ -306,7 +306,7 @@ export class Expedition {
     this.marker.visible = false;
     document.body.insertAdjacentHTML(
       "beforeend",
-      `<button id="action" class="context-action" aria-label="Akcja"><span>⚑</span><small id="action-label">Akcja</small></button><nav id="camp-menu" hidden aria-label="Obóz"></nav><dialog id="expedition-panel"><div class="panel-heading"><h2 id="panel-title"></h2><button id="panel-close" aria-label="Zamknij">×</button></div><div id="panel-body"></div></dialog><nav id="expedition-tools" aria-label="Wyprawa"><button id="inventory" aria-label="Ekwipunek">▦</button><button id="world-map" aria-label="Świat">◎</button></nav><button id="world-state" hidden></button>`,
+      `<button id="action" class="context-action" aria-label="Akcja"><span>⚑</span><small id="action-label">Akcja</small></button><nav id="camp-menu" hidden aria-label="Obóz"></nav><dialog id="expedition-panel"><div class="panel-heading"><h2 id="panel-title"></h2><button id="panel-close" aria-label="Zamknij">×</button></div><div id="panel-body"></div></dialog><nav id="expedition-tools" aria-label="Wyprawa"><button id="inventory" aria-label="Plecak" title="Plecak">▦</button></nav><button id="world-state" hidden></button>`,
     );
     this.dialog = el<HTMLDialogElement>("expedition-panel");
     this.body = el("panel-body");

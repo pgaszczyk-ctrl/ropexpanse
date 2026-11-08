@@ -25,7 +25,7 @@ import {
 } from "./campaign";
 import { enclosedAreas } from "./territory-rules";
 import { circleRates, workerRates } from "./production";
-import { weaponSkill, offhandSkill, SKILLS } from "./skills";
+import { weaponSkill, offhandSkill, weaponMode, SKILLS } from "./skills";
 import { timeOfDayAt, LIGHT } from "./sky";
 import { Elevation, HeightField, waterTest, CELL } from "./terrain";
 import { markSeen, cellOf, greyed } from "./explore";
@@ -80,7 +80,7 @@ import {
   type MapData,
   type Geo,
 } from "./world";
-import { mountHud, hudIcon } from "./hud";
+import { mountHud, hudIcon, layoutArc } from "./hud";
 mountHud();
 import * as T from "three";
 import { animate, material, person, sector, wolf, type Rig } from "./models";
@@ -2115,11 +2115,6 @@ function selectWeapon(w: "sword" | "magic") {
   hero.sword.visible = w === "sword";
   hero.wand.visible = w === "magic";
   $("attack-symbol").innerHTML = hudIcon(w);
-  document.querySelectorAll<HTMLButtonElement>("[data-weapon]").forEach((b) => {
-    const selected = b.dataset.weapon === w;
-    b.classList.toggle("selected", selected);
-    b.setAttribute("aria-pressed", String(selected));
-  });
   persist();
 }
 // Damage numbers and "+XP" use separate lanes (XP higher and slower) and are pushed
@@ -2285,6 +2280,15 @@ function beginAttack(sweep = false, autoAim = false) {
   if (skill === "heal") {
     healParty(player, [player, ...companions.map((m) => m.c)].filter((v) => distance(v, player) < 8));
     lastAttack = time;
+    return;
+  }
+  if (skill === "volley") {
+    // Five shots in a fan of 40°.
+    for (let k = -2; k <= 2; k++)
+      fire({ x: player.x + Math.sin(heading) * 0.65, z: player.z + Math.cos(heading) * 0.65 }, heading + k * 0.17, false);
+    sound(420, 0.12, "triangle", 0.03);
+    lastAttack = time;
+    lastCombat = time;
     return;
   }
   if (skill === "charge" || skill === "quake" || skill === "fireball") {
@@ -2717,6 +2721,7 @@ function updateEffects(dt: number) {
       floating.splice(i, 1);
     }
 }
+let arcClock = -1e9;
 function updateHud() {
   const hp = clamp(player.hp / maxHp(), 0, 1);
   $("hp-fill").style.width = `${hp * 100}%`;
@@ -2754,16 +2759,33 @@ function updateHud() {
   const sweepLeft = Math.max(0, sweepReady - time),
     healLeft = Math.max(0, potionReady - time);
   $<HTMLButtonElement>("sweep").disabled = sweepLeft > 0 || paused || helpOpen;
-  const s1 = SKILLS[weaponSkill(player)].name.toUpperCase();
-  if ($("sweep-name").textContent !== s1) $("sweep-name").textContent = s1;
+  // The attack follows what the hero holds (no sword/magic switch any more).
+  const mode = weaponMode(player);
+  if (mode !== weapon && !attack) selectWeapon(mode);
+  // The special button shows the active hero's own skill: icon, name and cooldown.
+  const skill1 = weaponSkill(player),
+    s1 = SKILLS[skill1].name.toUpperCase();
+  if ($("sweep-name").textContent !== s1) {
+    $("sweep-name").textContent = s1;
+    $("sweep-icon").innerHTML = hudIcon(skill1);
+    $("sweep").setAttribute("aria-label", `${SKILLS[skill1].name}: ${SKILLS[skill1].text}`);
+  }
   const off = offhandSkill(player),
     s2 = $<HTMLButtonElement>("skill2");
   s2.hidden = !off;
   if (off) {
     const left = Math.max(0, skill2Ready - time);
     s2.disabled = left > 0 || paused || helpOpen;
-    $("skill2-name").textContent = SKILLS[off].name.toUpperCase();
+    if ($("skill2-name").textContent !== SKILLS[off].name.toUpperCase()) {
+      $("skill2-name").textContent = SKILLS[off].name.toUpperCase();
+      $("skill2-icon").innerHTML = hudIcon(off);
+    }
     $("skill2-time").textContent = left ? `${left.toFixed(1)} s` : "GOTOWY";
+  }
+  // Arc of round buttons around Attack: re-measured a few times a second at most.
+  if (performance.now() - arcClock > 250) {
+    arcClock = performance.now();
+    layoutArc();
   }
   $("sweep-time").textContent = sweepLeft
     ? `${sweepLeft.toFixed(1)} s`
@@ -2887,8 +2909,6 @@ function bindControls() {
     if (e.code === "KeyR") useSkill2();
     if (e.code === "Comma") turnCamera(-SNAP);
     if (e.code === "Period") turnCamera(SNAP);
-    if (e.code === "Digit1") selectWeapon("sword");
-    if (e.code === "Digit2") selectWeapon("magic");
   });
   window.addEventListener("keyup", (e) => keys.delete(e.code));
   window.addEventListener("blur", () => {
@@ -2917,12 +2937,12 @@ function bindControls() {
   $("compass").onclick = () => (camYawTarget = 0);
   $("heal").onclick = usePotion;
   $("pause").onclick = () => setPause(!paused);
-  document.querySelectorAll<HTMLButtonElement>("[data-weapon]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        if (!attack) selectWeapon(b.dataset.weapon as "sword" | "magic");
-      }),
-  );
+  // "Świat" (beta travel) lives in the menu: it closes the menu and opens the panel.
+  $("world-map").addEventListener("click", () => {
+    helpOpen = false;
+    $("help").hidden = true;
+    resetInput();
+  });
   $("audio").onclick = () => {
     soundOn = !soundOn;
     if (soundOn) enableAudio();
@@ -2962,7 +2982,7 @@ function bindControls() {
     soundOn = true;
     enableAudio();
     $("audio").setAttribute("aria-pressed", "true");
-    notify("Witaj w Lublinie. Sprawdź miecz, potem przełącz na magię.");
+    notify("Witaj w Lublinie. Postaw obóz i ruszaj w Mgłę.");
   };
   $("fullscreen").onclick = () => {
     if (document.fullscreenElement)
@@ -3610,8 +3630,7 @@ async function init() {
               equipTemplate: (index: number) => {
                 const item = makeItem(campaign, index);
                 if (item.slot !== "material") player.equipment[item.slot] = item;
-                if (item.slot === "weapon") weapon = item.icon === "staff" ? "magic" : "sword";
-                selectWeapon(weapon);
+                selectWeapon(weaponMode(player));
                 return item.icon;
               },
               setHp: (hp: number) => {

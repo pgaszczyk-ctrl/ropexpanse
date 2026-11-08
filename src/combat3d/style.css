@@ -1781,3 +1781,28 @@ canvas[data-interaction="camp"] {
     top: 120px;
   }
 }
+
+/* HUD (review of 8 Nov 2026): no game name, no sword/magic switch. The backpack is a
+   round button beside the menu; hud.ts places it and the arc of round buttons around
+   Attack (special, second hand, potion; Camp/action above). */
+#expedition-tools button {
+  width: 44px;
+  height: 44px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 19px;
+}
+@media (max-height: 600px) and (orientation: landscape) {
+  #expedition-tools button {
+    width: 38px;
+    height: 38px;
+  }
+}
+.skill,
+.heal,
+.context-action {
+  transition:
+    left 0.15s ease-out,
+    top 0.15s ease-out;
+}

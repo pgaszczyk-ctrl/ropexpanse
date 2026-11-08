@@ -131,14 +131,14 @@ try {
       "sweep cooldown cannot be bypassed",
     );
     console.log(`PASS ${tag}: melee, sweep, cooldown`);
-    await page.click('[data-weapon="magic"]');
+    await page.evaluate(() => window.__combat3d.equipTemplate(1)); // staff: the hero attacks with magic
     await fixture("target");
     await gameWait(0.5);
     await attack();
     await gameWait(0.8);
     assert.equal(
       (await snap()).enemies[0].hp,
-      82,
+      78, // 18 + 4 from the equipped staff
       "aimed magic projectile hits",
     );
     console.log(`PASS ${tag}: magic and assisted aim`);
@@ -262,12 +262,14 @@ try {
       "weapon, second hand, armour, helmet, boots",
     );
     await page.screenshot({ path: `work/combat3d/${tag}-inventory.png` });
-    const itemCount = (await snap()).campaign.characters[0].bag.length;
+    const holder = (await snap()).campaign.characters[0];
+    const itemCount = holder.bag.length;
+    const replaced = holder.bag[0] && holder.equipment?.[holder.bag[0].slot] ? 1 : 0; // the old item goes back to the bag
     await page.locator(".item-slot:not(:disabled)").first().click();
     await page.getByRole("button", { name: "Załóż", exact: true }).click();
     assert.equal(
       (await snap()).campaign.characters[0].bag.length,
-      itemCount - 1,
+      itemCount - 1 + replaced,
     );
     await page.click("#panel-close");
     await page.evaluate(() => window.__combat3d.grantGold(1000));
@@ -283,7 +285,7 @@ try {
     await page.screenshot({ path: `work/combat3d/${tag}-vault.png` });
     // A blow gathers a spot: wood to the Vault, the spot waits to grow back.
     await page.click("#panel-close");
-    await page.click('[data-weapon="sword"]');
+    await page.evaluate(() => window.__combat3d.equipTemplate(0)); // sword back
     await fixture("empty"); // auto-aim prefers enemies; clear them for this check
     const woodBefore = (await snap()).campaign.stock.wood;
     const nodeKey = await page.evaluate(() => window.__combat3d.faceNode("wood"));
@@ -363,7 +365,7 @@ try {
     );
     assert.equal(restored.player.coins, 0);
     assert(restored.player.hp > 0);
-    await page.click('[data-weapon="magic"]');
+    await page.evaluate(() => window.__combat3d.equipTemplate(1)); // staff: the hero attacks with magic
     const saved = (await snap()).player;
     await page.reload();
     await page.waitForSelector("#start:not([hidden])");

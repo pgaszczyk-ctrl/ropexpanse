@@ -17,10 +17,7 @@
   <body>
     <canvas id="world" aria-label="Świat ROPExpanse"></canvas>
     <header class="topbar">
-      <a class="brand" href="./"
-        ><span class="emblem" data-icon="goggles"></span
-        ><span>ROPExpanse</span></a
-      ><button id="pause" class="plain" aria-label="Pauza">Ⅱ</button>
+      <button id="pause" class="plain" aria-label="Pauza">Ⅱ</button>
     </header>
     <section class="vitals" aria-label="Stan postaci">
       <div class="avatar" aria-hidden="true">
@@ -37,11 +34,8 @@
         <div class="xp" role="progressbar" aria-label="Doświadczenie do następnego poziomu" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="xp-fill"></i></div>
       </div>
     </section>
-    <nav class="loadout" aria-label="Wyposażenie testowe">
-      <button data-weapon="sword" class="selected" aria-label="Miecz" aria-pressed="true">
-        <i class="icon" data-icon="sword"></i><span>Miecz</span><kbd>1</kbd></button
-      ><button data-weapon="magic" aria-label="Magia" aria-pressed="false"><i class="icon" data-icon="magic"></i><span>Magia</span><kbd>2</kbd></button
-      ><button id="help-button" aria-label="Menu" title="Menu">☰</button>
+    <nav class="loadout" aria-label="Menu">
+      <button id="help-button" aria-label="Menu" title="Menu">☰</button>
     </nav>
     <button id="compass" class="compass" aria-label="Wróć na północ" title="Północ" hidden><span>N</span></button>
     <div id="zone" class="zone safe">SCHRONIENIE · regeneracja</div>
@@ -61,11 +55,11 @@
     >
       <span id="attack-symbol" data-icon="sword"></span><i></i><small>ATAK</small>
     </div>
-    <button id="sweep" class="skill" aria-label="Sweep, szerokie cięcie">
-      <span data-icon="sweep"></span><strong id="sweep-name">CIĘCIE</strong><small id="sweep-time">GOTOWY</small>
+    <button id="sweep" class="skill" aria-label="Umiejętność postaci">
+      <span id="sweep-icon" data-icon="sweep"></span><strong id="sweep-name">CIĘCIE</strong><small id="sweep-time">GOTOWY</small>
     </button>
     <button id="skill2" class="skill skill2" aria-label="Umiejętność drugiej ręki" hidden>
-      <span data-icon="sweep"></span><strong id="skill2-name">TARCZA</strong><small id="skill2-time">GOTOWY</small>
+      <span id="skill2-icon" data-icon="taunt"></span><strong id="skill2-name">TARCZA</strong><small id="skill2-time">GOTOWY</small>
     </button>
     <button id="heal" class="heal" aria-label="Użyj mikstury">
       <span class="icon" data-icon="potion"></span><small id="heal-time">MIKSTURA</small>
@@ -99,6 +93,7 @@
             <i class="icon" data-icon="fullscreen"></i>
           </button>
           <button id="audio" aria-pressed="false" aria-label="Dźwięk" title="Dźwięk">♫</button>
+          <button id="world-map" aria-label="Świat" title="Świat: przenieś wyprawę (beta)">◎</button>
         </div>
         <h2>Ruszaj się. Celuj. Uderzaj.</h2>
         <p>
@@ -107,7 +102,7 @@
         </p>
         <p>
           <b>Komputer:</b> WASD / strzałki — ruch. Mysz — kierunek, klik /
-          spacja — atak. E — akcja, I — ekwipunek. Q — umiejętność broni, R — umiejętność drugiej ręki, H — mikstura. , / . — obrót kamery (telefon: dwa palce). 1 / 2 — miecz / magia. P —
+          spacja — atak. E — akcja, I — ekwipunek. Q — umiejętność broni, R — umiejętność drugiej ręki, H — mikstura. , / . — obrót kamery (telefon: dwa palce). Broń wynika z ekwipunku. P —
           pauza.
         </p>
         <p>
