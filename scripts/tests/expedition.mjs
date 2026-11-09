@@ -98,7 +98,7 @@ const offer = postOffer(s, "camp-1", 700, [offered.id], 1000);
 assert(offer);
 assert.equal(c.coins, 300);
 assert(!c.bag.some((v) => v.id === offered.id));
-assert(!postOffer(s, "camp-1", 1, [], 2000), "one pending offer per camp");
+assert(!postOffer(s, "camp-1", 1, [], 2000), "one shared pending offer");
 assert(!resolveOffers(s, 1000 + BALANCE.recruitmentMs - 1));
 assert(resolveOffers(s, 1000 + BALANCE.recruitmentMs));
 assert(

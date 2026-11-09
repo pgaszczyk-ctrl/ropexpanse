@@ -16,6 +16,7 @@ import {
   resolveOffers,
   hire,
   cancelOffer,
+  offerAt,
   nextId,
   connectCamps,
   partyOf,
@@ -28,12 +29,22 @@ import {
   collect,
   STOCK_KEYS,
   STOCK_NAMES,
+  inSafeZone,
   type Campaign,
   type Camp,
   type Character,
   type Item,
 } from "./campaign";
 import { updateRope, routeLength, type Obstacle } from "./rope";
+import {
+  MAX_CAMP_LINKS,
+  canAddLink,
+  linkAt,
+  pointAlong,
+  travelPlan,
+  fartherEnd,
+  type RopeLink,
+} from "./travel";
 import { distance, type Point } from "./rules";
 import { SCALE, type Geo } from "./world";
 import { RARITY_COLORS, RARITY_NAMES, fullName, traitOf } from "./wayfarers";
@@ -58,6 +69,10 @@ type Hooks = {
   travel: (geo: Geo) => Promise<void>;
   retry: () => void;
   worldStatus: () => { loading: boolean; error: string };
+  /** Rides the party along a rope to `dest`, paying `cost` tix. */
+  ropeTravel: (dest: Camp, cost: number) => Promise<void>;
+  /** A camp was just pitched: load a wider area around it while it goes up. */
+  campPitched: (camp: Camp) => void;
 };
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -235,6 +250,39 @@ function ropeLine(points: Point[], time: number, live: boolean) {
   }
   return out;
 }
+/** A flat yellow arrow with a dark rim, laid on a rope to show where a ride goes. */
+function travelArrow() {
+  const shape = new T.Shape();
+  shape.moveTo(0, 1.1);
+  shape.lineTo(0.85, 0);
+  shape.lineTo(0.32, 0);
+  shape.lineTo(0.32, -0.9);
+  shape.lineTo(-0.32, -0.9);
+  shape.lineTo(-0.32, 0);
+  shape.lineTo(-0.85, 0);
+  shape.closePath();
+  const g = new T.Group(),
+    rim = new T.Mesh(
+      new T.ShapeGeometry(shape),
+      new T.MeshBasicMaterial({ color: 0x1b1730, depthTest: false, transparent: true }),
+    ),
+    fill = new T.Mesh(
+      new T.ShapeGeometry(shape),
+      new T.MeshBasicMaterial({ color: 0xffd23f, depthTest: false, transparent: true }),
+    );
+  rim.scale.setScalar(1.25);
+  rim.position.y = -0.14;
+  fill.position.z = 0.01;
+  rim.renderOrder = fill.renderOrder = 20;
+  // The shape points along +Y; laid flat that becomes -Z, and the outer group turns it.
+  const flat = new T.Group();
+  flat.rotation.x = -Math.PI / 2;
+  flat.add(rim, fill);
+  g.add(flat);
+  g.scale.setScalar(1.1);
+  g.visible = false;
+  return g;
+}
 export class Expedition {
   h: Hooks;
   group = new T.Group();
@@ -265,6 +313,10 @@ export class Expedition {
   get spotCount() {
     return this.spotList.length;
   }
+  /** Where those circles stand (QA). */
+  get spotPoints() {
+    return this.spotList.map((p) => ({ ...p }));
+  }
   private spotPulse = 0;
   rope: { campId: string; points: Point[] } | null = null;
   selected: Camp | undefined;
@@ -279,6 +331,11 @@ export class Expedition {
   private offerGold = 0;
   private clock = 0;
   private noticeClock = 0;
+  /** A tapped rope: which one, which end the arrow points to, and where it was tapped. */
+  private pick: { link: RopeLink; to: string; along: number } | null = null;
+  private arrow = travelArrow();
+  /** Camps going up (pitch animation), by id → seconds since pitched. */
+  private rising = new Map<string, number>();
   constructor(h: Hooks) {
     this.h = h;
     h.scene.add(
@@ -288,6 +345,7 @@ export class Expedition {
       this.marker,
       this.territory,
       this.spots,
+      this.arrow,
     );
     for (let i = 0; i < 3; i++) {
       const spot = new T.Group();
@@ -308,7 +366,7 @@ export class Expedition {
     this.marker.visible = false;
     document.body.insertAdjacentHTML(
       "beforeend",
-      `<button id="action" class="context-action" aria-label="Akcja"><span>⚑</span><small id="action-label">Akcja</small></button><nav id="camp-menu" hidden aria-label="Obóz"></nav><dialog id="expedition-panel"><div class="panel-heading"><h2 id="panel-title"></h2><button id="panel-close" aria-label="Zamknij">×</button></div><div id="panel-body"></div></dialog><nav id="expedition-tools" aria-label="Wyprawa"><button id="inventory" aria-label="Plecak" title="Plecak">▦</button></nav><button id="world-state" hidden></button>`,
+      `<button id="action" class="context-action" aria-label="Akcja"><span>⚑</span><small id="action-label">Akcja</small></button><nav id="camp-menu" hidden aria-label="Obóz"></nav><dialog id="expedition-panel"><div class="panel-heading"><h2 id="panel-title"></h2><button id="panel-close" aria-label="Zamknij">×</button></div><div id="panel-body"></div></dialog><nav id="expedition-tools" aria-label="Wyprawa"><button id="inventory" aria-label="Plecak" title="Plecak">▦</button></nav><button id="world-state" hidden></button><div id="rope-travel" hidden><button id="rope-go" type="button"><span aria-hidden="true">➜</span><b id="rope-dist"></b><small id="rope-cost"></small></button><button id="rope-flip" type="button" aria-label="Odwróć kierunek" title="Odwróć kierunek">⇄</button></div><div id="travel-veil" hidden><div><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="17" r="9" fill="none" stroke="#e8c27a" stroke-width="3"/><circle cx="16" cy="17" r="4" fill="none" stroke="#b0793c" stroke-width="2.5"/></svg><b id="travel-veil-text">Podróż liną…</b></div></div>`,
     );
     this.dialog = el<HTMLDialogElement>("expedition-panel");
     this.body = el("panel-body");
@@ -332,6 +390,12 @@ export class Expedition {
       }
     });
     el("action").onclick = () => this.action();
+    el("rope-go").onclick = () => void this.ride();
+    el("rope-flip").onclick = () => {
+      if (!this.pick) return;
+      this.pick.to = this.pick.to === this.pick.link.a ? this.pick.link.b : this.pick.link.a;
+      this.showPick();
+    };
     el("inventory").onclick = () => this.open("inventory");
     // Characters are switched by tapping the portrait (owner's design doc), not a "Wędrowiec ▾" button.
     const portrait = document.createElement("button");
@@ -345,6 +409,8 @@ export class Expedition {
     document.addEventListener("pointerdown", (e) => {
       if (!(e.target as HTMLElement).closest("#camp-menu,#world"))
         this.hideMenu();
+      if (!(e.target as HTMLElement).closest("#rope-travel,#world"))
+        this.clearPick();
     });
     document.addEventListener("keydown", (e) => {
       if (
@@ -678,7 +744,7 @@ export class Expedition {
       this.body.append(node("p", "Wróć do obozu"));
       return;
     }
-    const o = s.offers.find((v) => v.campId === camp.id);
+    const o = offerAt(s, camp.id);
     if (o) {
       this.body.append(node("p", `${o.gold} tix · ${o.items.length} przedm.`));
       if (o.candidates !== null) {
@@ -689,7 +755,7 @@ export class Expedition {
           this.body.append(
             withLabel(
               button("", () => {
-                const hired = hire(s, o.id, v.id);
+                const hired = hire(s, o.id, v.id, camp.id);
                 if (hired) {
                   // A new hire joins the party when there is room.
                   if (partyOf(s).length < PARTY_SIZE && !isCampRole(hired.role)) {
@@ -845,6 +911,11 @@ export class Expedition {
     };
     menu.replaceChildren(
       item("Rozciągnij linę", CAMP_ICONS.rope, () => {
+        if (!canAddLink(this.h.state, camp.id)) {
+          this.h.notify(`Z obozu wychodzi już ${MAX_CAMP_LINKS} liny`);
+          this.hideMenu();
+          return;
+        }
         this.rope = {
           campId: camp.id,
           points: [
@@ -908,7 +979,82 @@ export class Expedition {
       }
     }
     this.hideMenu();
+    // A tap on a finished rope offers a ride to one of its camps.
+    const c = activeCharacter(this.h.state),
+      plane = new T.Plane(new T.Vector3(0, 1, 0), -this.h.ground(c.x, c.z)),
+      hit = ray.ray.intersectPlane(plane, new T.Vector3());
+    const found = hit && linkAt(this.h.state, { x: hit.x, z: hit.z }, 1.4);
+    if (found) {
+      this.pick = { link: found.link, to: fartherEnd(found.link, c), along: found.along };
+      this.showPick();
+      return true;
+    }
+    this.clearPick();
     return false;
+  }
+  private plan() {
+    if (!this.pick) return null;
+    return travelPlan(
+      this.h.state,
+      this.pick.link,
+      activeCharacter(this.h.state),
+      this.pick.to,
+      SCALE,
+      BALANCE.safeRadius,
+    );
+  }
+  private showPick() {
+    const plan = this.plan();
+    if (!this.pick || !plan) return this.clearPick();
+    const c = activeCharacter(this.h.state);
+    el("rope-dist").textContent =
+      plan.meters >= 1000 ? `${(plan.meters / 1000).toFixed(1)} km` : `${Math.round(plan.meters)} m`;
+    el("rope-cost").textContent = `${plan.cost} tix`;
+    el("rope-travel").classList.toggle("short", c.coins < plan.cost);
+    el("rope-go").setAttribute("aria-label", `Podróż liną ${el("rope-dist").textContent}, ${plan.cost} tix`);
+    el("rope-travel").hidden = false;
+    // The arrow lies on the rope where it was tapped, pointing to the chosen camp.
+    const route = this.pick.link.route,
+      at = pointAlong(route, this.pick.along),
+      ahead = pointAlong(route, this.pick.along + (this.pick.to === this.pick.link.b ? 1 : -1));
+    this.arrow.position.set(at.x, 1 + this.h.ground(at.x, at.z), at.z);
+    this.arrow.rotation.set(0, Math.atan2(ahead.x - at.x, ahead.z - at.z) + Math.PI, 0);
+    this.arrow.visible = true;
+    this.positionPick();
+  }
+  private positionPick() {
+    if (!this.pick) return;
+    const p = this.arrow.position.clone().project(this.h.camera),
+      box = el("rope-travel");
+    box.style.left = `${Math.max(10, Math.min(innerWidth - 190, ((p.x + 1) * innerWidth) / 2 - 80))}px`;
+    box.style.top = `${Math.max(10, Math.min(innerHeight - 70, ((1 - p.y) * innerHeight) / 2 - 78))}px`;
+  }
+  clearPick() {
+    this.pick = null;
+    this.arrow.visible = false;
+    el("rope-travel").hidden = true;
+  }
+  /** QA: tap the rope nearest a world point (as a finger would). */
+  pickRope(p: Point, to?: string) {
+    const found = linkAt(this.h.state, p, 1.4);
+    if (!found) return false;
+    this.pick = { link: found.link, to: to ?? fartherEnd(found.link, activeCharacter(this.h.state)), along: found.along };
+    this.showPick();
+    return true;
+  }
+  private async ride() {
+    const plan = this.plan(),
+      s = this.h.state,
+      c = activeCharacter(s);
+    if (!plan) return;
+    if (this.rope) return this.h.notify("Najpierw wbij palik");
+    if (this.h.combat()) return this.h.notify("Najpierw zakończ walkę");
+    if (!plan.onRope || !inSafeZone(s, c, SCALE))
+      return this.h.notify("Stań na tej linie lub przy jej obozie");
+    if (plan.arrived) return this.h.notify("Drużyna już tu jest");
+    if (c.coins < plan.cost) return this.h.notify(`Potrzebujesz ${plan.cost} tix`);
+    this.clearPick();
+    await this.h.ropeTravel(plan.dest, plan.cost);
   }
   private connectionTarget() {
     if (!this.rope) return undefined;
@@ -950,6 +1096,7 @@ export class Expedition {
         )
       )
         return "Obozy są już połączone";
+      if (!canAddLink(s, to)) return `Obóz ma już ${MAX_CAMP_LINKS} liny`;
       return "";
     }
     if (!this.h.contains(c)) return "Mapa jeszcze się wczytuje";
@@ -1055,8 +1202,10 @@ export class Expedition {
     spendRope(s, routeLength(camp.route), SCALE);
     this.rope = null;
     this.countBuildings();
+    this.rising.set(camp.id, 0);
     this.refreshWorld();
     this.h.save();
+    this.h.campPitched(camp);
   }
   moveAllowed(next: Point) {
     if (!this.rope) return true;
@@ -1144,15 +1293,32 @@ export class Expedition {
     const s = this.h.state,
       c = activeCharacter(s);
     this.selected = nearCamp(s, c);
+    // While a rope runs out, "Rozstaw obóz" wins, also beside an existing camp; it looks
+    // inactive where the rope cannot end (pressing it then shows the green spots).
     el("action-label").textContent = this.rope
       ? this.connectionTarget()
         ? "Połącz obozy"
-        : "Wbij palik"
+        : "Rozstaw obóz"
       : this.selected
-        ? "Obóz"
+        ? "Otwórz obóz"
         : "Akcja";
     el<HTMLButtonElement>("action").hidden = !this.rope && !this.selected;
     el("action").classList.toggle("active", !!this.rope || !!this.selected);
+    el("action").classList.toggle("blocked", !!this.rope && !!this.placementError());
+    if (this.pick) this.positionPick();
+    // A new camp springs up from the ground (owner: an animation while the map loads).
+    for (const [id, t] of this.rising) {
+      const next = t + dt,
+        g = this.campViews.get(id);
+      if (next >= 1.2) this.rising.delete(id);
+      else this.rising.set(id, next);
+      if (g) {
+        const k = Math.min(1, next / 1.2),
+          pop = 1 - Math.pow(1 - k, 3) + Math.sin(k * Math.PI) * 0.12;
+        g.scale.set(1, Math.max(0.02, pop), 1);
+        g.rotation.y = (1 - k) * 0.6;
+      }
+    }
     for (const [id, g] of this.campViews) {
       const highlight = g.userData.highlight as T.Mesh;
       highlight.visible = id === this.selected?.id;
@@ -1207,13 +1373,11 @@ export class Expedition {
         if (this.view === "recruit") this.render();
       } else if (
         this.view === "recruit" &&
-        s.offers.some(
-          (o) => o.campId === (this.menuCamp ?? nearCamp(s, c))?.id,
-        ) &&
+        s.offers.length > 0 &&
         this.noticeClock >= 1
       ) {
         this.noticeClock = 0;
-        const o = s.offers.find((o) => o.campId === this.menuCamp?.id);
+        const o = offerAt(s, (this.menuCamp ?? nearCamp(s, c))?.id);
         const timer = document.getElementById("offer-timer");
         if (o && timer) {
           const remaining = Math.max(

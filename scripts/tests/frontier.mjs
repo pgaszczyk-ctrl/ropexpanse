@@ -49,10 +49,11 @@ for (let i=0;i<10000;i++) {
   nearCount += Number(encounterAllowed(base,{x:12,z:0},`cell-${i}`,scale));
   assert(encounterAllowed(base,{x:80,z:0},`cell-${i}`,scale), 'all encounter points 300 m+ from the safe border');
 }
-// 12 units from a lone camp = 25 m past its edge: share 0.15 + 0.85 * 25 / 300 ≈ 0.22.
+// 12 units from a lone camp = 25 m past its edge: inside the clear 50 m belt, so nothing.
 const expected = encounterShare((12 - 7.5) / scale) * 10000;
 assert(Math.abs(nearCount - expected) < 300, `near camp density ${nearCount} ≈ ${expected.toFixed(0)}`);
-assert(encounterShare(0) === 0 && encounterShare(1) < 0.2 && encounterShare(300) === 1 && encounterShare(150) > encounterShare(50));
+assert.equal(nearCount, 0);
+assert(encounterShare(0) === 0 && encounterShare(49) === 0 && encounterShare(60) < 0.2 && encounterShare(300) === 1 && encounterShare(150) > encounterShare(50));
 assert(!encounterAllowed(base,{x:0,z:0},'home',scale));
 // 20 km from the start (3600 units at 0.18/m): world level 2 stays even beside a new camp.
 const near = difficultyAt(base,{x:15,z:0},scale), wild = difficultyAt(base,{x:3600,z:0},scale);

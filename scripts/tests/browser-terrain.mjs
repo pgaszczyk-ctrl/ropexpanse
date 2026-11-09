@@ -57,7 +57,7 @@ try {
     assert.ok(jump < 0.35, `smooth walk, biggest change ${jump.toFixed(3)}`);
     // Far enough for the heights to rebuild: the world is redrawn, the trees stay put.
     const s0 = await snap();
-    await page.evaluate(({ x, z }) => window.__combat3d.moveTo(x + 34, z), s0.player);
+    await page.evaluate(({ x, z }) => window.__combat3d.moveTo(x + 60, z), s0.player);
     await page.waitForFunction((r) => window.__combat3d.snapshot().renders > r, s0.renders, { timeout: 60_000 });
     await page.waitForTimeout(1500);
     const after = (await snap()).trees;

@@ -23,6 +23,7 @@ import {
   roleName,
   PARTY_SIZE,
   type Character,
+  type Camp,
   type Item,
 } from "./campaign";
 import { enclosedAreas } from "./territory-rules";
@@ -283,7 +284,16 @@ let heading = Math.PI,
     sweep: boolean;
     heading: number;
     ranged: boolean;
+    /** Swung inside the safe zone: gathers goods but never hurts anyone. */
+    calm?: boolean;
   } | null = null;
+let calmNoticeAt = 0;
+/** No fighting from the safe zone (owner, 8 Nov): blows only gather goods there. */
+function calmNotice() {
+  if (time < calmNoticeAt) return;
+  calmNoticeAt = time + 3;
+  notify("W strefie bezpiecznej nie walczysz");
+}
 let mouseAim: { x: number; y: number } | null = null;
 let move = { x: 0, z: 0 },
   keys = new Set<string>(),
@@ -454,6 +464,11 @@ function slideEnemy(p: Point, dx: number, dz: number) {
   move(dx, 0);
   move(0, dz);
 }
+/** Enemies come back five times slower than before (owner, 8 Nov: 30 s was far too fast). */
+const ENEMY_RESPAWN_S = 150,
+  ENCOUNTER_COOLDOWN_MS = 225_000,
+  /** Idle enemies keep this far from camps and ropes (~30 m), not right at the edge. */
+  WANDER_SAFE_MARGIN = 5.5;
 function wander(e: Enemy, dt: number) {
   const p = e.rig.root.position;
   e.wanderWait -= dt;
@@ -467,7 +482,7 @@ function wander(e: Enemy, dt: number) {
       };
       if (
         !blocked(target.x, target.z, 0.48) &&
-        !safe(target, 0.48) &&
+        (!safe(target, WANDER_SAFE_MARGIN) || safe(e.spawn, WANDER_SAFE_MARGIN)) &&
         lineClear(p, target)
       ) {
         e.wanderTarget = target;
@@ -759,15 +774,24 @@ function flushRender() {
   expedition.refreshWorld();
   nodeMap = null;
 }
+const FIELD_RADIUS = 130,
+  FIELD_MOVE = 55;
+/** Forces the height window to follow the party now (after a ride or a new camp). */
+function refreshFieldNow() {
+  fieldClock = 99;
+  fieldCenter = null;
+}
 function updateTerrainField(dt: number) {
   fieldClock += dt;
   // A new map snapshot rebuilds the heights at once, so its redraw waits for them.
   if (fieldBusy || (fieldClock < 1 && !(field.w && fieldMap !== map))) return;
   fieldClock = 0;
-  if (fieldCenter && fieldMap === map && distance(fieldCenter, player) < 30 && field.w) return;
+  // Rebuilding the heights redraws the whole world, so it happens rarely: the window is
+  // wide and only moves once the party nears its edge (owner, 8 Nov: the game jumped).
+  if (fieldCenter && fieldMap === map && distance(fieldCenter, player) < FIELD_MOVE && field.w) return;
   const start = campaign.camps[0];
   const center = { x: player.x, z: player.z },
-    r = 110,
+    r = FIELD_RADIUS,
     a = unproject({ x: center.x - r, z: center.z + r }, campaign.origin),
     b = unproject({ x: center.x + r, z: center.z - r }, campaign.origin),
     startGeo = unproject(start, campaign.origin);
@@ -1567,7 +1591,7 @@ function updateCompanions(dt: number) {
           slideCompanion(p, Math.sin(m.heading) * v, Math.cos(m.heading) * v);
           moving = true;
         }
-        if (m.cool <= 0 && (ranged(c) ? d < 11 : d < R.reach + 0.5)) {
+        if (m.cool <= 0 && !safe(p) && (ranged(c) ? d < 11 : d < R.reach + 0.5)) {
           m.cool = 1.1;
           m.swing = 0.3;
           if (ranged(c)) {
@@ -1909,6 +1933,74 @@ function populateEncounters() {
       continue;
     spawnEnemy(p, seed, key);
   }
+}
+// ---- Rope travel and pitching camps: the costly map work hides behind a short animation ----
+let riding = false;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Waits (at most `ms`) until fresh map tiles, heights and the redraw have all landed. */
+async function settleWorld(ms: number) {
+  const until = Date.now() + ms;
+  await sleep(120);
+  while (Date.now() < until && (worldStream.loading || fieldBusy || renderDue !== Infinity || fieldClock > 50))
+    await sleep(60);
+}
+function veil(text: string, on: boolean, light = false) {
+  const v = $("travel-veil");
+  if (text) $("travel-veil-text").textContent = text;
+  v.classList.toggle("light", light);
+  if (on) {
+    v.hidden = false;
+    requestAnimationFrame(() => v.classList.add("on"));
+  } else {
+    v.classList.remove("on");
+    setTimeout(() => {
+      if (!v.classList.contains("on")) v.hidden = true;
+    }, 320);
+  }
+}
+async function ropeTravel(camp: Camp, cost: number) {
+  if (riding) return;
+  riding = true;
+  veil("Podróż liną…", true);
+  sound(520, 0.2, "sine", 0.04);
+  await sleep(380);
+  const before = { x: player.x, z: player.z, campId: player.campId, coins: player.coins };
+  try {
+    player.coins -= cost;
+    player.x = camp.x + 1.6;
+    player.z = camp.z + 1.6;
+    player.campId = camp.id;
+    worldStream.pin(camp);
+    await switchCharacter(player);
+    worldStream.pin(camp);
+    const spot = findFree(player);
+    player.x = spot.x;
+    player.z = spot.z;
+    for (const [slot, m] of companions.entries()) {
+      Object.assign(m.c, formation(slot));
+      m.rig.root.position.set(m.c.x, groundY(m.c.x, m.c.z), m.c.z);
+    }
+    cameraTarget.set(player.x, 0, player.z);
+    refreshFieldNow();
+    requestRender(0);
+    persist();
+    await settleWorld(2600);
+    notify(`Drużyna dotarła do obozu · −${cost} tix`);
+  } catch {
+    Object.assign(player, before);
+    notify("Mapa przy tym obozie jest niedostępna");
+  } finally {
+    veil("", false);
+    riding = false;
+  }
+}
+/** A new camp: its tent springs up while a wider piece of the map loads around it. */
+function campPitched(camp: Camp) {
+  worldStream.pin(camp);
+  refreshFieldNow();
+  veil("Rozstawiam obóz…", true, true);
+  sound(300, 0.25, "triangle", 0.04);
+  void settleWorld(2400).then(() => veil("", false));
 }
 async function travelTo(geo: Geo) {
   const next = new WorldStream(geo);
@@ -2407,7 +2499,7 @@ function hurtEnemy(e: Enemy, damage: number, by?: Character) {
     e.timer = 0;
     e.warning.visible = false;
     e.bar.visible = false;
-    e.respawn = /^(vent|rescue|summon):/.test(e.key) ? Infinity : 30;
+    e.respawn = /^(vent|rescue|summon):/.test(e.key) ? Infinity : ENEMY_RESPAWN_S;
     if (e.stolen) {
       player.coins += e.stolen;
       floatingText(`+${e.stolen} tix`, e.rig.root.position, "#ffd27a", "xp");
@@ -2432,7 +2524,7 @@ function hurtEnemy(e: Enemy, damage: number, by?: Character) {
     // Everyone in the party who took part (nearby and standing) learns from the fight.
     for (const m of companions)
       if (m.c.hp > 0 && distance(m.c, e.rig.root.position) < 15) m.c.exp += earned;
-    campaign.encounters[e.key] = Date.now() + 45_000;
+    campaign.encounters[e.key] = Date.now() + ENCOUNTER_COOLDOWN_MS;
     // Animals: tix and materials; humanoids: weapons and armour (loot.ts).
     const rank = e.boss ? "boss" : e.elite ? "elite" : e.species.rank;
     const loot = lootFor(e.species.look, rank, e.tier, Math.random);
@@ -2501,7 +2593,13 @@ function beginAttack(sweep = false, autoAim = false) {
   )
     return;
   if (sweep ? time < sweepReady : time - lastAttack < R.attackCooldown) return;
-  if (autoAim) {
+  const calm = safe(player);
+  if (calm && sweep) {
+    calmNotice();
+    return;
+  }
+  if (calm && nearestEnemy(weapon === "magic" ? 16 : 5)) calmNotice();
+  if (autoAim && !calm) {
     const e = nearestEnemy(weapon === "magic" ? 16 : 5);
     if (e)
       heading = Math.atan2(
@@ -2538,10 +2636,11 @@ function beginAttack(sweep = false, autoAim = false) {
     hit: false,
     sweep,
     heading,
-    ranged: weapon === "magic" && !sweep,
+    ranged: weapon === "magic" && !sweep && !calm,
+    calm,
   };
   lastAttack = time;
-  lastCombat = time;
+  if (!calm) lastCombat = time;
   hero.sword.visible = weapon === "sword" || sweep;
   hero.wand.visible = weapon === "magic" && !sweep;
   sound(sweep ? 330 : 260, 0.09, "triangle", 0.03);
@@ -2820,6 +2919,7 @@ function updateAttack(dt: number) {
       let hit = false;
       for (const e of enemies)
         if (
+          !attack.calm &&
           e.state !== "dead" &&
           inArc(
             player,
@@ -2835,6 +2935,7 @@ function updateAttack(dt: number) {
         }
       const a = attack;
       if (
+        !a.calm &&
         closeVentAt(
           (p) =>
             inArc(player, p, heading, a.sweep ? R.sweepReach : R.reach, a.sweep ? R.sweepHalfArc : R.halfArc, 2.2),
@@ -2979,14 +3080,12 @@ function updateHud() {
     ?.style.setProperty("--rarity", RARITY_COLORS[player.rarity ?? "common"]);
   $("xp-fill").style.width = `${share * 100}%`;
   const inSafe = safe(player);
-  $("zone").className = `zone ${inSafe ? "safe" : "danger"}`;
-  $("zone").textContent = inSafe
-    ? nearCamp(campaign, player)
-      ? "Obóz"
-      : "Bezpieczna lina"
-    : time - lastCombat < R.regenDelay
-      ? "Walka"
-      : "Poza obozem";
+  const fighting = time - lastCombat < R.regenDelay;
+  $("zone").className = `zone ${inSafe ? "safe" : fighting ? "combat" : "danger"}`;
+  // One status for camps and ropes alike (owner: "Strefa bezpieczna" also works on a rope).
+  $("zone").textContent = inSafe ? "Strefa bezpieczna" : fighting ? "Walka" : "Dzicz";
+  // No fighting from the safe zone: Attack looks calm there (it still gathers goods).
+  $("attack-stick").classList.toggle("calm", inSafe);
   // Gold and shards are the hero's own; the rest is the shared Vault.
   const stockLine = `${player.coins} tix · ${player.fragments} odł. · ${campaign.stock.wood} drewna · ${campaign.stock.rope} m liny`;
   if ($("loot").textContent !== stockLine) $("loot").textContent = stockLine;
@@ -3015,6 +3114,7 @@ function updateHud() {
       $("skill2-icon").innerHTML = hudIcon(off);
     }
     $("skill2-time").textContent = left ? `${left.toFixed(1)} s` : "GOTOWY";
+    s2.style.setProperty("--cd", (left / SKILLS[off].cooldown).toFixed(3));
   }
   // Arc of round buttons around Attack: re-measured a few times a second at most.
   if (performance.now() - arcClock > 250) {
@@ -3024,6 +3124,9 @@ function updateHud() {
   $("sweep-time").textContent = sweepLeft
     ? `${sweepLeft.toFixed(1)} s`
     : "GOTOWY";
+  // Cooldown rings: --cd runs from 1 (just used) to 0 (ready).
+  $("sweep").style.setProperty("--cd", Math.min(1, sweepLeft / SKILLS[skill1].cooldown).toFixed(3));
+  $("heal").style.setProperty("--cd", Math.min(1, healLeft / R.potionCooldown).toFixed(3));
   $<HTMLButtonElement>("heal").disabled =
     healLeft > 0 || player.hp >= maxHp() || paused || helpOpen;
   $("heal-time").textContent = healLeft
@@ -3164,6 +3267,19 @@ function bindControls() {
     pointerAim(e.clientX, e.clientY);
     beginAttack();
   });
+  // A short single-finger tap on the map works like a click (camps, ropes to ride).
+  const taps = new Map<number, { x: number; y: number; t: number }>();
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "touch") taps.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
+  });
+  canvas.addEventListener("pointerup", (e) => {
+    const tap = taps.get(e.pointerId);
+    const many = taps.size > 1;
+    taps.delete(e.pointerId);
+    if (!tap || many || performance.now() - tap.t > 400 || Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 12) return;
+    expedition.click(e.clientX, e.clientY);
+  });
+  canvas.addEventListener("pointercancel", (e) => taps.delete(e.pointerId));
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
   $("sweep").onclick = () => beginAttack(true, true);
   $("skill2").onclick = () => useSkill2();
@@ -3541,6 +3657,8 @@ async function init() {
         resetInput();
       },
       travel: travelTo,
+      ropeTravel,
+      campPitched,
       retry: () => worldStream.retry(),
       worldStatus: () => ({
         loading: worldStream.loading,
@@ -3619,6 +3737,7 @@ async function init() {
           rescues: [...rescues.values()].map((r) => ({ key: r.spot.key, x: r.spot.x, z: r.spot.z, state: r.state })),
           pending: campaign.pending ?? null,
           spots: expedition.spotCount,
+          spotPoints: expedition.spotPoints,
           world: {
             origin: campaign.origin,
             tiles: worldStream.tiles.size,
@@ -3772,6 +3891,8 @@ async function init() {
                 resolveForQA();
               },
               travel: (lat: number, lon: number) => travelTo({ lat, lon }),
+              // Rope travel: tap the rope nearest a point, then press the ride button.
+              pickRope: (x: number, z: number, to?: string) => expedition.pickRope({ x, z }, to),
               // A companion of the given role joins the party next to the hero.
               companion: (role: "warrior" | "mage" | "archer" | "herbalist") => {
                 const c: Character = {

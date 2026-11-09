@@ -1837,3 +1837,481 @@ canvas[data-interaction="camp"] {
 .item-slot {
   border-color: var(--item-rarity, #6f5532) !important;
 }
+/* Rope travel: a compact bubble above the tapped rope (distance, price, flip). */
+#rope-travel {
+  position: absolute;
+  z-index: 31;
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+#rope-travel[hidden] {
+  display: none;
+}
+#rope-travel button {
+  min-height: 48px;
+  border: 3px solid #1b1730;
+  border-radius: 14px;
+  box-shadow: 0 4px 0 #0f0c1e88;
+  font: 800 14px "Trebuchet MS", sans-serif;
+}
+#rope-go {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  padding: 4px 14px 4px 10px;
+  background: #ffd23f;
+  color: #1b1730;
+}
+#rope-go span {
+  grid-row: span 2;
+  font-size: 22px;
+}
+#rope-go b {
+  font-size: 14px;
+  text-align: left;
+}
+#rope-go small {
+  font-size: 12px;
+  text-align: left;
+}
+#rope-travel.short #rope-go small {
+  color: #b3261e;
+}
+#rope-flip {
+  width: 48px;
+  padding: 0;
+  background: #262043;
+  color: #fff;
+  font-size: 20px;
+}
+/* A short veil while a ride or a new camp loads the map behind it. */
+#travel-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  display: grid;
+  place-items: center;
+  background: #1b1730;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+#travel-veil.on {
+  opacity: 1;
+}
+#travel-veil.light {
+  background: radial-gradient(ellipse at center, transparent 40%, #1b173099 100%);
+  place-items: start center;
+  padding-top: 18vh;
+}
+#travel-veil > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border: 3px solid #1b1730;
+  border-radius: 16px;
+  background: #262043;
+  color: #fff;
+  font: 800 16px "Trebuchet MS", sans-serif;
+  box-shadow: 0 4px 0 #0f0c1e88;
+}
+#travel-veil svg {
+  width: 30px;
+  height: 30px;
+  animation: veil-spin 1.2s linear infinite;
+}
+@keyframes veil-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ===== Bold mobile HUD (owner, 8 Nov): saturated colours, big icons, a thick dark
+   outline and clear size steps between actions; no heavy brass frames on the playfield.
+   Layout (arc around Attack, Action above it) stays as hud.ts places it. ===== */
+:root {
+  --ink: #1b1730;
+  --panel: #262043e8;
+  --panel-solid: #262043;
+  --glass: var(--panel);
+  --rim: 0 0 0 3px #1b1730;
+  --lift: 0 4px 0 #0f0c1e88;
+  --hud-red: #ff5a5f;
+  --hud-red-dark: #c42f3c;
+  --hud-yellow: #ffd23f;
+  --hud-yellow-dark: #d99a12;
+  --hud-green: #5fd27a;
+  --hud-green-dark: #2e9a4f;
+  --hud-blue: #4f8ff0;
+  --hud-blue-dark: #2c5fc0;
+  --hud-purple: #9b6bff;
+  --hud-purple-dark: #6a3fd0;
+  --text-outline: 0 2px 0 #1b1730, 2px 0 0 #1b1730, -2px 0 0 #1b1730, 0 -2px 0 #1b1730,
+    1.5px 1.5px 0 #1b1730, -1.5px 1.5px 0 #1b1730, 1.5px -1.5px 0 #1b1730, -1.5px -1.5px 0 #1b1730;
+}
+body button {
+  border: 3px solid var(--ink);
+  background: var(--panel-solid);
+  color: #fff;
+  font-weight: 800;
+  box-shadow: var(--lift);
+}
+body .vitals,
+body #loot {
+  background: var(--panel);
+  border: 3px solid var(--ink);
+  border-radius: 18px;
+  box-shadow: var(--lift);
+}
+body .vitals::after {
+  display: none;
+}
+body .avatar {
+  border: 3px solid var(--ink);
+  background: var(--hud-blue);
+  padding: 0;
+  box-shadow: none;
+  overflow: hidden;
+}
+body .hero-portrait {
+  border: 0;
+  border-radius: 50%;
+}
+body .xp-ring {
+  inset: 0;
+  background: conic-gradient(from 180deg, var(--hud-yellow) 0 var(--xp), #0000 var(--xp) 360deg);
+  mask: radial-gradient(transparent 80%, #000 83%);
+  box-shadow: none;
+}
+body .hero-name {
+  color: #fff;
+  font-weight: 800;
+  text-shadow: var(--text-outline);
+}
+body .hero-name > span {
+  color: #d7d2f0;
+  text-shadow: none;
+}
+body .hero-name b {
+  color: var(--hud-yellow);
+}
+body .health {
+  border: 3px solid var(--ink);
+  background: #3a2340;
+  border-radius: 10px;
+  box-shadow: none;
+}
+body .health i {
+  background: var(--hud-green);
+  box-shadow: inset 0 -4px 0 var(--hud-green-dark), inset 0 3px 0 #ffffff55;
+}
+body .health::after {
+  background: repeating-linear-gradient(90deg, transparent 0 19%, #1b173040 19.5% 20%);
+}
+body .health span {
+  color: #fff;
+  font-weight: 800;
+  text-shadow: 0 1px 0 #1b1730, 1px 0 0 #1b1730, -1px 0 0 #1b1730, 0 -1px 0 #1b1730;
+}
+body .low-health .health i {
+  background: var(--hud-red);
+  box-shadow: inset 0 -4px 0 var(--hud-red-dark), inset 0 3px 0 #ffffff55;
+}
+body .low-health .health {
+  border-color: var(--ink);
+  animation: hud-hp-pulse 0.8s ease-in-out infinite alternate;
+}
+@keyframes hud-hp-pulse {
+  to {
+    box-shadow: 0 0 0 3px #ff5a5f99;
+  }
+}
+body .xp {
+  border: 2px solid var(--ink);
+  background: #3a3260;
+}
+body .xp i {
+  background: var(--hud-yellow);
+}
+/* Small round utility buttons: pause, menu, backpack, compass. */
+body .plain,
+body .loadout button,
+body #expedition-tools button,
+body .compass {
+  border: 3px solid var(--ink);
+  background: var(--panel-solid);
+  color: #fff;
+  border-radius: 50%;
+  box-shadow: var(--lift);
+  font: 800 19px "Trebuchet MS", sans-serif;
+}
+body #expedition-tools button:not(:disabled):hover,
+body .loadout button:not(:disabled):hover {
+  background: #3a3260;
+}
+body #loot {
+  color: #fff;
+  font-weight: 800;
+  text-shadow: none;
+}
+body .zone {
+  background: var(--panel);
+  border: 3px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: var(--lift);
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+body .zone::before {
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--ink);
+  box-shadow: none;
+}
+body .zone.safe {
+  color: #8ff0a6;
+}
+body .zone.danger {
+  color: #ffb08a;
+}
+body .zone.combat {
+  color: #ff7a7f;
+}
+body #toast {
+  background: var(--panel-solid);
+  border: 3px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: var(--lift);
+  color: #fff;
+  font-weight: 700;
+}
+/* Translucent blue joystick. */
+body #move-stick {
+  border: 3px solid #1b173088;
+  background: radial-gradient(circle, #4f8ff033 0 58%, #4f8ff055 60%);
+  box-shadow: inset 0 0 0 3px #a9d8ff66;
+}
+body .stick::after {
+  display: none;
+}
+body #move-stick i {
+  border: 3px solid var(--ink);
+  background: radial-gradient(circle at 50% 42%, #cfe9ff 0 30%, var(--hud-blue) 33%);
+  box-shadow: inset 0 -4px 0 var(--hud-blue-dark), 0 3px 0 #0f0c1e66;
+}
+/* Big red Attack; the inner ring follows the thumb while aiming. */
+body .stick.attack {
+  border: 3px solid var(--ink);
+  background: var(--hud-red);
+  box-shadow: inset 0 -7px 0 var(--hud-red-dark), inset 0 4px 0 #ffffff44, 0 5px 0 #0f0c1e88;
+}
+body .stick.attack i {
+  width: 72%;
+  height: 72%;
+  background: none;
+  border: 3px solid #ffffff55;
+  box-shadow: none;
+}
+body #attack-symbol {
+  color: #fff;
+  margin-top: -12px;
+  filter: drop-shadow(0 2px 0 #1b1730) drop-shadow(0 -1px 0 #1b1730) drop-shadow(1px 0 0 #1b1730) drop-shadow(-1px 0 0 #1b1730);
+}
+body #attack-symbol svg {
+  width: 42px;
+  height: 42px;
+}
+body .stick.attack small {
+  bottom: 14px;
+  z-index: 1;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-shadow: var(--text-outline);
+}
+/* In the safe zone Attack only gathers: it fades so it does not invite a fight. */
+body .stick.attack.calm {
+  background: #b9767a;
+  box-shadow: inset 0 -7px 0 #8b4f55, 0 5px 0 #0f0c1e88;
+}
+/* Round skills: yellow special, purple second hand, green potion, each with a cooldown ring. */
+body .skill,
+body .heal {
+  --cd: 0;
+  border: 3px solid var(--ink);
+  color: #fff;
+}
+body .skill::after,
+body .heal::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  background: conic-gradient(#ffffffee 0 calc((1 - var(--cd)) * 360deg), #1b173088 0);
+  mask: radial-gradient(transparent 62%, #000 64% 92%, transparent 95%);
+  pointer-events: none;
+}
+body .skill {
+  background: var(--hud-yellow);
+  box-shadow: inset 0 -5px 0 var(--hud-yellow-dark), inset 0 3px 0 #ffffff66, var(--lift);
+}
+body .skill.skill2 {
+  background: var(--hud-purple);
+  box-shadow: inset 0 -5px 0 var(--hud-purple-dark), inset 0 3px 0 #ffffff55, var(--lift);
+}
+body .heal {
+  background: var(--hud-green);
+  box-shadow: inset 0 -5px 0 var(--hud-green-dark), inset 0 3px 0 #ffffff66, var(--lift);
+}
+body .skill > span,
+body .heal .icon {
+  color: #fff;
+  filter: drop-shadow(0 2px 0 #1b1730);
+}
+body .heal .icon svg {
+  color: #fff;
+}
+body .skill strong,
+body .skill small,
+body .heal small {
+  color: #fff;
+  font-weight: 800;
+  text-shadow: var(--text-outline);
+}
+body .skill:disabled {
+  filter: none;
+  opacity: 1;
+  background: #b59a45;
+}
+body .skill.skill2:disabled {
+  background: #7a64a8;
+}
+body .heal:disabled {
+  filter: none;
+  opacity: 1;
+  background: #4f8a5e;
+}
+body .skill:disabled > span,
+body .heal:disabled .icon {
+  opacity: 0.7;
+}
+/* Action: a blue button above the combat group, its icon and label say what it does. */
+body .context-action {
+  border: 3px solid var(--ink);
+  background: var(--hud-blue);
+  color: #fff;
+  box-shadow: inset 0 -5px 0 var(--hud-blue-dark), inset 0 3px 0 #ffffff55, var(--lift);
+}
+body .context-action span {
+  filter: drop-shadow(0 2px 0 #1b1730);
+}
+body .context-action small {
+  font: 800 12px "Trebuchet MS", sans-serif;
+  text-shadow: var(--text-outline);
+}
+body .context-action.active {
+  box-shadow: inset 0 -5px 0 var(--hud-blue-dark), inset 0 3px 0 #ffffff55, var(--lift), 0 0 0 4px #4f8ff055;
+}
+body .context-action:disabled {
+  background: #5a6e94;
+  opacity: 1;
+}
+/* Camp menu: dark card, big icon tiles. */
+body #camp-menu {
+  background: var(--panel-solid);
+  border: 3px solid var(--ink);
+  border-radius: 18px;
+  box-shadow: 0 6px 0 #0f0c1e88;
+}
+body #camp-menu .camp-item {
+  border: 3px solid var(--ink);
+  border-radius: 14px;
+  background: #3a3260;
+  color: #fff;
+  font: 800 12px "Trebuchet MS", sans-serif;
+}
+body #camp-menu .camp-item:hover {
+  background: #4a4180;
+  border-color: var(--ink);
+}
+body #world-state {
+  background: var(--panel-solid);
+  border: 3px solid var(--ink);
+  border-radius: 14px;
+  color: #fff;
+  box-shadow: var(--lift);
+}
+/* Menu and start cards. */
+body .sheet {
+  background: var(--panel-solid);
+  border: 4px solid var(--ink);
+  border-radius: 24px;
+  box-shadow: 0 6px 0 #0008;
+}
+body .sheet .eyebrow {
+  display: inline-block;
+  padding: 4px 12px;
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  background: var(--hud-yellow);
+  color: var(--ink);
+}
+body .sheet h1,
+body .sheet h2 {
+  color: #fff;
+  font-family: "Trebuchet MS", sans-serif;
+  font-weight: 800;
+}
+body .sheet p {
+  color: #dcd7f2;
+}
+body .sheet button {
+  background: var(--hud-yellow);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  box-shadow: inset 0 -4px 0 var(--hud-yellow-dark), var(--lift);
+}
+body .sheet .reset,
+body .sheet .menu-options button {
+  background: #3a3260;
+  color: #fff;
+  box-shadow: var(--lift);
+}
+body .float-label {
+  text-shadow: var(--text-outline);
+}
+body .context-action.blocked {
+  background: #6b7590;
+  box-shadow: inset 0 -5px 0 #4b546c, var(--lift);
+}
+/* Action stays round (icon over a two-line label) so it never reaches the arc buttons. */
+body .context-action {
+  width: 78px;
+  min-width: 0;
+  height: 78px;
+  padding: 4px;
+  gap: 2px;
+  border-radius: 50%;
+}
+body .context-action span {
+  font-size: 22px;
+  line-height: 1;
+}
+body .context-action small {
+  max-width: 66px;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.05;
+  font-size: 11px;
+}
+@media (pointer: coarse) {
+  body .context-action {
+    width: 72px;
+    height: 72px;
+  }
+}

@@ -86,6 +86,21 @@ Kolejność według dokumentu, od najważniejszego.
 
 Kolejność: 6.1 → 6.2 → 6.3 → 6.4 → 6.5. Teren i HUD najbardziej zmieniają odczucie gry; tix przed lootem, bo loot pokazuje tix; kolory na końcu, żeby oceniać je na gotowym terenie.
 
+## Etap 6b — Uwagi właściciela z 8 listopada (wieczór) — wykonane 08.11.2026
+
+| Uwaga | Zmiana | Pliki |
+|---|---|---|
+| Atak ze strefy bezpiecznej jest za mocny | W strefie (obóz, pas liny, wnętrze pętli) cios tylko zbiera surowce i nikogo nie rani; Salwa/umiejętności broni się nie odpalają; towarzysze nie atakują ze strefy. Przycisk Atak blednie, komunikat „W strefie bezpiecznej nie walczysz” | `main.ts` |
+| Wrogowie kręcą się za blisko obozu | Pas 50 m od granicy strefy bez punktów spotkań (potem 15% → 100% przy 300 m); bezczynni wrogowie trzymają się ~30 m od stref | `encounters.ts`, `main.ts` |
+| Odradzanie 5× za szybkie | Odrodzenie w miejscu 30 s → 150 s; blokada punktu po zabiciu 45 s → 225 s | `main.ts` |
+| Rekrutacja z dowolnego obozu | Jedna wspólna oferta dla całej sieci: widać ją i obsługuje się z każdego obozu; zatrudniony staje w obozie, w którym go przyjmujesz | `campaign.ts`, `expedition.ts` |
+| Max 4 liny z jednego obozu | Limit przy „Rozciągnij linę” i przy łączeniu obozów | `travel.ts`, `expedition.ts` |
+| Podróż po linach | Tapnięcie (klik) w dowolne miejsce liny: żółta strzałka na linie w stronę dalszego obozu, dymek z odległością i kosztem (100 tix/km, min. 1), ⇄ odwraca kierunek. Drużyna musi stać na tej linie lub przy jej obozie, poza walką i bez prowadzonej liny; płaci aktywna postać. Przejazd: krótka zasłona, wczytanie mapy przy celu, towarzysze obok | `travel.ts`, `expedition.ts`, `main.ts` |
+| Gra „skacze” | Przyczyna: przebudowa całego świata co ~30 j. marszu (okno wysokości) i przy każdym nowym kaflu. Okno wysokości szersze (r 130) i przesuwane dopiero po 55 j.; przy rozstawianiu obozu i po przejeździe wczytuje się blok 5×5 kafli wokół obozu (trzymany, dopóki drużyna nie odejdzie ~4 kafle), a przebudowa dzieje się pod animacją (namiot wyrasta z ziemi, „Rozstawiam obóz…”) | `world.ts`, `main.ts`, `expedition.ts` |
+| HUD | Wygląd z makiety: nasycone kolory, gruby ciemny obrys, bez mosiężnych ramek; niebieski półprzezroczysty joystick, duży czerwony Atak, żółty specjalny, fioletowy drugiej ręki, zielona Mikstura, pierścienie odnowienia; Akcja niebieska z etykietą „Rozstaw obóz” / „Połącz obozy” / „Otwórz obóz” (wyszarzona, gdy tu nie można); wskaźnik „Strefa bezpieczna” / „Dzicz” / „Walka” | `style.css`, `main.ts`, `expedition.ts` |
+
+Testy: `scripts/tests/travel.mjs` (limit lin, koszt, kierunek, jazda tylko z liny, wspólna oferta), `frontier.mjs` (pas 50 m), `browser-terrain.mjs` (przebudowa po 60 j.). Przebieg lina → obóz → tapnięcie w linę → przejazd sprawdzony w emulacji telefonu poziomo (zrzuty w `work/rope/`). Do strojenia: koszt 100 tix/km, szerokość pasa 50 m, czasy odrodzenia.
+
 ## Etap 7 — AFK
 
 1. Zajęcia Wędrowców w obozie (jedno tapnięcie): trening (powolne XP) albo wyprawa 1/4/8 h. Wyprawa wraca z lootem i surowcami z biomu obozu, nie da się na niej zginąć, najlepszy loot zostaje dla aktywnej walki.

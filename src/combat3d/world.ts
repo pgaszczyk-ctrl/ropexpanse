@@ -332,6 +332,10 @@ export class WorldStream {
   private lastRequest = 0;
   private generation = 0;
   private seed?: MapData;
+  /** A wider block of tiles kept around a new camp or a ride's end (owner, 8 Nov: load a
+   * bigger piece while the camp goes up, so walking around it does not stutter). */
+  private pinned: { x: number; y: number }[] = [];
+  private pinCenter: { x: number; y: number } | null = null;
   constructor(origin: Geo, seed?: MapData) {
     this.origin = origin;
     this.seed = seed;
@@ -350,9 +354,29 @@ export class WorldStream {
       }
     return true;
   }
+  /** Keeps the tiles within `ring` of `p` loaded until the party walks well away. */
+  pin(p: Point, ring = 2) {
+    const geo = unproject(p, this.origin),
+      t = tileAt(geo);
+    this.pinCenter = t;
+    this.pinned = [];
+    for (let dy = -ring; dy <= ring; dy++) {
+      const y = t.y + dy;
+      if (y < 0 || y >= 30000) continue;
+      const row = tileAt({ lat: -90 + (y + 0.5) * TILE_DEGREES, lon: geo.lon }),
+        columns = columnsForRow(y);
+      for (let dx = -ring; dx <= ring; dx++)
+        this.pinned.push({ x: (row.x + dx + columns) % columns, y });
+    }
+    this.request(p);
+  }
   request(p: Point) {
     const geo = unproject(p, this.origin),
       t = tileAt(geo);
+    if (this.pinCenter && (Math.abs(this.pinCenter.y - t.y) > 4 || Math.abs(this.pinCenter.x - t.x) > 4)) {
+      this.pinCenter = null;
+      this.pinned = [];
+    }
     this.wanted = [];
     const required = new Set<string>();
     for (const dx of [-2, 2])
@@ -371,6 +395,8 @@ export class WorldStream {
           this.wanted.push({ x, y });
       }
     }
+    for (const v of this.pinned)
+      if (!this.wanted.some((w) => w.x === v.x && w.y === v.y)) this.wanted.push(v);
     const score = (v: { x: number; y: number }) => {
       const b = tileBounds(v.x, v.y),
         q = project(

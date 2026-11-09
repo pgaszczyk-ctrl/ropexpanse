@@ -450,7 +450,8 @@ export function postOffer(
   const c = activeCharacter(s);
   if (
     !s.camps.some((v) => v.id === campId) ||
-    s.offers.some((v) => v.campId === campId) ||
+    // One shared offer for the whole network: any camp shows and manages it (owner, 8 Nov).
+    s.offers.length > 0 ||
     !Number.isSafeInteger(gold) ||
     gold < 0 ||
     gold > c.coins
@@ -522,14 +523,21 @@ export function addWayfarer(s: Campaign, v: Candidate, at: Point, campId: string
   s.characters.push(c);
   return c;
 }
-export function hire(s: Campaign, offerId: string, candidateId: string) {
+/** Hires a candidate into `campId` (the camp you stand at), or the camp the offer came from. */
+export function hire(s: Campaign, offerId: string, candidateId: string, campId?: string) {
   const o = s.offers.find((v) => v.id === offerId),
     v = o?.candidates?.find((v) => v.id === candidateId),
-    camp = s.camps.find((c) => c.id === o?.campId);
+    camp =
+      s.camps.find((c) => c.id === campId) ??
+      s.camps.find((c) => c.id === o?.campId);
   if (!o || !v || !camp) return null;
   const c = addWayfarer(s, v, camp, camp.id);
   s.offers = s.offers.filter((v) => v !== o);
   return c;
+}
+/** The offer seen from a camp: its own one first (old saves), else the shared one. */
+export function offerAt(s: Campaign, campId?: string) {
+  return s.offers.find((o) => o.campId === campId) ?? s.offers[0];
 }
 export function cancelOffer(s: Campaign, id: string) {
   const o = s.offers.find((v) => v.id === id);
