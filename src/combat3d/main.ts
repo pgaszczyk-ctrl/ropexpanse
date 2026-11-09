@@ -98,6 +98,7 @@ import {
   circleBlocked,
   segmentHitsCircle,
   type Point,
+  rollDamage,
 } from "./rules";
 
 type Enemy = {
@@ -314,13 +315,93 @@ const enemies: Enemy[] = [],
     life: number;
     total: number;
   }[] = [];
+/** Buildings are drawn merged into square chunks (one mesh, one shared material each);
+ * every building keeps its own vertex range there for fading and fog-of-war colour.
+ * Before, each building was its own mesh with two transparent materials (3000+ in a
+ * city centre), which made every frame and every world redraw slow. */
+type Chunk = { mesh: T.Mesh; base: Float32Array };
 const buildingViews: {
   data: MapData["buildings"][number];
-  node: T.Mesh;
-  materials: T.Material[];
+  chunk: Chunk;
+  start: number;
+  count: number;
+  fade: number;
+  top: number;
+  ring: number[][];
   box: { x0: number; x1: number; z0: number; z1: number };
 }[] = [];
+const CHUNK = 48;
+/** One material for all buildings: vertex colours, and a per-vertex fade drawn as a
+ * screen-door pattern (opaque pass, no sorting; the hero shows through the holes). */
+const buildingMaterial = new T.MeshLambertMaterial({ vertexColors: true });
+buildingMaterial.onBeforeCompile = (shader) => {
+  shader.vertexShader = shader.vertexShader
+    .replace("#include <common>", "#include <common>\nattribute float aFade;\nvarying float vFade;")
+    .replace("#include <begin_vertex>", "#include <begin_vertex>\nvFade = aFade;");
+  shader.fragmentShader = shader.fragmentShader
+    .replace("#include <common>", "#include <common>\nvarying float vFade;")
+    .replace(
+      "void main() {",
+      "void main() {\n  if (vFade < 0.999) { vec2 q = floor(gl_FragCoord.xy); if (fract(sin(dot(q, vec2(12.9898, 78.233))) * 43758.5453) > vFade) discard; }",
+    );
+};
 const obstacleCells = new Map<string, typeof buildingViews>();
+const retiredMaterials: T.Material[] = [];
+const roadMaterials = new Map<number, T.MeshStandardMaterial>();
+const groundMaterial = new T.MeshLambertMaterial({ vertexColors: true });
+/** Hidden samples of materials that appear only later (smooth ground once heights
+ * arrive, loot and coins on the first kill), so their shaders compile while loading. */
+function addShaderSamples() {
+  const shelf = new T.Group();
+  shelf.visible = false;
+  const tiny = new T.BoxGeometry(0.01, 0.01, 0.01);
+  for (const m of [groundMaterial, new T.MeshLambertMaterial({ color: 0xffffff })]) {
+    const mesh = new T.Mesh(tiny, m);
+    mesh.receiveShadow = mesh.castShadow = true;
+    shelf.add(mesh);
+  }
+  scene.add(shelf);
+}
+/** Buildings standing between the camera and someone fade out smoothly, and back. */
+const hiddenBuildings = new Map<object, number>();
+function fadeBuildings(dt: number) {
+  const step = dt * 5;
+  for (const b of buildingViews) {
+    const want = (hiddenBuildings.get(b) ?? -1) > time ? 0.15 : 1;
+    if (b.fade === want) continue;
+    b.fade = want < b.fade ? Math.max(want, b.fade - step) : Math.min(want, b.fade + step);
+    const attr = b.chunk.mesh.geometry.getAttribute("aFade") as T.BufferAttribute;
+    (attr.array as Float32Array).fill(b.fade, b.start, b.start + b.count);
+    attr.needsUpdate = true;
+  }
+}
+/** Compiles shaders for everything in the scene that was not drawn yet, hidden things
+ * included (x-ray outlines, warnings, effects waiting off screen). Without it each new
+ * kind of object compiled its shader on the frame it first appeared — a hitch. */
+const warmed = new WeakMap<T.Material, number>();
+let warmClock = 0;
+function warmShaders(force = false) {
+  const now = performance.now();
+  if (!force && now - warmClock < 1000) return;
+  warmClock = now;
+  const fresh: T.Object3D[] = [];
+  scene.traverse((o) => {
+    if (!(o instanceof T.Mesh || o instanceof T.Line || o instanceof T.Points)) return;
+    const flag = o instanceof T.InstancedMesh ? (o.instanceColor ? 4 : 2) : 1;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      const seen = warmed.get(m) ?? 0;
+      if (seen & flag) continue;
+      warmed.set(m, seen | flag);
+      if (fresh.at(-1) !== o) fresh.push(o);
+    }
+  });
+  for (const o of fresh)
+    try {
+      renderer.compile(o, camera, scene);
+    } catch {
+      // A failing shader is reported by the normal draw; warming is only a head start.
+    }
+}
 const cellKey = (x: number, z: number) =>
   `${Math.floor(x / 8)},${Math.floor(z / 8)}`;
 const scratch = new T.Vector3(),
@@ -666,6 +747,7 @@ function buildWorld() {
   scene.add(sun, sun.target);
   skyLight = new T.HemisphereLight(0xe5f2df, 0x6b7557, 2);
   scene.add(skyLight, partyLamp, campFire, rain, snow);
+  addShaderSamples();
   scene.add(terrain);
   renderTerrain();
   if (!savedCampaign) {
@@ -767,13 +849,22 @@ let renderDue = Infinity;
 function requestRender(delay = 0.6) {
   renderDue = Math.min(renderDue, time + delay);
 }
+let lastRedrawMs = 0;
 function flushRender() {
   if (time < renderDue || fieldBusy) return;
   renderDue = Infinity;
+  const t0 = performance.now();
   renderTerrain();
   expedition.countBuildings();
   expedition.refreshWorld();
   nodeMap = null;
+  lastRedrawMs = Math.round(performance.now() - t0);
+}
+const viewPoint = new T.Vector3();
+/** Whether a ground point is on screen (with a small margin). */
+function inView(p: Point) {
+  viewPoint.set(p.x, groundY(p.x, p.z) + 1, p.z).project(camera);
+  return Math.abs(viewPoint.x) < 1.15 && Math.abs(viewPoint.y) < 1.15 && viewPoint.z < 1;
 }
 const FIELD_RADIUS = 130,
   FIELD_MOVE = 55;
@@ -814,6 +905,40 @@ function updateTerrainField(dt: number) {
     })
     .finally(() => (fieldBusy = false));
 }
+/** Which mapped area (park, forest, water…) lies under a point. Areas are bucketed by
+ * their bounding boxes once per map, so a lookup tests a few polygons instead of all. */
+let areaIndexFor: MapData | null = null,
+  areaBuckets = new Map<string, number[]>();
+const AREA_BUCKET = 8;
+function areaAt(x: number, z: number, water = false) {
+  if (areaIndexFor !== map) {
+    areaIndexFor = map;
+    areaBuckets = new Map();
+    map.areas.forEach((a, i) => {
+      let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+      for (const p of a.rings[0]) {
+        x0 = Math.min(x0, p[0]);
+        x1 = Math.max(x1, p[0]);
+        z0 = Math.min(z0, p[1]);
+        z1 = Math.max(z1, p[1]);
+      }
+      for (let bx = Math.floor(x0 / AREA_BUCKET); bx <= Math.floor(x1 / AREA_BUCKET); bx++)
+        for (let bz = Math.floor(z0 / AREA_BUCKET); bz <= Math.floor(z1 / AREA_BUCKET); bz++) {
+          const key = `${bx},${bz}`,
+            list = areaBuckets.get(key);
+          if (list) list.push(i);
+          else areaBuckets.set(key, [i]);
+        }
+    });
+  }
+  const list = areaBuckets.get(`${Math.floor(x / AREA_BUCKET)},${Math.floor(z / AREA_BUCKET)}`);
+  if (list)
+    for (const i of list) {
+      const a = map.areas[i];
+      if (a.water === water && inPolygon(x, z, a.rings)) return a;
+    }
+  return undefined;
+}
 /** Smooth ground: one vertex per height cell, coloured by what OSM shows there,
  * with shared (smoothed) normals so slopes shade softly instead of stepping. */
 function groundMesh() {
@@ -822,7 +947,7 @@ function groundMesh() {
     col = new Float32Array(w * w * 3),
     c = new T.Color();
   const kindColor = (x: number, z: number, k: number) =>
-    field.wet[k] ? WORLD_COLORS.water : map.areas.some((a) => !a.water && inPolygon(x, z, a.rings)) ? WORLD_COLORS.green : WORLD_COLORS.ground;
+    field.wet[k] ? WORLD_COLORS.water : areaAt(x, z) ? WORLD_COLORS.green : WORLD_COLORS.ground;
   for (let j = 0; j < w; j++)
     for (let i = 0; i < w; i++) {
       const k = j * w + i,
@@ -843,7 +968,7 @@ function groundMesh() {
   g.setAttribute("color", new T.BufferAttribute(col, 3));
   g.setIndex(index);
   g.computeVertexNormals();
-  const m = new T.Mesh(g, new T.MeshLambertMaterial({ vertexColors: true }));
+  const m = new T.Mesh(g, groundMaterial);
   m.receiveShadow = true;
   m.userData.baseColors = Float32Array.from(col);
   m.userData.cellOfVertex = Int32Array.from({ length: w * w }, (_, k) => k);
@@ -877,14 +1002,20 @@ function recolor() {
     }
     attr.needsUpdate = true;
   }
+  const touched = new Set<Chunk>();
   for (const b of buildingViews) {
-    const ok = isSeen((b.box.x0 + b.box.x1) / 2, (b.box.z0 + b.box.z1) / 2);
-    for (const m of b.materials as T.MeshLambertMaterial[]) {
-      const base = (m.userData.base ??= m.color.clone()) as T.Color;
-      const [r, g, bb] = ok ? [base.r, base.g, base.b] : greyed(base.r, base.g, base.b);
-      m.color.setRGB(r, g, bb);
+    const ok = isSeen((b.box.x0 + b.box.x1) / 2, (b.box.z0 + b.box.z1) / 2),
+      col = b.chunk.mesh.geometry.getAttribute("color") as T.BufferAttribute,
+      base = b.chunk.base;
+    for (let v = b.start; v < b.start + b.count; v++) {
+      const [r, g, bb] = ok
+        ? [base[v * 3], base[v * 3 + 1], base[v * 3 + 2]]
+        : greyed(base[v * 3], base[v * 3 + 1], base[v * 3 + 2]);
+      col.setXYZ(v, r, g, bb);
     }
+    touched.add(b.chunk);
   }
+  for (const c of touched) (c.mesh.geometry.getAttribute("color") as T.BufferAttribute).needsUpdate = true;
 }
 function updateSeen(dt: number) {
   seenClock += dt;
@@ -923,7 +1054,9 @@ function liftActors() {
   campFire.position.y = 1.4 + groundY(home.x, home.z);
 }
 function disposeTerrain() {
-  for (const b of buildingViews) for (const m of b.materials) m.dispose();
+  // Disposing a material frees its compiled program once nothing uses it, and the new
+  // buildings would then compile it again (a visible hitch). Old materials go after the
+  // next frame, when the new ones already hold the programs.
   terrain.traverse((o) => {
     if (o instanceof T.Mesh) o.geometry.dispose();
   });
@@ -992,12 +1125,26 @@ function renderTerrain() {
     g.setAttribute("position", new T.Float32BufferAttribute(r.pos, 3));
     g.setIndex(r.idx);
     g.computeVertexNormals();
-    const m = new T.Mesh(g, material(color));
+    // Own material with a depth bias: the ribbon lies a few centimetres above the ground,
+    // and the bias keeps the ground from flickering through it as the camera moves.
+    let mat = roadMaterials.get(color);
+    if (!mat) {
+      mat = material(color).clone();
+      mat.polygonOffset = true;
+      mat.polygonOffsetFactor = -2;
+      mat.polygonOffsetUnits = color === WORLD_COLORS.road ? -8 : -4;
+      roadMaterials.set(color, mat);
+    }
+    const m = new T.Mesh(g, mat);
     m.receiveShadow = true;
     terrain.add(m);
   }
   const wallColors = WORLD_COLORS.walls,
     roofColors = WORLD_COLORS.roofs;
+  const wallColor = new T.Color(),
+    roofColor = new T.Color();
+  type Chunk_ = { pos: number[]; nor: number[]; col: number[]; views: (typeof buildingViews)[number][] };
+  const chunkParts = new Map<string, Chunk_>();
   map.buildings.forEach((b, i) => {
     // Sits on the lowest point of its outline with a foundation sunk into the ground,
     // so it never hangs on a slope; a plinth fills the downhill side.
@@ -1011,37 +1158,48 @@ function renderTerrain() {
     });
     g.rotateX(-Math.PI / 2);
     g.translate(0, low - sink, 0);
-    // Soft ambient occlusion: walls darken towards the ground they stand on.
-    const pos = g.getAttribute("position"),
-      shade = new Float32Array(pos.count * 3);
-    for (let v = 0; v < pos.count; v++) {
-      const f = 0.7 + 0.3 * Math.min(1, Math.max(0, (pos.getY(v) - low) / 1.6));
-      shade.set([f, f, f], v * 3);
-    }
-    g.setAttribute("color", new T.BufferAttribute(shade, 3));
-    const mats = [
-      material(roofColors[i % roofColors.length]).clone(),
-      material(wallColors[i % wallColors.length]).clone(),
-    ];
-    for (const m of mats) m.vertexColors = true;
-    const node = new T.Mesh(g, mats);
-    node.castShadow = true;
-    node.receiveShadow = true;
-    terrain.add(node);
     const xs = b.rings[0].map((p) => p[0]),
-      zs = b.rings[0].map((p) => p[1]);
-    buildingViews.push({
-      data: b,
-      node,
-      materials: mats,
-      box: {
-        x0: Math.min(...xs),
-        x1: Math.max(...xs),
-        z0: Math.min(...zs),
-        z1: Math.max(...zs),
-      },
-    });
+      zs = b.rings[0].map((p) => p[1]),
+      box = { x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) };
+    const key = `${Math.floor((box.x0 + box.x1) / 2 / CHUNK)},${Math.floor((box.z0 + box.z1) / 2 / CHUNK)}`;
+    let part = chunkParts.get(key);
+    if (!part) chunkParts.set(key, (part = { pos: [], nor: [], col: [], views: [] }));
+    const pos = g.getAttribute("position"),
+      nor = g.getAttribute("normal"),
+      start = part.pos.length / 3;
+    roofColor.setHex(roofColors[i % roofColors.length]);
+    wallColor.setHex(wallColors[i % wallColors.length]);
+    // Group 0 = roof and floor caps, group 1 = walls (ExtrudeGeometry order).
+    const wallsFrom = g.groups[1]?.start ?? pos.count;
+    for (let v = 0; v < pos.count; v++) {
+      const y = pos.getY(v),
+        // Soft ambient occlusion: walls darken towards the ground they stand on.
+        f = 0.7 + 0.3 * Math.min(1, Math.max(0, (y - low) / 1.6)),
+        c = v >= wallsFrom ? wallColor : roofColor;
+      part.pos.push(pos.getX(v), y, pos.getZ(v));
+      part.nor.push(nor.getX(v), nor.getY(v), nor.getZ(v));
+      part.col.push(c.r * f, c.g * f, c.b * f);
+    }
+    g.dispose();
+    const view = { data: b, chunk: null as unknown as Chunk, start, count: pos.count, fade: 1, top: high + b.height, ring: b.rings[0], box };
+    part.views.push(view);
+    buildingViews.push(view);
   });
+  for (const part of chunkParts.values()) {
+    const g = new T.BufferGeometry(),
+      base = Float32Array.from(part.col);
+    g.setAttribute("position", new T.Float32BufferAttribute(part.pos, 3));
+    g.setAttribute("normal", new T.Float32BufferAttribute(part.nor, 3));
+    g.setAttribute("color", new T.BufferAttribute(Float32Array.from(base), 3));
+    g.setAttribute("aFade", new T.BufferAttribute(new Float32Array(part.pos.length / 3).fill(1), 1));
+    g.computeBoundingSphere();
+    const mesh = new T.Mesh(g, buildingMaterial);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    terrain.add(mesh);
+    const chunk = { mesh, base };
+    for (const v of part.views) v.chunk = chunk;
+  }
   for (const b of buildingViews) {
     for (
       let x = Math.floor((b.box.x0 - 2) / 8);
@@ -1098,7 +1256,7 @@ function renderTerrain() {
       const r = (salt: number) => cellRand(cx, cz, salt);
       const x = (cx + 0.15 + r(1) * 0.7) * TREE_CELL,
         z = (cz + 0.15 + r(2) * 0.7) * TREE_CELL;
-      const area = map.areas.find((a) => !a.water && inPolygon(x, z, a.rings));
+      const area = areaAt(x, z);
       if (!area || r(3) > (density[area.kind ?? "green"] ?? density.green)) continue;
       if (blocked(x, z, 0.9)) continue;
       if (nearRoad(x, z)) continue;
@@ -1524,8 +1682,21 @@ function syncCompanions() {
   });
   expedition.refreshWorld();
 }
-function hurtCompanion(m: Companion, damage: number) {
+/** Rolls a blow: ±30% and a chance to miss (shown as "pudło"). Huge values (instant
+ * kills) and fixed QA rolls pass unchanged. Returns 0 for a miss. */
+// Test runs (?qa=1) keep exact numbers unless they switch rolls on (fixedRolls(false)).
+let fixedRolls = new URLSearchParams(location.search).has("qa");
+function roll(damage: number, at: Point, missChance?: number) {
+  if (fixedRolls || damage >= 9999) return damage;
+  const dealt = rollDamage(damage, missChance);
+  if (!dealt) floatingText("pudło", at, "#d9ddd2");
+  return dealt;
+}
+const ENEMY_MISS = 0.08;
+function hurtCompanion(m: Companion, damage: number, exact = false) {
   if (m.c.hp <= 0 || safe(m.c)) return;
+  if (!exact) damage = roll(damage, m.c, ENEMY_MISS);
+  if (!damage) return;
   damage = takenBy(m.c, Math.max(1, Math.round(damage - armorPower(m.c) * 0.45)));
   if (!damage) return;
   m.c.hp = Math.max(0, m.c.hp - damage);
@@ -1932,6 +2103,8 @@ function populateEncounters() {
       !encounterAllowed(campaign, p, key, map.scale)
     )
       continue;
+    // New enemies appear only out of sight, never pop up on screen (from focused-tesla).
+    if (started && inView(p)) continue;
     spawnEnemy(p, seed, key);
   }
 }
@@ -2012,6 +2185,7 @@ async function travelTo(geo: Geo) {
   expedition.reproject((p) => project(unproject(p, oldOrigin), geo));
   campaign.origin = geo;
   worldStream = next;
+  worldStream.pin({ x: 0, z: 0 });
   map = nextMap;
   for (const e of enemies) removeEnemy(e);
   enemies.length = 0;
@@ -2491,6 +2665,11 @@ function updateDrops(dt: number) {
 }
 function hurtEnemy(e: Enemy, damage: number, by?: Character) {
   if (e.state === "dead") return;
+  damage = roll(damage, e.rig.root.position);
+  if (!damage) {
+    sound(420, 0.04, "triangle", 0.02);
+    return;
+  }
   e.hp -= damage;
   e.flash = 0.13;
   burst(e.rig.root.position, e.elite ? 0xffd270 : 0xf3e2ab);
@@ -2542,8 +2721,13 @@ function hurtEnemy(e: Enemy, damage: number, by?: Character) {
     persist();
   }
 }
-function hurtPlayer(damage: number) {
+function hurtPlayer(damage: number, exact = false) {
   if (time < invincibleUntil || time < deathUntil || safe(player)) return;
+  if (!exact) damage = roll(damage, player, ENEMY_MISS);
+  if (!damage) {
+    invincibleUntil = time + 0.35; // one miss per swing, not a miss every frame
+    return;
+  }
   damage = takenBy(player, Math.max(1, Math.round(damage - armorPower(player) * 0.45)));
   if (time < tauntUntil) damage = Math.round(damage * 0.7);
   if (time < manaShieldUntil && manaShield > 0) {
@@ -2694,7 +2878,7 @@ function updateEnemies(dt: number) {
         enemyScale(e) * Math.max(0, 1 - Math.max(0, e.timer - 0.6) * 2),
       );
       e.respawn -= dt;
-      if (e.respawn <= 0 && distance(player, e.spawn) > 10 && !safe(e.spawn)) {
+      if (e.respawn <= 0 && distance(player, e.spawn) > 10 && !safe(e.spawn) && !inView(e.spawn)) {
         const profile = encounterProfile(campaign, e.spawn, e.key, map.scale);
         e.tier = profile.tier;
         e.boss = profile.boss;
@@ -3091,7 +3275,10 @@ function updateHud() {
   // No fighting from the safe zone: Attack looks calm there (it still gathers goods).
   $("attack-stick").classList.toggle("calm", inSafe);
   // Gold and shards are the hero's own; the rest is the shared Vault.
-  const stockLine = `${player.coins} tix · ${player.fragments} odł. · ${campaign.stock.wood} drewna · ${campaign.stock.rope} m liny`;
+  // While the stake is in hand the rope left goes down (and back up) with every step.
+  const used = expedition?.ropeUsed() ?? 0,
+    ropeText = used ? `${Math.max(0, campaign.stock.rope - used)} m liny (rozwinięte ${used} m)` : `${campaign.stock.rope} m liny`;
+  const stockLine = `${player.coins} tix · ${player.fragments} odł. · ${campaign.stock.wood} drewna · ${ropeText}`;
   if ($("loot").textContent !== stockLine) $("loot").textContent = stockLine;
   const sweepLeft = Math.max(0, sweepReady - time),
     healLeft = Math.max(0, potionReady - time);
@@ -3109,6 +3296,8 @@ function updateHud() {
   }
   const off = offhandSkill(player),
     s2 = $<HTMLButtonElement>("skill2");
+  // A button joining or leaving the arc re-lays it out at once, not up to 250 ms later.
+  if (s2.hidden !== !off) arcClock = 0;
   s2.hidden = !off;
   if (off) {
     const left = Math.max(0, skill2Ready - time);
@@ -3320,7 +3509,7 @@ function bindControls() {
       Grafika: info && gl ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : "?",
       Tryb: compatibility ? "lżejszy (telefon)" : "pełny",
       Pełny_ekran: fullscreenState,
-      Przerysowania_świata: renderCount,
+      Przerysowania_świata: `${renderCount} (ostatnie ${lastRedrawMs} ms)`,
       Mapa: `${worldStream.tiles.size} kafli, ${map.buildings.length} budynków${worldStream.error ? ", błąd: " + worldStream.error : ""}`,
       Miejsce: `${geo.lat.toFixed(5)}, ${geo.lon.toFixed(5)}`,
       Drużyna: `${partyOf(campaign).length}, obozy ${campaign.camps.length}, liny ${campaign.camps.filter((c) => c.parentId).length + (campaign.connections?.length ?? 0)}`,
@@ -3369,6 +3558,9 @@ function bindControls() {
     location.reload();
   };
   $("start").onclick = () => {
+    // A wide block of map (about 3 km across) loads at once around the start, so
+    // walking near it fetches nothing (from focused-tesla's "load the map up front").
+    worldStream?.pin(player);
     // Production counted while away (capped); collected in the Vault.
     accrue(campaign, Date.now());
     const waiting = campaign.pending
@@ -3565,7 +3757,7 @@ function tick() {
   occlusionClock += dt;
   if (occlusionClock > 0.1) {
     occlusionClock = 0;
-    const occluded = new Set<T.Object3D>();
+    const occluded = new Set<object>();
     const actors = [
       hero.root.position,
       ...enemies
@@ -3575,39 +3767,36 @@ function tick() {
         )
         .map((e) => e.rig.root.position),
     ];
-    const nearbyBuildings = buildingViews
-      .filter(
-        (b) =>
-          b.box.x0 < player.x + 23 &&
-          b.box.x1 > player.x - 23 &&
-          b.box.z0 < player.z + 23 &&
-          b.box.z1 > player.z - 23,
-      )
-      .map((b) => b.node);
-    const sight = new T.Raycaster();
+    // March along the line from each actor up to the camera: a building hides the actor
+    // where the line passes over its outline lower than its roof.
     for (const actor of actors) {
-      const target = actor.clone().add(new T.Vector3(0, 0.8, 0));
-      const direction = target.clone().sub(camera.position);
-      sight.set(camera.position, direction.clone().normalize());
-      sight.far = direction.length() - 0.15;
-      for (const hit of sight.intersectObjects(nearbyBuildings, false))
-        occluded.add(hit.object);
-    }
-    for (const b of buildingViews) {
-      const near = occluded.has(b.node);
-      for (const m of b.materials) {
-        m.transparent = near;
-        m.opacity = near ? 0.15 : 1;
-        m.depthWrite = !near;
+      const from = actor.clone().add(new T.Vector3(0, 0.8, 0)),
+        dir = camera.position.clone().sub(from),
+        len = dir.length();
+      dir.divideScalar(len);
+      for (let t = 0.4; t < len; t += 0.4) {
+        const x = from.x + dir.x * t,
+          y = from.y + dir.y * t,
+          z = from.z + dir.z * t;
+        if (y > 40) break;
+        for (const b of obstacleCells.get(cellKey(x, z)) ?? [])
+          if (!occluded.has(b) && y < b.top && x >= b.box.x0 && x <= b.box.x1 && z >= b.box.z0 && z <= b.box.z1 && inPolygon(x, z, [b.ring]))
+            occluded.add(b);
       }
     }
+    // A building stays see-through a moment after it stops hiding someone, so a line
+    // grazing its edge does not make it blink on and off.
+    for (const b of occluded) hiddenBuildings.set(b, time + 0.6);
   }
+  fadeBuildings(dt);
   if (time - lastHud > 0.1 || paused || helpOpen || !started) {
     updateHud();
     lastHud = time;
   }
   try {
     renderer.render(scene, camera);
+    if (retiredMaterials.length) for (const m of retiredMaterials.splice(0)) m.dispose();
+    warmShaders();
     if (frameChecks > 0) {
       checkDrawingBuffer();
       frameChecks--;
@@ -3747,10 +3936,7 @@ async function init() {
             ? object.material.map(flat)
             : flat(object.material);
       });
-      for (const b of buildingViews)
-        b.materials = Array.isArray(b.node.material)
-          ? b.node.material
-          : [b.node.material];
+
     }
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
@@ -3841,6 +4027,9 @@ async function init() {
           weather: weatherNow,
           cameraYaw: camYawTarget,
           renders: renderCount,
+          draws: renderer?.info.render.calls ?? 0,
+          triangles: renderer?.info.render.triangles ?? 0,
+          faded: buildingViews.filter((b) => b.fade < 1).length,
           drops: drops.map((d) => ({ coin: d.coin ?? 0, slot: d.item?.slot ?? null, rarity: d.item?.rarity ?? null, landed: d.landed, x: d.x, z: d.z })),
           trees: treeSpots,
           terrain: field.w
@@ -3919,7 +4108,19 @@ async function init() {
                   player.hp = 25;
                 }
                 if (name === "death") {
-                  hurtPlayer(999);
+                  hurtPlayer(999, true);
+                }
+                if (name === "behind") {
+                  // QA: stand just north of a tall building, so it hides the hero from the camera.
+                  const b = buildingViews
+                    .filter((b) => Math.abs(b.box.x0 - player.x) < 150 && Math.abs(b.box.z0 - player.z) < 150)
+                    .sort((a, c) => c.data.height - a.data.height)[0];
+                  if (b) {
+                    const p = findFree({ x: (b.box.x0 + b.box.x1) / 2, z: b.box.z0 - 0.9 }, 0.5);
+                    player.x = p.x;
+                    player.z = p.z;
+                    cameraTarget.set(p.x, 0, p.z);
+                  }
                 }
                 if (name === "wall") {
                   const b = buildingViews.find((b) => Math.abs(b.box.x0) < 30);
@@ -3943,9 +4144,15 @@ async function init() {
               advanceOffers: (seed?: number) => {
                 for (const o of campaign.offers) {
                   o.readyAt = Date.now() - 1;
-                  if (seed !== undefined) o.seed = seed;
+                  if (seed !== undefined) {
+                    o.seed = seed;
+                    delete o.pool; // drawn again from the new seed
+                  }
                 }
                 resolveForQA();
+              },
+              setRope: (metres: number) => {
+                campaign.stock.rope = metres;
               },
               travel: (lat: number, lon: number) => travelTo({ lat, lon }),
               // Rope travel: tap the rope nearest a point, then press the ride button.
@@ -4071,7 +4278,10 @@ async function init() {
                   lastCombat = time - 10;
                 }
               },
-              hurt: (n: number) => hurtPlayer(n),
+              hurt: (n: number) => hurtPlayer(n, true),
+              fixedRolls: (on = true) => {
+                fixedRolls = on;
+              },
               attack: (s = false) => beginAttack(s, true),
               potion: usePotion,
               loseContext: () => contextControl?.loseContext(),

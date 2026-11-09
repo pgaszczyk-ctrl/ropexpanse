@@ -13,6 +13,21 @@ Aktualizacja: 08.11.2026 (plan poprawek dopisany po południu). Ta sekcja jest a
 - **Do sprawdzenia przez właściciela:** CORS kubełka R2 erpeg musi dopuszczać `https://pgaszczyk-ctrl.github.io` (inaczej mapa spoza Lublina idzie wolnym Overpass); listy imion regionów (szkic) do weryfikacji przez osoby z regionów; test na fizycznym telefonie.
 - **Grafika:** właściciel zamawia modele voxel chibi u grafika. Uwagi do pierwszej próbki (ciało bazowe): głowa ~40% wysokości, poza w gotowości, rzuty ortograficzne w jednej skali, 5–6 kolorów, potem pełny wojownik jako wzorzec. Wszystkie obecne modele (postacie, wrogowie, broń, zasoby, wyziewy) są tymczasowe z kodu — do podmiany na GLB, gdy przyjdą.
 
+## Poprawki po zgłoszeniu z 8 listopada (wieczór)
+
+- **Utknięcie z palikiem:** przy 0 m liny w Skarbcu postać nie mogła zrobić kroku (lina pozwalała tylko na długość z zapasu). Teraz: bez liny na najbliższy obóz (~100 m) palika nie da się wziąć (komunikat „Za mało liny… skręć ją z włókna”); na końcu liny zawsze można iść z powrotem; przy własnym obozie przycisk akcji to **Zwiń linę** (na telefonie nie było Esc).
+- **Rekrutacja:** ogłoszenie nadal wisi 5 minut, ale chętni zgłaszają się w trakcie, przy sprawdzeniach po 10-20-30-60-90-120-180-240-300 s (`RECRUIT_CHECKS`), i można ich zatrudnić od razu. Kto się zgłosi i kiedy — losowane raz z ziarna oferty (`offer.pool`), odświeżenie nic nie zmienia.
+- **Przycięcia (żabkowanie):** przebudowa świata (co ~150 m marszu i po nowych kaflach) trwała ~0,4 s: kolorowanie gruntu sprawdzało każdą komórkę z każdym wielokątem (teraz kubełki, `areaAt`), a zwalniane materiały budynków kasowały skompilowane shadery, które kompilowały się od nowa. Dodatkowo shadery wszystkiego w scenie (także ukrytego: obrys postaci za budynkiem, łupy, grunt) kompilują się zawczasu (`warmShaders`), a nie w klatce pierwszego pokazania. W pomiarze headless przebudowa ~70 ms zamiast ~420 ms; w trakcie gry nie kompiluje się już żaden nowy shader.
+- **Mruganie dachów i dróg:** budynek zasłaniający postać przełączał się co 0,1 s między pełnym a przezroczystym — teraz płynnie zanika i wraca (z opóźnieniem 0,6 s). Drogi dostały przesunięcie głębi, a wysokość terenu liczona jest po tych samych trójkątach co siatka gruntu (grunt nie przebija drogi).
+- Testy: `npm test` (15) i `npm run test:browser` (10 plików, komputer + telefon w emulacji) zaliczone; nowy test przeglądarkowy liny (zwijanie, brak liny, powrót na zużytej linie). Brak testu na fizycznym telefonie.
+
+## Druga runda uwag z 8 listopada
+
+- **Lina:** obozy co najmniej 500 m od siebie (`BALANCE.minCampDistance`), jeden odcinek do 1200 m (`ropeLength`). Start: 2500 m liny; 1 włókno = 25 m; powroźnik 50 m/h. Pasek zasobów pokazuje na żywo, ile liny zostało i ile jest rozwinięte; przy napiętej/skończonej linie komunikat. Za blisko obozu → „odejdź jeszcze N m” (zielone kółka tylko przy braku miejsca).
+- **Obrażenia:** każdy cios ±30% od wartości bazowej, 10% pudła dla bohaterów i towarzyszy, 8% dla wrogów; napis „pudło” (`rollDamage` w `rules.ts`). Ciosy zabijające natychmiast (99999) bez losowania. W `?qa=1` liczby są stałe, chyba że test włączy losowanie (`__combat3d.fixedRolls(false)`).
+- **Ekwipunek:** figurka postaci z polami na hełm, zbroję, broń, drugą rękę i buty, z ikonami założonych rzeczy; dotknięcie pokazuje szczegóły i „Zdejmij”.
+- Wartości (500 m, 1200 m, 2500 m, ±30%, 10%) są startowe do strojenia.
+
 ## Co jest w grze (skrót)
 
 - **Mapa:** kafle Protomaps PMTiles z archiwum erpeg (R2, odczyt Range, cache), Overpass tylko awaryjnie; dołączony fragment Lublina offline (`src/combat3d/osmTiles.ts`, `world.ts`).

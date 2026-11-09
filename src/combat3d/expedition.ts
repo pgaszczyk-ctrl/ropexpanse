@@ -14,6 +14,7 @@ import {
   transfer,
   postOffer,
   resolveOffers,
+  offerCandidates,
   hire,
   cancelOffer,
   offerAt,
@@ -170,6 +171,10 @@ function offerShare(o: { readyAt: number }) {
     Math.min(100, 100 - ((o.readyAt - Date.now()) / BALANCE.recruitmentMs) * 100),
   );
 }
+/** Faint outline in an empty slot of the figure. */
+const SLOT_GHOST = { weapon: "sword", offhand: "shield", armor: "armor", helmet: "helmet", boots: "boots" } as const;
+/** The figure behind the equipment slots (simple, readable at phone size). */
+const DOLL_FIGURE = `<svg class="doll-figure" viewBox="0 0 180 300" aria-hidden="true"><g fill="#7c8b79" opacity=".28"><circle cx="90" cy="42" r="27"/><path d="M57 80 24 104 5 190 25 198 51 137 51 205 60 296 81 296 89 221 98 296 122 296 130 204 130 135 156 198 175 190 154 104 123 80Z"/></g></svg>`;
 function itemBadge(item: Item) {
   return item.slot === "material"
     ? ""
@@ -643,41 +648,69 @@ export class Expedition {
     col.append(grid);
     layout.append(col);
     const side = node("aside", "", "equipment");
+    // The hero with what they wear: helmet on the head, armour on the body, weapon and
+    // second hand at the sides, boots at the feet. A tap picks the piece (details below).
     if (!vault) {
+      const doll = node("div", "", "doll");
+      doll.innerHTML = DOLL_FIGURE;
       for (const [slot, label] of [
-        ["weapon", "Broń"],
-        ["offhand", "Druga ręka"],
-        ["armor", "Zbroja"],
         ["helmet", "Hełm"],
+        ["weapon", "Broń"],
+        ["armor", "Zbroja"],
+        ["offhand", "Druga ręka"],
         ["boots", "Buty"],
       ] as const) {
         const item = c.equipment[slot];
         const b = button(
-          item ? `${item.name} · ${item.power}` : label,
+          "",
           () => {
-            if (item && c.bag.length < BALANCE.slots) {
-              delete c.equipment[slot];
-              c.bag.push(item);
-              c.hp = Math.min(c.hp, maxHealth(c));
-              this.h.save();
-              this.render();
-            }
+            if (!item) return;
+            this.selectedItem = item.id;
+            this.render();
           },
-          "equipment-slot",
+          `doll-slot doll-${slot}`,
         );
-        side.append(b);
+        if (item) {
+          b.innerHTML = itemIcon(item) + itemBadge(item);
+          b.style.setProperty("--item-rarity", RARITY_COLORS[(item.rarity as keyof typeof RARITY_COLORS) ?? "common"] ?? RARITY_COLORS.common);
+          b.setAttribute("aria-label", `${label}: ${item.name}, ${itemStat(item)}`);
+          b.title = `${item.name} · ${itemStat(item)}`;
+          b.classList.add("filled");
+          b.classList.toggle("selected", this.selectedItem === item.id);
+        } else {
+          b.innerHTML = `<svg viewBox="0 0 56 56" aria-hidden="true">${paths[SLOT_GHOST[slot]]}</svg><small>${label}</small>`;
+          b.setAttribute("aria-label", `${label}: puste`);
+        }
+        doll.append(b);
       }
+      side.append(doll);
     }
-    const item = items.find((i) => i.id === this.selectedItem);
+    const worn = vault ? undefined : Object.entries(c.equipment).find(([, i]) => i?.id === this.selectedItem);
+    const item = items.find((i) => i.id === this.selectedItem) ?? worn?.[1];
     if (item) {
       side.append(
         node("h3", item.name),
         node(
           "p",
-          `${item.slot === "weapon" ? "Atak" : "Obrona"} ${item.power}`,
+          itemStat(item),
         ),
       );
-      if (!vault && item.slot !== "material")
+      if (worn)
+        side.append(
+          button("Zdejmij", () => {
+            if (c.bag.length >= BALANCE.slots) {
+              this.h.notify("Plecak jest pełny");
+              return;
+            }
+            delete c.equipment[worn[0] as keyof typeof c.equipment];
+            c.bag.push(item);
+            c.hp = Math.min(c.hp, maxHealth(c));
+            this.h.switch(c);
+            this.h.save();
+            this.render();
+          }),
+        );
+      else if (!vault && item.slot !== "material")
         side.append(
           button("Załóż", () => {
             equip(c, item.id);
@@ -686,7 +719,7 @@ export class Expedition {
             this.render();
           }),
         );
-      if (nearCamp(s, c))
+      if (nearCamp(s, c) && !worn)
         side.append(
           button(vault ? "Do plecaka" : "Do skarbca", () => {
             if (
@@ -747,11 +780,13 @@ export class Expedition {
     const o = offerAt(s, camp.id);
     if (o) {
       this.body.append(node("p", `${o.gold} tix · ${o.items.length} przedm.`));
-      if (o.candidates !== null) {
-        this.title.textContent = o.candidates.length
+      // Candidates can be hired as soon as they turn up, while the notice still hangs.
+      const visible = offerCandidates(o);
+      if (o.candidates !== null || visible.length) {
+        this.title.textContent = visible.length
           ? "Zgłoszenia"
           : "Brak zgłoszeń";
-        for (const v of o.candidates)
+        for (const v of visible)
           this.body.append(
             withLabel(
               button("", () => {
@@ -772,7 +807,11 @@ export class Expedition {
               "Zatrudnij",
             ),
           );
-      } else {
+      }
+      if (o.candidates === null) {
+        this.body.append(
+          node("p", visible.length ? "Ogłoszenie wisi jeszcze:" : "Czekamy na chętnych… Ogłoszenie wisi jeszcze:"),
+        );
         const remaining = Math.max(
           0,
           Math.ceil((o.readyAt - Date.now()) / 1000),
@@ -916,6 +955,15 @@ export class Expedition {
           this.hideMenu();
           return;
         }
+        // Without enough rope for the nearest possible camp the hero would stand tied
+        // to the tent, unable to take a step.
+        if (this.ropeMax() < BALANCE.minCampDistance) {
+          this.hideMenu();
+          this.h.notify(
+            `Za mało liny (masz ${this.h.state.stock.rope} m, potrzeba ${Math.ceil(BALANCE.minCampDistance / SCALE)} m). Skręć ją z włókna w Skarbcu.`,
+          );
+          return;
+        }
         this.rope = {
           campId: camp.id,
           points: [
@@ -944,7 +992,22 @@ export class Expedition {
     menu.style.left = `${Math.max(10, Math.min(innerWidth - 195, ((p.x + 1) * innerWidth) / 2 + 30))}px`;
     menu.style.top = `${Math.max(10, Math.min(innerHeight - 160, ((1 - p.y) * innerHeight) / 2 - 40))}px`;
   }
+  /** Holding the stake by the camp it came from: the action rolls the rope back in. */
+  private canRollBack() {
+    if (!this.rope || this.connectionTarget()) return false;
+    const from = this.h.state.camps.find((c) => c.id === this.rope!.campId);
+    return !!from && distance(from, activeCharacter(this.h.state)) <= BALANCE.safeRadius;
+  }
+  private rollBack() {
+    this.rope = null;
+    this.spotList = [];
+    this.h.notify("Lina zwinięta");
+  }
   action() {
+    if (this.rope && this.canRollBack()) {
+      this.rollBack();
+      return;
+    }
     if (!this.h.canAct()) return;
     if (this.rope) {
       this.place();
@@ -955,7 +1018,8 @@ export class Expedition {
   click(clientX: number, clientY: number) {
     if (!this.h.canAct()) return false;
     if (this.rope) {
-      this.place();
+      if (this.canRollBack()) this.rollBack();
+      else this.place();
       return true;
     }
     const v = new T.Vector2(
@@ -1100,10 +1164,9 @@ export class Expedition {
       return "";
     }
     if (!this.h.contains(c)) return "Mapa jeszcze się wczytuje";
-    if (
-      this.h.state.camps.some((v) => distance(v, c) < BALANCE.minCampDistance)
-    )
-      return "Za blisko obozu";
+    const nearest = Math.min(...this.h.state.camps.map((v) => distance(v, c)));
+    if (nearest < BALANCE.minCampDistance)
+      return `Za blisko obozu — odejdź jeszcze ${Math.ceil((BALANCE.minCampDistance - nearest) / SCALE)} m`;
     if (this.h.state.stock.wood < BALANCE.campWood)
       return `Potrzebujesz ${BALANCE.campWood} drewna`;
     if (routeLength(this.rope.points) > this.ropeMax())
@@ -1140,6 +1203,11 @@ export class Expedition {
       this.h.notify("Mapa tej postaci jest niedostępna");
     }
   }
+  /** Metres of rope run out right now (0 without the stake in hand). */
+  ropeUsed() {
+    return this.rope ? Math.ceil(routeLength(this.rope.points) / SCALE) : 0;
+  }
+  private tautNotice = 0;
   /** Longest rope the hero can run out now (stretch limit or what is left in the Vault). */
   private ropeMax() {
     return ropeAvailable(this.h.state, SCALE);
@@ -1210,7 +1278,20 @@ export class Expedition {
   moveAllowed(next: Point) {
     if (!this.rope) return true;
     const points = updateRope(this.rope.points, next, this.h.obstacles());
-    if (!points || routeLength(points) > this.ropeMax()) return false;
+    if (!points) return false;
+    // At the end of the rope the hero can still walk back (a step that shortens it).
+    const length = routeLength(points);
+    if (length > this.ropeMax() && length > routeLength(this.rope.points)) {
+      if (Date.now() - this.tautNotice > 2500) {
+        this.tautNotice = Date.now();
+        this.h.notify(
+          this.ropeMax() < BALANCE.ropeLength
+            ? "Skończyła się lina — wbij palik albo wróć"
+            : `Lina napięta (${Math.round(BALANCE.ropeLength / SCALE)} m) — wbij palik`,
+        );
+      }
+      return false;
+    }
     this.rope.points = points;
     return true;
   }
@@ -1298,7 +1379,9 @@ export class Expedition {
     el("action-label").textContent = this.rope
       ? this.connectionTarget()
         ? "Połącz obozy"
-        : "Rozstaw obóz"
+        : this.canRollBack()
+          ? "Zwiń linę"
+          : "Rozstaw obóz"
       : this.selected
         ? "Otwórz obóz"
         : "Akcja";
@@ -1353,23 +1436,32 @@ export class Expedition {
     if (this.clock > 0.25) {
       const why = this.rope ? this.placementError() : "";
       this.spotList =
-        why === "Brak miejsca na obóz" || why === "Za blisko obozu"
+        why === "Brak miejsca na obóz"
           ? this.freeSpots()
           : [];
       this.clock = 0;
       this.noticeClock += 0.25;
       this.positionMenu();
-      const pending = s.offers.filter(
-        (o) => o.candidates === null && Date.now() >= o.readyAt,
+      const before = new Map(
+        s.offers
+          .filter((o) => o.candidates === null)
+          .map((o) => [o, offerCandidates(o).length] as const),
       );
       const changed = resolveOffers(s);
       if (changed) {
         this.h.save();
-        this.h.notify(
-          pending.some((o) => o.candidates?.length)
-            ? "Nowe zgłoszenia do rekrutacji"
-            : "Brak zgłoszeń do rekrutacji",
-        );
+        let arrived = 0,
+          empty = false;
+        for (const [o, n] of before) {
+          const now = offerCandidates(o).length;
+          arrived += now - n;
+          if (o.candidates?.length === 0) empty = true;
+        }
+        if (arrived)
+          this.h.notify(
+            arrived > 1 ? "Nowi chętni zgłosili się do rekrutacji" : "Ktoś zgłosił się do rekrutacji",
+          );
+        else if (empty) this.h.notify("Brak zgłoszeń do rekrutacji");
         if (this.view === "recruit") this.render();
       } else if (
         this.view === "recruit" &&
@@ -1397,7 +1489,7 @@ export class Expedition {
         : "Wczytywanie mapy…";
       el("characters").classList.toggle(
         "has-candidates",
-        s.offers.some((o) => !!o.candidates?.length),
+        s.offers.some((o) => offerCandidates(o).length > 0),
       );
     }
   }

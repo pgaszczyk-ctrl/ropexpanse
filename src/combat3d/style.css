@@ -1172,7 +1172,7 @@ footer > span:last-child,
   width: 36px;
   height: 36px;
 }
-#panel-body button:not(.item-slot) {
+#panel-body button:not(.item-slot):not(.doll-slot) {
   cursor: pointer;
   border: 1px solid #c7cdc1;
   border-radius: 8px;
@@ -1197,14 +1197,6 @@ footer > span:last-child,
 .inventory-column {
   min-width: 0;
   position: relative;
-}
-.inventory-column:before {
-  content: "";
-  pointer-events: none;
-  position: absolute;
-  inset: 40px 0 10px;
-  background: center/65% auto no-repeat
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 300'%3E%3Cg fill='%237c8b79' opacity='.10'%3E%3Ccircle cx='90' cy='42' r='27'/%3E%3Cpath d='M57 80 24 104 5 190 25 198 51 137 51 205 60 296 81 296 89 221 98 296 122 296 130 204 130 135 156 198 175 190 154 104 123 80Z'/%3E%3C/g%3E%3C/svg%3E");
 }
 .item-grid {
   position: relative;
@@ -1260,6 +1252,79 @@ footer > span:last-child,
 }
 .equipment-slot {
   min-height: 46px;
+}
+/* The hero with what they wear: slots placed on a figure. */
+.doll {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: auto auto auto auto;
+  grid-template-areas:
+    ". helmet ."
+    "weapon armor offhand"
+    ". . ."
+    ". boots .";
+  gap: 6px;
+  padding: 4px 0 6px;
+  grid-column: 1 / -1;
+}
+.doll-figure {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.doll-slot {
+  position: relative;
+  aspect-ratio: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px dashed #bfc4bc;
+  background: #f0f1ef55;
+  cursor: default;
+}
+.doll-slot svg {
+  width: 70%;
+  height: 70%;
+}
+.doll-slot:not(.filled) svg {
+  opacity: 0.22;
+  filter: grayscale(1);
+}
+.doll-slot small {
+  font-size: 10px;
+  line-height: 1;
+  color: #92998e;
+  margin-top: 2px;
+}
+.doll-slot.filled {
+  cursor: pointer;
+  border: 2px solid var(--item-rarity, #bfc4bc);
+  background: #f0f1efaa;
+}
+.doll-slot.filled svg {
+  filter: drop-shadow(0 3px 2px #26362b1b);
+}
+.doll-slot.selected {
+  border-color: #9a793c;
+  background: #eee7d5;
+}
+.doll-helmet { grid-area: helmet; }
+.doll-weapon { grid-area: weapon; }
+.doll-armor { grid-area: armor; }
+.doll-offhand { grid-area: offhand; }
+.doll-boots { grid-area: boots; }
+.doll::after {
+  content: "";
+  grid-row: 3;
+  grid-column: 2;
+  height: 26px;
 }
 .offer-grid {
   display: grid;
@@ -1383,6 +1448,11 @@ canvas[data-interaction="camp"] {
   }
 }
 @media (max-width: 600px) {
+  .doll {
+    max-width: 240px;
+    justify-self: center;
+    width: 100%;
+  }
   .inventory-layout {
     grid-template-columns: 1fr;
   }
@@ -1481,14 +1551,14 @@ canvas[data-interaction="camp"] {
 .equipment p {
   color: #cbb48a;
 }
-#panel-body button:not(.item-slot) {
+#panel-body button:not(.item-slot):not(.doll-slot) {
   background: linear-gradient(#4a3a2a, #2b221b);
   color: #f6e8c8;
   border: 1px solid #b9853e;
   border-radius: 8px;
   font: 15px "Trebuchet MS", "Segoe UI", sans-serif;
 }
-#panel-body button:not(.item-slot):hover {
+#panel-body button:not(.item-slot):not(.doll-slot):hover {
   background: linear-gradient(#5b4733, #33281f);
 }
 #panel-body button:disabled {
@@ -1516,9 +1586,27 @@ canvas[data-interaction="camp"] {
   color: #ffe5ab;
   text-shadow: 0 1px 2px #000;
 }
-.inventory-column:before {
-  opacity: 0.35;
-  filter: invert(1);
+#panel-body .doll-slot {
+  background: #0e0c0a66;
+  border: 1px dashed #6f5532;
+}
+#panel-body .doll-slot.filled {
+  border: 2px solid var(--item-rarity, #6f5532);
+  background: #1c1712cc;
+}
+#panel-body .doll-slot.filled:hover {
+  background: #2f261d;
+}
+#panel-body .doll-slot.selected {
+  border-color: var(--gold);
+  background: #4a3a2a;
+}
+#panel-body .doll-slot small {
+  color: #a8936c;
+}
+.doll-figure g {
+  fill: #cbb48a;
+  opacity: 0.16;
 }
 .equipment h3 {
   color: var(--gold);
