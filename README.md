@@ -37,6 +37,10 @@ Po buildzie `npm run export:offline` zapisuje pojedynczy HTML do `work/combat3d/
 
 Nie ma jeszcze sklepu, ekwipunku z prawdziwymi przedmiotami, kampanii, kont ani synchronizacji. Biały ekran na fizycznym telefonie użytkownika pozostaje do ponownego sprawdzenia — testy emulowane nie potwierdzają zgodności konkretnego urządzenia.
 
+## Diagnostyka
+
+Dopisz `?diag=1` do adresu gry (np. `https://…/index.html?diag=1`). W lewym górnym rogu pojawi się licznik FPS, najdłuższej klatki i skoków oraz przycisk „Raport”. Raport zawiera: dane urządzenia i GPU, każdy skok klatki z kontekstem (czas logiki i renderowania, nowe siatki, stan gry, zdarzenia tuż przed), długie zadania JS, zdarzenia gry (wczytywanie, obóz, pauza, wrogowie) i podsumowanie każdej sekundy. Można go skopiować, udostępnić lub pobrać. Raport zapisuje się też lokalnie co 5 s, więc po przeładowaniu strony jest dostępny jako „raport z poprzedniej sesji”. Nic nie jest wysyłane.
+
 ## Dokumentacja
 
 - [Aktualny stan i przekazanie kontekstu](docs/STATE.md)

@@ -14,6 +14,7 @@ import {
   type Point,
 } from "./rules";
 import { World } from "./world.ts";
+import { Diag } from "./diag.ts";
 import { tileTemplate, TILE_SOURCE } from "./tiles.ts";
 import type { Building, Road, AreaKind } from "./geo.ts";
 
@@ -26,10 +27,14 @@ type MapData = {
   roads: Road[];
   areas: { rings: number[][][]; water: boolean; name: string }[];
 };
+/** ?diag=1: records frame times and game events into a report the player can copy. */
+const diag = new Diag();
 /** Map loaded before play: 2.5 km around the hero (5 km across). */
 const LOAD_RADIUS = 2500 * 0.18;
 /** Regions farther than this from a new camp are freed. */
 const KEEP_RADIUS = 4200 * 0.18;
+/** Regions whose square is farther than this from the hero are skipped by the renderer. */
+const FOCUS_REACH = 110;
 type Enemy = {
   id: number;
   rig: Rig;
@@ -233,6 +238,7 @@ let edgeHintAt = -100,
   edgeClock = 0;
 function mapEdgeHint(atEdge: boolean) {
   if (time - edgeHintAt < (atEdge ? 8 : 40) || camp) return;
+  diag.event(atEdge ? "krawędź mapy" : "blisko krawędzi mapy");
   edgeHintAt = time;
   notify(
     mapSource !== "tiles"
@@ -542,6 +548,8 @@ function startCamp() {
   attack = null;
   resetInput();
   camp = { ...layout, t: 0, loaded: false, failed: 0, done: 0, total: 0, finishing: 0, strikes: 0 };
+  diag.event("obóz: start", `${Math.round(at.x)},${Math.round(at.z)}`);
+  const campLoadStart = performance.now();
   // The camp becomes the new refuge at once: enemies back off while the tent goes up.
   home = { ...at };
   placeRefuge();
@@ -556,8 +564,14 @@ function startCamp() {
         current.total = total;
         current.failed = failed;
       })
-      .then(() => (current.loaded = true))
-      .catch(() => (current.loaded = true));
+      .then((r) => {
+        current.loaded = true;
+        diag.event("obóz: mapa wczytana", `${r.total} kafelków, błędy ${r.failed}, ${Math.round(performance.now() - campLoadStart)} ms`);
+      })
+      .catch((e) => {
+        current.loaded = true;
+        diag.event("obóz: błąd mapy", String(e));
+      });
   else current.loaded = true;
   campStatus();
   persist();
@@ -679,7 +693,14 @@ function updateCamp(dt: number) {
     heading = Math.atan2(c.fire.x - player.x, c.fire.z - player.z);
     if (t >= CAMP.rest && c.loaded && !c.finishing) {
       c.finishing = t;
+      let mark = performance.now();
       world.unloadFar(home, KEEP_RADIUS, [home]);
+      diag.event("obóz: zwolnienie dalekiej mapy", `${Math.round(performance.now() - mark)} ms`);
+      // Upload the new kilometres now, while the camera still shows the camp.
+      mark = performance.now();
+      world.prewarm(renderer);
+      world.setFocus(player.x, player.z, FOCUS_REACH);
+      diag.event("obóz: wysłanie mapy do GPU", `${Math.round(performance.now() - mark)} ms`);
       const msg =
         mapSource !== "tiles"
           ? "Obóz rozbity — to Twoje nowe schronienie."
@@ -691,6 +712,7 @@ function updateCamp(dt: number) {
     }
     if (c.finishing && t > c.finishing + 0.9) {
       camp = null;
+      diag.event("obóz: koniec");
       hero.root.position.y = 0;
       props.mallet.visible = false;
       selectWeapon(weapon);
@@ -798,6 +820,7 @@ function spawnEnemy(p: Point, id: number) {
 }
 /** Brings an enemy back at a new, unseen place with full health. */
 function revive(e: Enemy, p: Point) {
+  diag.event("wróg pojawia się", `${e.kind} ${Math.round(distance(player, p))} m od gracza`);
   e.state = "idle";
   e.hp = e.maxHp;
   e.timer = 0;
@@ -893,6 +916,7 @@ function hurtPlayer(damage: number) {
   sound(95, 0.11, "sawtooth", 0.04);
   if (player.hp <= 0) {
     deathUntil = time + 1.1;
+    diag.event("śmierć");
     player.exp = deathExperience(player.exp);
     player.coins = 0;
     attack = null;
@@ -1245,6 +1269,7 @@ function resetInput() {
 }
 let cancelSticks = () => {};
 function setPause(value: boolean) {
+  if (value !== paused) diag.event(value ? "pauza" : "wznowienie");
   paused = value;
   resetInput();
   persist();
@@ -1402,6 +1427,7 @@ function bindControls() {
     location.reload();
   };
   $("start").onclick = () => {
+    diag.event("start gry");
     void enterFullscreen();
     started = true;
     $("loading").hidden = true;
@@ -1427,6 +1453,7 @@ function bindControls() {
 }
 let orientationHeld = false;
 function resize() {
+  diag.event("zmiana rozmiaru", `${innerWidth}×${innerHeight}`);
   const touch = matchMedia("(pointer: coarse)").matches;
   const hold = touch && innerHeight > innerWidth;
   if (hold !== orientationHeld) resetInput();
@@ -1445,8 +1472,12 @@ function resize() {
   frameChecks = 3;
 }
 const clock = new T.Clock();
+let shadowRedraws = 0,
+  lastAdded = 0,
+  lastRemoved = 0;
 function tick() {
   requestAnimationFrame(tick);
+  const frameStart = performance.now();
   const raw = clock.getDelta(),
     dt = Math.min(raw, 0.1);
   frames.push(raw);
@@ -1612,6 +1643,7 @@ function tick() {
     ]);
   }
   unknownLand.position.set(player.x, -0.03, player.z);
+  world.setFocus(cameraTarget.x, cameraTarget.z, FOCUS_REACH);
   // The static shadow map follows the hero in steps and redraws only after a move or new map.
   if (sun.castShadow && (world.dirty || distance(player, shadowCenter) > 20)) {
     shadowCenter = { x: player.x, z: player.z };
@@ -1620,11 +1652,14 @@ function tick() {
     sun.target.updateMatrixWorld();
     renderer.shadowMap.needsUpdate = true;
     world.dirty = false;
+    shadowRedraws++;
+    diag.event("przerysowanie cieni", String(shadowRedraws));
   }
   if (time - lastHud > 0.1 || paused || helpOpen || !started) {
     updateHud();
     lastHud = time;
   }
+  const renderStart = performance.now();
   try {
     renderer.render(scene, camera);
     if (frameChecks > 0) {
@@ -1636,6 +1671,89 @@ function tick() {
       `Błąd rysowania świata: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  if (diag.on && started) recordFrame(raw, renderStart - frameStart, performance.now() - renderStart);
+}
+function recordFrame(raw: number, update: number, render: number) {
+  if (world.added !== lastAdded || world.removed !== lastRemoved) {
+    diag.event("mapa", `+${world.added - lastAdded} / −${world.removed - lastRemoved} regionów`);
+    lastAdded = world.added;
+    lastRemoved = world.removed;
+  }
+  const info = renderer.info;
+  diag.frame(raw * 1000, update, render, {
+    draw: info.render.calls,
+    tri: info.render.triangles,
+    geometries: info.memory.geometries,
+    programs: info.programs?.length ?? 0,
+    regions: world.regions.size,
+    visible: [...world.regions.values()].filter((r) => r.group.visible).length,
+    x: player.x,
+    z: player.z,
+    enemiesNear: enemies.filter((e) => e.state !== "dead" && distance(player, e.rig.root.position) < 20).length,
+    state: camp
+      ? `obóz ${camp.t.toFixed(1)}s`
+      : paused
+        ? "pauza"
+        : helpOpen
+          ? "pomoc"
+          : orientationHeld
+            ? "pion"
+            : deathUntil > time
+              ? "śmierć"
+              : safe(player)
+                ? "schronienie"
+                : "dzicz",
+  });
+  if (time - lastHud < 0.001 || Math.random() < 0.1)
+    $("diag-live").textContent = `DIAG ${diag.fps} FPS · max ${diag.worst} ms · skoki ${diag.spikeCount}`;
+}
+function setupDiag() {
+  const gl = renderer.getContext(),
+    dbg = gl.getExtension("WEBGL_debug_renderer_info"),
+    nav = navigator as Navigator & { deviceMemory?: number };
+  diag.setHeader({
+    data: new Date().toISOString(),
+    wersja: __BUILD__,
+    przeglądarka: navigator.userAgent,
+    ekran: `${screen.width}×${screen.height} · okno ${innerWidth}×${innerHeight} · dpr ${devicePixelRatio}`,
+    gpu: dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : "nieznane",
+    tryb: `${compatibility ? "zgodności (telefon)" : "standardowy"}${safeGraphics ? " · safe" : ""} · cienie ${sun.castShadow ? "tak" : "nie"} · pixelRatio ${renderer.getPixelRatio()}`,
+    procesor: `${navigator.hardwareConcurrency || "?"} wątków · pamięć ${nav.deviceMemory ?? "?"} GB`,
+    mapa: `${mapSource} · ${world.regions.size} regionów · ${world.buildingCount} brył`,
+  });
+  const previous = Diag.takePrevious();
+  $("diag").hidden = false;
+  const text = $<HTMLTextAreaElement>("diag-text");
+  const open = () => {
+    if (started && !paused) setPause(true);
+    text.value = diag.report();
+    $("diag-prev").hidden = !previous;
+    $("diag-sheet").hidden = false;
+  };
+  $("diag-open").onclick = open;
+  $("diag-close").onclick = () => ($("diag-sheet").hidden = true);
+  $("diag-prev").onclick = () => (text.value = previous ?? "");
+  $("diag-copy").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(text.value);
+      $("diag-copy").textContent = "Skopiowano ✓";
+    } catch {
+      text.select();
+      document.execCommand("copy");
+      $("diag-copy").textContent = "Zaznaczone — skopiuj ręcznie";
+    }
+  };
+  $("diag-share").hidden = !navigator.share;
+  $("diag-share").onclick = () =>
+    void navigator.share?.({ title: "ROPExpanse — raport", text: text.value }).catch(() => {});
+  $("diag-download").onclick = () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text.value], { type: "text/plain" }));
+    a.download = `ropexpanse-diag-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  window.addEventListener("pagehide", () => diag.save());
 }
 async function init() {
   try {
@@ -1646,6 +1764,7 @@ async function init() {
     };
     $("reload-renderer").onclick = () => location.reload();
     canvas.addEventListener("webglcontextlost", (event) => {
+      diag.event("utrata kontekstu WebGL");
       event.preventDefault();
       contextLost = true;
       rendererProblem(
@@ -1653,6 +1772,7 @@ async function init() {
       );
     });
     canvas.addEventListener("webglcontextrestored", () => {
+      diag.event("przywrócony kontekst WebGL");
       contextLost = false;
       rendererFault = "";
       frameChecks = 3;
@@ -1666,7 +1786,9 @@ async function init() {
       antialias: !compatibility,
       alpha: false,
       powerPreference: compatibility ? "default" : "high-performance",
-      preserveDrawingBuffer: compatibility,
+      // Not preserved: on tiled mobile GPUs that forces a full copy every frame. The health
+      // check reads pixels right after rendering, which works without it.
+      preserveDrawingBuffer: false,
       precision: compatibility ? "mediump" : "highp",
     });
     const contextControl = renderer
@@ -1695,10 +1817,12 @@ async function init() {
       try {
         world.template = await tileTemplate(params.get("tiles") || TILE_SOURCE);
         const label = $("loading-text");
+        const loadStart = performance.now();
         const result = await world.ensure(startAt, LOAD_RADIUS, (done, total) => {
           label.textContent = `Wczytuję mapę okolicy (5 km): ${done} / ${total} fragmentów…`;
         });
         await world.ensure(homeAt, 40);
+        diag.event("mapa startowa", `${result.total} kafelków, błędy ${result.failed}, ${Math.round(performance.now() - loadStart)} ms`);
         tilesReady = result.failed < result.total && world.covered(startAt.x, startAt.z);
       } catch (error) {
         console.warn("Kafelki mapy niedostępne, używam zapisanego wycinka", error);
@@ -1755,8 +1879,17 @@ async function init() {
     bindControls();
     resize();
     window.addEventListener("resize", resize);
-    // Compile every shader before the first frame so the opening seconds do not stutter.
-    renderer.compile(scene, camera);
+    // Compile every shader and upload every mesh before the first frame, so the
+    // opening minutes of walking never wait for the GPU.
+    $("loading-text").textContent = "Przygotowuję grafikę…";
+    let mark = performance.now();
+    await renderer.compileAsync(scene, camera);
+    diag.event("kompilacja shaderów", `${Math.round(performance.now() - mark)} ms`);
+    mark = performance.now();
+    world.prewarm(renderer);
+    world.setFocus(player.x, player.z, FOCUS_REACH);
+    diag.event("wysłanie mapy do GPU", `${Math.round(performance.now() - mark)} ms`);
+    if (diag.on) setupDiag();
     ready = true;
     $("loading-text").textContent =
       "Prawdziwy układ Starego Miasta. Nowy bohater, miecz, magia i sweep. Sprawdź, czy walka daje frajdę.";
@@ -1803,6 +1936,7 @@ async function init() {
           },
           drawCalls: renderer.info.render.calls,
           triangles: renderer.info.render.triangles,
+          geometries: renderer.info.memory.geometries,
           faded: world.fadedCount(),
         }),
         ...(new URLSearchParams(location.search).has("qa")

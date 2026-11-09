@@ -68,6 +68,9 @@ export class World {
   private pending = new Map<string, Promise<void>>();
   /** Set when something changed that the static shadow map must redraw. */
   dirty = false;
+  /** Regions added/removed so far (for diagnostics). */
+  added = 0;
+  removed = 0;
   /** URL template of the vector tiles ({z}/{x}/{y}). */
   template = "";
 
@@ -253,9 +256,14 @@ export class World {
           if (list) list.push(w);
           else this.waterCells.set(k, [w]);
         }
+    // The map never moves: compute matrices once and skip it in the per-frame matrix pass.
+    group.traverse((o) => (o.matrixAutoUpdate = false));
+    group.updateMatrixWorld(true);
+    group.matrixWorldAutoUpdate = false;
     this.regions.set(data.key, view);
     this.scene.add(group);
     this.dirty = true;
+    this.added++;
   }
 
   /** Frees regions whose square lies entirely farther than `radius`, except `keep` points' regions. */
@@ -289,6 +297,7 @@ export class World {
     if (this.lastRegion === r) this.lastRegion = null;
     this.regions.delete(r.key);
     this.dirty = true;
+    this.removed++;
   }
 
   // ------------------------------------------------------------ queries
@@ -364,6 +373,44 @@ export class World {
     for (const b of now) if (!b.faded) set(b, true);
     for (const m of changed) m.geometry.getAttribute("fade").needsUpdate = true;
     this.faded = now;
+  }
+  /** Only regions near the camera take part in rendering at all. */
+  setFocus(x: number, z: number, reach: number) {
+    for (const r of this.regions.values())
+      r.group.visible =
+        Math.hypot(Math.max(r.rect.x0 - x, 0, x - r.rect.x1), Math.max(r.rect.z0 - z, 0, z - r.rect.z1)) <= reach;
+  }
+  /**
+   * Sends every loaded mesh to the GPU now (three uploads lazily on first draw,
+   * which made walking into new streets stutter). Renders all regions once into
+   * a tiny off-screen target with a camera that sees the whole loaded map.
+   */
+  prewarm(renderer: T.WebGLRenderer) {
+    if (!this.regions.size) return;
+    let x0 = Infinity,
+      x1 = -Infinity,
+      z0 = Infinity,
+      z1 = -Infinity;
+    for (const r of this.regions.values()) {
+      r.group.visible = true;
+      x0 = Math.min(x0, r.rect.x0);
+      x1 = Math.max(x1, r.rect.x1);
+      z0 = Math.min(z0, r.rect.z0);
+      z1 = Math.max(z1, r.rect.z1);
+    }
+    const half = Math.max(x1 - x0, z1 - z0) / 2 + 10,
+      cam = new T.OrthographicCamera(-half, half, half, -half, 1, 400),
+      target = new T.WebGLRenderTarget(4, 4),
+      previous = renderer.getRenderTarget(),
+      shadows = renderer.shadowMap.needsUpdate;
+    cam.position.set((x0 + x1) / 2, 200, (z0 + z1) / 2);
+    cam.lookAt((x0 + x1) / 2, 0, (z0 + z1) / 2);
+    cam.updateMatrixWorld();
+    renderer.setRenderTarget(target);
+    renderer.render(this.scene, cam);
+    renderer.setRenderTarget(previous);
+    renderer.shadowMap.needsUpdate = shadows;
+    target.dispose();
   }
   fadedCount() {
     return this.faded.size;

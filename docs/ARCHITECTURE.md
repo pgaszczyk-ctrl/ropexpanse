@@ -12,6 +12,7 @@ TypeScript w trybie strict, Vite, Three.js. Jeden punkt wejścia index.html. Min
 | src/combat3d/world.ts | Załadowana mapa: scalone siatki, siatka kolizji, wygaszanie budynków, kolejka kafelków |
 | src/combat3d/tiles.ts, tile-worker.ts | Pobieranie i dekodowanie kafelków wektorowych (w Web Workerze) |
 | src/combat3d/region.ts | Tablice wierzchołków: bryły w kawałkach 48×48, ziemia, drogi, drzewa |
+| src/combat3d/diag.ts | Rejestrator diagnostyczny `?diag=1`: klatki, skoki, zdarzenia, raport tekstowy |
 | src/combat3d/geo.ts | Typy mapy, lokalna projekcja, matematyka kafelków, przycinanie |
 | src/combat3d/models.ts | Proceduralne modele, materiały i animacje |
 | src/combat3d/rules.ts | Reguły oraz czyste funkcje geometrii i XP |
@@ -31,7 +32,7 @@ Origin 51.2482,22.5681, przelicznik 0.18 jednostki/m (zgodny ze starymi zapisami
 
 Zasada ładowania: przed startem cały promień 2,5 km jest pobierany, dekodowany i zamieniany na siatki w workerach. Podczas gry nic się nie doczytuje. Kolejne kilometry wczytuje dopiero obóz (promień 2,5 km wokół obozu); kafelki dalsze niż ok. 4,2 km są wtedy zwalniane. Poza wczytanym obszarem teren jest ciemniejszy i nieprzechodni, a gra podpowiada rozbicie obozu.
 
-Wydajność: budynki są scalone w kawałki 48×48 jednostek z kolorami wierzchołków i jednym wspólnym materiałem (zamiast osobnej siatki i dwóch materiałów na budynek). Kafelek centrum Lublina to ok. 26 tys. trójkątów brył; scena rysuje ok. 30 wywołań zamiast ~350. Zasłanianie postaci liczone jest analitycznie (odcinek kamera–postać kontra obrys), a zasłaniający budynek wygasza się wzorem rastrowym w shaderze, bez przezroczystości. Mapa cieni jest statyczna i przerysowuje się, gdy postać przejdzie ok. 20 jednostek.
+Wydajność: budynki są scalone w kawałki 48×48 jednostek z kolorami wierzchołków i jednym wspólnym materiałem (zamiast osobnej siatki i dwóch materiałów na budynek). Kafelek centrum Lublina to ok. 26 tys. trójkątów brył; scena rysuje ok. 30 wywołań zamiast ~350. Zasłanianie postaci liczone jest analitycznie (odcinek kamera–postać kontra obrys), a zasłaniający budynek wygasza się wzorem rastrowym w shaderze, bez przezroczystości. Mapa cieni jest statyczna i przerysowuje się, gdy postać przejdzie ok. 20 jednostek. Wszystkie siatki wczytanej mapy są wysyłane do GPU na ekranie ładowania i pod koniec obozu (jednorazowy render poza ekranem), bo three.js robi to leniwie przy pierwszym rysowaniu, co dawało skoki w marszu. Regiony dalsze niż 110 jednostek są pomijane przez renderer, a mapa nie przelicza macierzy co klatkę. `preserveDrawingBuffer` jest wyłączone także na telefonach.
 
 Kafelki przy z14 łączą przylegające budynki w kwartały, więc bryły są większe niż w surowym OSM.
 

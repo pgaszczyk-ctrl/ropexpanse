@@ -28,7 +28,7 @@ Większy obszar, sensowny model podróży, kolejne lokalne historie i biomy. Bac
 
 ## Mapa i obóz (09.11.2026)
 
-Wdrożono ładowanie 2,5 km przed startem i doczytywanie podczas obozu. Do sprawdzenia na fizycznym telefonie: płynność chodzenia po starcie, czas wczytywania przez sieć komórkową, pamięć przy ok. 20 tys. brył. Otwarte: wybór docelowego źródła kafelków, przesuwanie originu przy podróżach na setki kilometrów, zwijanie namiotu przy kolejnym obozie (teraz istnieje tylko jeden obóz i przenosi się).
+Wdrożono ładowanie 2,5 km przed startem i doczytywanie podczas obozu. Zgłoszenie właściciela: przez ok. 30 s po wyjściu z obozu gra mocno się zacinała. Poprawki: wstępne wysłanie mapy do GPU, pominięcie dalekich regionów, statyczne macierze, wyłączone preserveDrawingBuffer. Czekamy na raport `?diag=1` z jego urządzenia. Do sprawdzenia na fizycznym telefonie: płynność chodzenia po starcie, czas wczytywania przez sieć komórkową, pamięć przy ok. 20 tys. brył. Otwarte: wybór docelowego źródła kafelków, przesuwanie originu przy podróżach na setki kilometrów, zwijanie namiotu przy kolejnym obozie (teraz istnieje tylko jeden obóz i przenosi się).
 
 ## Bieżący stan interfejsu (23.10.2026)
 

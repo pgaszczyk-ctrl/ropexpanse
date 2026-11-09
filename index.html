@@ -121,6 +121,21 @@
         ><button id="reset" class="reset">Rozpocznij próbę od nowa</button>
       </div>
     </div>
+    <div id="diag" hidden>
+      <span id="diag-live">DIAG</span><button id="diag-open">Raport</button>
+    </div>
+    <div id="diag-sheet" class="overlay" hidden>
+      <div class="sheet">
+        <span class="eyebrow">DIAGNOSTYKA</span>
+        <p>Skopiuj albo udostępnij raport i wklej go w rozmowie. Zawiera tylko dane techniczne gry i urządzenia.</p>
+        <button id="diag-copy">Kopiuj</button
+        ><button id="diag-share">Udostępnij</button
+        ><button id="diag-download">Pobierz plik</button
+        ><button id="diag-close" class="reset">Wracam do gry</button>
+        <textarea id="diag-text" readonly></textarea>
+        <button id="diag-prev" class="reset" hidden>Pokaż raport z poprzedniej sesji</button>
+      </div>
+    </div>
     <section
       id="rotate-notice"
       class="overlay"
