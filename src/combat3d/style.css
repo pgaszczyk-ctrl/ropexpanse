@@ -2315,3 +2315,44 @@ body .context-action small {
     height: 72px;
   }
 }
+/* Live FPS, always on (owner, 9 Nov). */
+#perf {
+  position: absolute;
+  top: max(10px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  padding: 3px 10px;
+  border: 2px solid #1b1730;
+  border-radius: 10px;
+  background: #262043cc;
+  color: #8ff0a6;
+  font: 800 12px "Trebuchet MS", sans-serif;
+  pointer-events: none;
+}
+#perf.low {
+  color: #ff7a7f;
+}
+#perf b {
+  font-size: 13px;
+}
+.report-sheet textarea {
+  width: 100%;
+  min-height: 120px;
+  margin: 6px 0 4px;
+  padding: 8px;
+  border: 3px solid #1b1730;
+  border-radius: 12px;
+  background: #15122a;
+  color: #dcd7f2;
+  font: 11px/1.35 ui-monospace, monospace;
+  resize: vertical;
+}
+.report-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.report-buttons button {
+  margin-top: 4px;
+}

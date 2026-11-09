@@ -63,6 +63,7 @@ import {
   type Vent,
 } from "./vents";
 import { Expedition } from "./expedition";
+import { trackFrame, buildReport } from "./report";
 import {
   resourceNodes,
   starterNodes,
@@ -2060,7 +2061,10 @@ function updateWorld(dt: number) {
     return;
   }
   worldStream.request(player);
-  if (worldStream.changed) {
+  // One redraw per batch of tiles: wait until the whole wanted block has arrived, unless
+  // the ground right around the party is missing (owner, 9 Nov: "something loads every
+  // second").
+  if (worldStream.changed && (worldStream.pending() === 0 || !worldStream.contains(player, 25))) {
     map = worldStream.snapshot();
     requestRender();
   }
@@ -3305,6 +3309,53 @@ function bindControls() {
     $("help").hidden = false;
     updateHud();
   };
+  // Bug report: a plain text the player copies, shares or downloads (no server).
+  $("report-open").onclick = async () => {
+    $("help").hidden = true;
+    $("report").hidden = false;
+    const gl = renderer?.getContext(),
+      info = gl?.getExtension("WEBGL_debug_renderer_info");
+    const geo = unproject(player, campaign.origin);
+    ($("report-text") as HTMLTextAreaElement).value = await buildReport({
+      Grafika: info && gl ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : "?",
+      Tryb: compatibility ? "lżejszy (telefon)" : "pełny",
+      Pełny_ekran: fullscreenState,
+      Przerysowania_świata: renderCount,
+      Mapa: `${worldStream.tiles.size} kafli, ${map.buildings.length} budynków${worldStream.error ? ", błąd: " + worldStream.error : ""}`,
+      Miejsce: `${geo.lat.toFixed(5)}, ${geo.lon.toFixed(5)}`,
+      Drużyna: `${partyOf(campaign).length}, obozy ${campaign.camps.length}, liny ${campaign.camps.filter((c) => c.parentId).length + (campaign.connections?.length ?? 0)}`,
+      Wrogowie: enemies.filter((e) => e.state !== "dead").length,
+    });
+  };
+  $("report-copy").onclick = async () => {
+    const t = ($("report-text") as HTMLTextAreaElement).value;
+    try {
+      await navigator.clipboard.writeText(t);
+      notify("Raport skopiowany — wklej go w rozmowie");
+    } catch {
+      ($("report-text") as HTMLTextAreaElement).select();
+      document.execCommand?.("copy");
+      notify("Raport zaznaczony — skopiuj go");
+    }
+  };
+  $("report-share").onclick = async () => {
+    const t = ($("report-text") as HTMLTextAreaElement).value;
+    if (navigator.share) await navigator.share({ title: "ROPExpanse — raport", text: t }).catch(() => {});
+    else notify("Udostępnianie niedostępne — użyj Kopiuj");
+  };
+  $("report-download").onclick = () => {
+    const t = ($("report-text") as HTMLTextAreaElement).value,
+      a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([t], { type: "text/plain" }));
+    a.download = `ropexpanse-raport-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.txt`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  $("report-close").onclick = () => {
+    $("report").hidden = true;
+    helpOpen = false;
+    resetInput();
+  };
   $("close-help").onclick = () => {
     helpOpen = false;
     $("help").hidden = true;
@@ -3373,6 +3424,10 @@ function tick() {
   const raw = clock.getDelta(),
     dt = Math.min(raw, 0.075);
   frames.push(raw);
+  if (started && !paused && !helpOpen)
+    trackFrame(raw, () =>
+      `redraws ${renderCount}, tiles ${worldStream?.tiles.size ?? 0}${worldStream?.loading ? " (loading)" : ""}, ${enemies.filter((e) => e.state !== "dead").length} enemies, ${companions.length} companions${expedition?.rope ? ", rope" : ""}${riding ? ", ride" : ""}${safe(player) ? ", safe" : ""}`,
+    );
   if (frames.length > 90) frames.shift();
   if (
     ready &&
@@ -3661,7 +3716,9 @@ async function init() {
       campPitched,
       retry: () => worldStream.retry(),
       worldStatus: () => ({
-        loading: worldStream.loading,
+        // Background tiles load quietly; the badge only shows when the party's own
+        // ground is still missing.
+        loading: worldStream.loading && !worldStream.contains(player, 12),
         error: worldStream.error,
       }),
     });
