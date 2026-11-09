@@ -101,6 +101,12 @@ Kolejność: 6.1 → 6.2 → 6.3 → 6.4 → 6.5. Teren i HUD najbardziej zmieni
 
 Testy: `scripts/tests/travel.mjs` (limit lin, koszt, kierunek, jazda tylko z liny, wspólna oferta), `frontier.mjs` (pas 50 m), `browser-terrain.mjs` (przebudowa po 60 j.). Przebieg lina → obóz → tapnięcie w linę → przejazd sprawdzony w emulacji telefonu poziomo (zrzuty w `work/rope/`). Do strojenia: koszt 100 tix/km, szerokość pasa 50 m, czasy odrodzenia.
 
+## Etap 6c — Uwagi z 9 listopada — wykonane 09.11.2026
+
+- „Coś się ładuje co sekundę”: mapa pobierała jeden kafel na takt świata (~co 0,5–1 s) i każdy kafel wymuszał przerysowanie całego świata oraz mignięcie „Wczytywanie mapy…”. Teraz kafle pobierają się jeden po drugim bez przerw, świat przerysowuje się raz, gdy dojdzie cały blok (od razu tylko, gdy pod drużyną brakuje mapy), zrzucanie dalekich kafli nie przerysowuje, a napis pokazuje się tylko przy braku mapy przy drużynie. Pomiar w emulacji: po wejściu w obszar 4 przerysowania i 3–4 s napisu → 0 i 0; marsz 1,4 km: 6 → 4 przerysowania. Zostaje jedno przerysowanie na przejście granicy kafla (~670 m) — pełne usunięcie wymaga wczytania większego obszaru z góry (robi to równoległa gałąź `claude/focused-tesla-1b494s`, czeka na decyzję właściciela).
+- Licznik FPS stale na górze ekranu (czerwony poniżej 25).
+- Menu ☰ → „Zgłoś błąd”: raport tekstowy (wersja, urządzenie, grafika, FPS z ostatniej minuty, zacięcia > 80 ms z tym, co gra wtedy robiła, błędy JS) — Kopiuj / Udostępnij / Pobierz plik. Nic nie jest wysyłane samo (`report.ts`).
+
 ## Etap 7 — AFK
 
 1. Zajęcia Wędrowców w obozie (jedno tapnięcie): trening (powolne XP) albo wyprawa 1/4/8 h. Wyprawa wraca z lootem i surowcami z biomu obozu, nie da się na niej zginąć, najlepszy loot zostaje dla aktywnej walki.

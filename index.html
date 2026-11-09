@@ -39,6 +39,7 @@
     </nav>
     <button id="compass" class="compass" aria-label="Wróć na północ" title="Północ" hidden><span>N</span></button>
     <div id="zone" class="zone safe">SCHRONIENIE · regeneracja</div>
+    <div id="perf" aria-hidden="true"><b id="perf-fps">--</b> FPS</div>
     <div id="toast" role="status"></div>
     <div id="damage-vignette"></div>
     <div class="bottom-info">
@@ -113,8 +114,22 @@
           Pauza zatrzymuje całą próbę. Postęp zapisuje się wyłącznie w tej
           przeglądarce.
         </p>
+        <button id="report-open" class="reset">Zgłoś błąd</button>
         <button id="close-help">Wracam do gry →</button
         ><button id="reset" class="reset">Rozpocznij próbę od nowa</button>
+      </div>
+    </div>
+    <div id="report" class="overlay" hidden>
+      <div class="sheet report-sheet">
+        <span class="eyebrow">ZGŁOŚ BŁĄD</span>
+        <p>Skopiuj albo udostępnij raport i wklej go w rozmowie. Zawiera tylko dane techniczne gry i urządzenia; nic nie jest wysyłane samo.</p>
+        <textarea id="report-text" readonly rows="8" aria-label="Raport"></textarea>
+        <div class="report-buttons">
+          <button id="report-copy">Kopiuj</button
+          ><button id="report-share">Udostępnij</button
+          ><button id="report-download">Pobierz plik</button
+          ><button id="report-close" class="reset">Wróć</button>
+        </div>
       </div>
     </div>
     <section

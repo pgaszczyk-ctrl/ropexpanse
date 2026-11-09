@@ -413,8 +413,8 @@ export class WorldStream {
     const wantedKeys = new Set(this.wanted.map((v) => `${v.x}:${v.y}`));
     for (const key of this.tiles.keys())
       if (!wantedKeys.has(key)) {
+        // Dropping far tiles needs no redraw of its own; the next one leaves them out.
         this.tiles.delete(key);
-        this.changed = true;
       }
     if (!this.loading) void this.pump();
   }
@@ -430,14 +430,28 @@ export class WorldStream {
     this.error = "";
     void this.pump();
   }
-  async pump() {
-    if (this.loading) return;
-    const tile = this.wanted.find(
+  private next() {
+    return this.wanted.find(
       (t) =>
         !this.tiles.has(`${t.x}:${t.y}`) &&
         Date.now() - (this.failures.get(`${t.x}:${t.y}`) ?? 0) > 60_000,
     );
-    if (!tile) return;
+  }
+  /** Wanted tiles still to come (failed ones wait a minute and do not count). */
+  pending() {
+    return this.wanted.filter(
+      (t) =>
+        !this.tiles.has(`${t.x}:${t.y}`) &&
+        Date.now() - (this.failures.get(`${t.x}:${t.y}`) ?? 0) > 60_000,
+    ).length;
+  }
+  /** Loads every wanted tile one after another (it used to fetch one per world tick,
+   * so a new area arrived tile by tile, about one a second, each forcing a redraw). */
+  async pump() {
+    if (this.loading) return;
+    while (this.next()) await this.fetchOne(this.next()!);
+  }
+  private async fetchOne(tile: { x: number; y: number }) {
     this.loading = true;
     const key = `${tile.x}:${tile.y}`,
       generation = this.generation;
