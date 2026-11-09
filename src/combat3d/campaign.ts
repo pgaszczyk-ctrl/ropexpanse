@@ -12,17 +12,20 @@ import { regionAt, type Rarity, type Region, type Sex } from "./wayfarers.ts";
 export const BALANCE = {
   slots: 24,
   safeRadius: 7.5,
-  minCampDistance: 18,
-  ropeLength: 65,
+  /** Camps stand at least 500 m apart (scene units: metres × 0.18), so a new camp is a
+   * real trip, not a few steps (owner, 8 Nov 2026: camps every 500 m – 1 km). */
+  minCampDistance: 500 * 0.18,
+  /** Longest stretch of rope run out at once: 1200 m. */
+  ropeLength: 1200 * 0.18,
   ropeSafeMeters: 10,
   quietBorderMeters: 300,
   recruitmentMs: 300_000,
   /** Wood for a new camp (owner's design doc: wood builds camps and buoys). */
   campWood: 20,
   /** Metres of rope twisted from one bundle of fibre. */
-  ropePerFiber: 5,
+  ropePerFiber: 25,
   /** What a new expedition starts with in the shared Vault. */
-  startStock: { wood: 40, ore: 0, fiber: 10, herbs: 0, rope: 500 },
+  startStock: { wood: 40, ore: 0, fiber: 10, herbs: 0, rope: 2500 },
 };
 /** Gathered goods, kept in one shared Vault for the whole rope network. Rope is in metres. */
 export type Stock = { wood: number; ore: number; fiber: number; herbs: number; rope: number };
@@ -174,8 +177,16 @@ export type Offer = {
   readyAt: number;
   seed: number;
   ceiling: number;
+  /** Final answer once the notice comes down (readyAt); null while it still hangs. */
   candidates: Candidate[] | null;
+  /** While it hangs: everyone who will answer, each with the moment they turn up. */
+  pool?: (Candidate & { at: number })[];
+  /** How many from the pool have turned up so far (for the "new candidate" notice). */
+  arrived?: number;
 };
+/** When the camp checks for new answers, in seconds after posting: often at first,
+ * then less often, the last check when the notice comes down (5 minutes). */
+export const RECRUIT_CHECKS = [10, 20, 30, 60, 90, 120, 180, 240, 300];
 export type Candidate = WayfarerInfo & {
   id: string;
   name: string;
@@ -195,6 +206,8 @@ export type Campaign = {
   vault: Item[];
   bank: number;
   stock: Stock;
+  /** Set once the save got rope for the long-rope rules (camps 500 m+ apart). */
+  longRope?: boolean;
   offers: Offer[];
   encounters: Record<string, number>;
   /** Circle production per hour (last computed from the map), what waits to be collected,
@@ -329,6 +342,7 @@ export function newCampaign(
     vault: [],
     bank: 0,
     stock: { ...BALANCE.startStock },
+    longRope: true,
     offers: [],
     encounters: {},
     serial: 1,
@@ -479,20 +493,54 @@ export function postOffer(
   s.offers.push(o);
   return o;
 }
+/** Candidates the player can see now: the final list, or those who already turned up. */
+export function offerCandidates(o: Offer, now = Date.now()): Candidate[] {
+  if (o.candidates) return o.candidates;
+  return (o.pool ?? []).filter((v) => v.at <= now).map(({ at: _at, ...v }) => v);
+}
+/** Who answers is drawn once (same seed, so a reload changes nothing); each of them
+ * turns up at one of the camp's checks. Returns true when someone new turned up or
+ * the notice came down. */
 export function resolveOffers(s: Campaign, now = Date.now()) {
   let changed = false;
-  for (const o of s.offers)
-    if (!o.candidates && now >= o.readyAt) {
+  for (const o of s.offers) {
+    if (o.candidates) continue;
+    if (!o.pool) {
       const camp = s.camps.find((c) => c.id === o.campId);
       const geo = camp ? unproject(camp, s.origin) : s.origin;
-      o.candidates = candidatesFor(
+      const list = candidatesFor(
         o,
         camp?.buildings ?? 0,
         regionAt(geo.lat, geo.lon),
         new Set(s.characters.map((c) => c.name)),
       );
+      // Arrival checks come from their own stream, so who answers stays as before.
+      let seed = (o.seed ^ 0x5bd1e995) | 0;
+      const rand = () => {
+        seed = (Math.imul(seed, 1664525) + 1013904223) | 0;
+        return (seed >>> 0) / 4294967296;
+      };
+      const posted = o.readyAt - BALANCE.recruitmentMs;
+      o.pool = list
+        .map((v) => ({
+          ...v,
+          at: posted + RECRUIT_CHECKS[Math.floor(rand() * RECRUIT_CHECKS.length)] * 1000,
+        }))
+        .sort((a, b) => a.at - b.at);
+      o.arrived = 0;
+    }
+    const here = o.pool.filter((v) => v.at <= now).length;
+    if (here > (o.arrived ?? 0)) {
+      o.arrived = here;
       changed = true;
     }
+    if (now >= o.readyAt) {
+      o.candidates = o.pool.map(({ at: _at, ...v }) => v);
+      delete o.pool;
+      delete o.arrived;
+      changed = true;
+    }
+  }
   return changed;
 }
 /** A new Wayfarer standing at `at`, belonging to camp `campId`. */
@@ -524,9 +572,9 @@ export function addWayfarer(s: Campaign, v: Candidate, at: Point, campId: string
   return c;
 }
 /** Hires a candidate into `campId` (the camp you stand at), or the camp the offer came from. */
-export function hire(s: Campaign, offerId: string, candidateId: string, campId?: string) {
+export function hire(s: Campaign, offerId: string, candidateId: string, campId?: string, now = Date.now()) {
   const o = s.offers.find((v) => v.id === offerId),
-    v = o?.candidates?.find((v) => v.id === candidateId),
+    v = o && offerCandidates(o, now).find((v) => v.id === candidateId),
     camp =
       s.camps.find((c) => c.id === campId) ??
       s.camps.find((c) => c.id === o?.campId);
@@ -573,6 +621,11 @@ export function parseCampaign(raw: string): Campaign | null {
     if (!Array.isArray(s.connections)) return null;
     // Saves from before gathering get the starting stock.
     s.stock = { ...BALANCE.startStock, ...(s.stock ?? {}) };
+    // Camps now stand 500 m+ apart: older saves get their rope topped up once.
+    if (!s.longRope) {
+      s.stock.rope = Math.max(s.stock.rope, BALANCE.startStock.rope);
+      s.longRope = true;
+    }
     if (STOCK_KEYS.some((k) => !Number.isFinite(s.stock[k]) || s.stock[k] < 0))
       return null;
     for (const key of ["rates", "pending"] as const) {
@@ -731,16 +784,20 @@ export function parseCampaign(raw: string): Campaign | null {
       )
         return null;
       o.items.forEach(item);
+      const badCandidate = (c: Candidate) =>
+        !ROLES.includes(c.role) ||
+        !Number.isInteger(c.level) ||
+        c.level < 1 ||
+        c.level > 100;
       if (
         o.candidates !== null &&
-        (!Array.isArray(o.candidates) ||
-          o.candidates.some(
-            (c) =>
-              !ROLES.includes(c.role) ||
-              !Number.isInteger(c.level) ||
-              c.level < 1 ||
-              c.level > 100,
-          ))
+        (!Array.isArray(o.candidates) || o.candidates.some(badCandidate))
+      )
+        return null;
+      if (
+        o.pool !== undefined &&
+        (!Array.isArray(o.pool) ||
+          o.pool.some((c) => badCandidate(c) || !Number.isFinite(c.at)))
       )
         return null;
     }

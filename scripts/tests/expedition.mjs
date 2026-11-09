@@ -7,6 +7,8 @@ import {
   transfer,
   postOffer,
   resolveOffers,
+  offerCandidates,
+  RECRUIT_CHECKS,
   hire,
   cancelOffer,
   parseCampaign,
@@ -70,6 +72,15 @@ assert(c.bag.some((v) => v.id === sword.id));
   const legacy = JSON.parse(JSON.stringify(v));
   delete legacy.stock;
   assert.deepEqual(parseCampaign(JSON.stringify(legacy)).stock, BALANCE.startStock);
+  {
+    const old = JSON.parse(JSON.stringify(v));
+    delete old.longRope;
+    old.stock.rope = 0;
+    const up = parseCampaign(JSON.stringify(old));
+    assert.equal(up.stock.rope, BALANCE.startStock.rope, "old save without rope gets it topped up once");
+    up.stock.rope = 0;
+    assert.equal(parseCampaign(JSON.stringify(up)).stock.rope, 0, "only once");
+  }
   legacy.stock = { ...BALANCE.startStock, wood: -1 };
   assert.equal(parseCampaign(JSON.stringify(legacy)), null, "negative stock rejected");
 }
@@ -99,8 +110,20 @@ assert(offer);
 assert.equal(c.coins, 300);
 assert(!c.bag.some((v) => v.id === offered.id));
 assert(!postOffer(s, "camp-1", 1, [], 2000), "one shared pending offer");
-assert(!resolveOffers(s, 1000 + BALANCE.recruitmentMs - 1));
+// Before the first check (10 s) nobody is there; candidates turn up at the checks
+// (10-20-30-60-90-120-180-240-300 s) and can be seen before the notice comes down.
+assert(!resolveOffers(s, 1000 + 9_999));
+assert.equal(offerCandidates(offer, 1000 + 9_999).length, 0);
+assert(offer.pool.every((v) => RECRUIT_CHECKS.includes((v.at - 1000) / 1000)), "arrivals sit on the checks");
+const firstAt = offer.pool[0].at;
+assert(resolveOffers(s, firstAt), "someone new turned up");
+assert(!resolveOffers(s, firstAt), "nothing new on the same check");
+assert(offerCandidates(offer, firstAt).length >= 1, "visible before the notice comes down");
+assert.equal(offer.candidates, null, "notice still hangs");
+const pending = parseCampaign(JSON.stringify(s));
+assert.equal(JSON.stringify(pending.offers[0].pool), JSON.stringify(offer.pool), "reload keeps who turns up and when");
 assert(resolveOffers(s, 1000 + BALANCE.recruitmentMs));
+assert(!offer.pool, "final list replaces the waiting pool");
 assert(
   offer.candidates.length >= 1,
   "this seeded generous offer gets a candidate",

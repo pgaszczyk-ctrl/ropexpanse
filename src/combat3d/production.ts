@@ -53,7 +53,7 @@ export function circleRates(
 export const WORKERS = {
   woodcutter: { good: "wood", base: 2, kinds: ["forest", "wood", "scrub", "orchard", "park"] },
   miner: { good: "ore", base: 1.5, kinds: ["quarry", "industrial", "construction", "railway", "brownfield", "landfill"] },
-  ropemaker: { good: "rope", base: 10, kinds: [] as string[] },
+  ropemaker: { good: "rope", base: 50, kinds: [] as string[] },
 } as const;
 export type Worker = {
   role: string;

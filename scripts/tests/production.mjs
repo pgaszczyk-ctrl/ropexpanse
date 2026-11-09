@@ -45,12 +45,12 @@ assert.ok(byForest > 2 * inTown && inTown > 0, `woodcutter by forest ${byForest}
 assert.ok(workerRates([{ role: "miner", level: 1, at: { x: 120, z: 20 } }], map).ore > workerRates([{ role: "miner", level: 1, at: { x: 20, z: 20 } }], map).ore);
 assert.ok(workerRates([{ role: "woodcutter", level: 1, at: { x: 20, z: 20 }, trait: "master" }], map).wood === 2 * byForest);
 const r = newCampaign({ x: 0, z: 0 }, { lat: 0, lon: 0 });
-r.rates = { rope: 10 };
+r.rates = { rope: 50 };
 r.stock.fiber = 3;
 accrue(r, t0);
 accrue(r, t0 + 5 * 3_600_000);
 assert.equal(r.stock.fiber, 0, "fibre used up");
-assert.equal(r.pending.rope, 15, "3 bundles → 15 m, no more");
+assert.equal(r.pending.rope, 75, "3 bundles → 75 m, no more");
 // Camp folk never join the party.
 const folk = { ...r.characters[0], id: "w1", name: "Drwal", role: "woodcutter" };
 r.characters.push(folk);
