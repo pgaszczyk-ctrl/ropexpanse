@@ -107,6 +107,17 @@ Testy: `scripts/tests/travel.mjs` (limit lin, koszt, kierunek, jazda tylko z lin
 - Licznik FPS stale na górze ekranu (czerwony poniżej 25).
 - Menu ☰ → „Zgłoś błąd”: raport tekstowy (wersja, urządzenie, grafika, FPS z ostatniej minuty, zacięcia > 80 ms z tym, co gra wtedy robiła, błędy JS) — Kopiuj / Udostępnij / Pobierz plik. Nic nie jest wysyłane samo (`report.ts`).
 
+## Etap 6d — Scalenie gałęzi równoległych sesji (09.11.2026)
+
+Właściciel: „scal wszystko”.
+
+- `claude/laughing-volta-5cvt3m` (ta sama baza co produkcja) scalona przez git: długie liny (odcinek do 1200 m, start 2500 m, licznik na żywo, „Zwiń linę” przy obozie startowym), ciosy z rzutem i pudłami, figura ze sprzętem, wcześniejsze zgłoszenia rekrutów, poprawka zablokowania przy paliku. Konflikty rozwiązane z zachowaniem obu stron (wspólna oferta + kandydaci pojawiający się w czasie; limit 4 lin + ostrzeżenie o braku liny).
+- `claude/focused-tesla-1b494s` powstała na starym `main` (bez obozów, lin, drużyny, łupu) z własnym systemem mapy — scalenie gitem usunęłoby obecną grę, więc przeniesiono jej pomysły do obecnego kodu:
+  - budynki łączone w kwadraty 48×48 j. z kolorami w wierzchołkach i jednym wspólnym materiałem (było: każdy budynek osobną siatką z 2 przezroczystymi materiałami). Przenikanie budynków zasłaniających postać: wzór „sitka” (odrzucane piksele) liczony per budynek, wykrywanie analityczne wzdłuż linii postać→kamera zamiast promieni po siatkach; mgła wojny przebarwia zakres wierzchołków budynku. Wywołania rysowania w centrum Lublina: 357 → 180 na klatkę, budynki poza przebiegiem półprzezroczystym;
+  - duży blok mapy (5×5 kafli, ~3 km) wczytywany od razu na starcie i po podróży; marsz 1,4 km: 6 → 2 przerysowania świata;
+  - wrogowie pojawiają się i odradzają tylko poza kadrem;
+  - nie przeniesiono: źródła map OpenFreeMap (gra ma archiwum PMTiles erpeg), innego obozu (obecna gra ma obozy z liną), usunięcia przycisku pauzy, osobnej diagnostyki `?diag=1` (jest „Zgłoś błąd” w menu).
+
 ## Etap 7 — AFK
 
 1. Zajęcia Wędrowców w obozie (jedno tapnięcie): trening (powolne XP) albo wyprawa 1/4/8 h. Wyprawa wraca z lootem i surowcami z biomu obozu, nie da się na niej zginąć, najlepszy loot zostaje dla aktywnej walki.
