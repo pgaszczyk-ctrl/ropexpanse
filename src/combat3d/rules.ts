@@ -14,6 +14,7 @@ export const RULES = {
   potionCooldown: 14,
   regenDelay: 5,
   safeRadius: 7.5,
+  respawnDelay: 60,
 };
 export const clamp = (x: number, lo: number, hi: number) =>
   Math.max(lo, Math.min(hi, x));
@@ -81,3 +82,23 @@ export function deathExperience(exp: number) {
   const base = Math.floor(exp / 60) * 60;
   return base + Math.floor((exp - base) * 0.9);
 }
+function segmentsCross(a: Point, b: Point, c: number[], d: number[]) {
+  const o = (px: number, pz: number, qx: number, qz: number, rx: number, rz: number) =>
+    (qx - px) * (rz - pz) - (qz - pz) * (rx - px);
+  const d1 = o(c[0], c[1], d[0], d[1], a.x, a.z),
+    d2 = o(c[0], c[1], d[0], d[1], b.x, b.z),
+    d3 = o(a.x, a.z, b.x, b.z, c[0], c[1]),
+    d4 = o(a.x, a.z, b.x, b.z, d[0], d[1]);
+  return d1 * d2 < 0 && d3 * d4 < 0;
+}
+/** Whether a segment touches a polygon (inside it or crossing an edge). */
+export function segmentHitsPolygon(a: Point, b: Point, rings: number[][][]) {
+  if (inPolygon(a.x, a.z, rings) || inPolygon(b.x, b.z, rings)) return true;
+  for (const ring of rings)
+    for (let i = 1; i < ring.length; i++)
+      if (segmentsCross(a, b, ring[i - 1], ring[i])) return true;
+  return false;
+}
+/** A point is on screen when its normalised device coordinates fall inside the margins. */
+export const onScreen = (ndcX: number, ndcY: number, margin = 0.15) =>
+  Math.abs(ndcX) <= 1 + margin && Math.abs(ndcY) <= 1 + margin;

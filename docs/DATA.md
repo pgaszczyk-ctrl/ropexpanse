@@ -11,6 +11,10 @@ Atrybucja: © OpenStreetMap contributors.
 
 Dane OSM podlegają ODbL; prywatność repo nie zmienia ich warunków. Zachowaj widoczną atrybucję i sprawdź wymagania dotyczące pochodnej bazy przy dystrybucji. Nie obejmuj danych własną licencją do kodu.
 
+## Kafelki wektorowe (domyślne źródło)
+
+Gra pobiera kafelki z https://tiles.openfreemap.org (schemat OpenMapTiles, dane OSM). Bez klucza i rejestracji. Wymagana atrybucja: OpenFreeMap © OpenMapTiles, dane © OpenStreetMap contributors — jest w stopce gry. To zewnętrzna usługa: jeśli przestanie odpowiadać, gra wraca do dołączonego wycinka. Decyzja właściciela do potwierdzenia: czy docelowo używać OpenFreeMap, czy własnego archiwum (np. PMTiles jak w erpeg).
+
 ## Opcjonalny ponowny import
 
 Gotowy JSON wystarcza do uruchomienia i builda. Jeżeli dysponujesz lokalnym wyciągiem OSM w gzip GeoJSON Sequence:

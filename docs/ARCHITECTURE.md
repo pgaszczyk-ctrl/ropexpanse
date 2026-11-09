@@ -8,7 +8,11 @@ TypeScript w trybie strict, Vite, Three.js. Jeden punkt wejścia index.html. Min
 
 | Plik | Odpowiedzialność |
 |---|---|
-| src/combat3d/main.ts | Scena, mapa, kolizje, pętla, stan, walka, AI, interfejs i wejście |
+| src/combat3d/main.ts | Scena, pętla, stan, walka, AI, obóz, interfejs i wejście |
+| src/combat3d/world.ts | Załadowana mapa: scalone siatki, siatka kolizji, wygaszanie budynków, kolejka kafelków |
+| src/combat3d/tiles.ts, tile-worker.ts | Pobieranie i dekodowanie kafelków wektorowych (w Web Workerze) |
+| src/combat3d/region.ts | Tablice wierzchołków: bryły w kawałkach 48×48, ziemia, drogi, drzewa |
+| src/combat3d/geo.ts | Typy mapy, lokalna projekcja, matematyka kafelków, przycinanie |
 | src/combat3d/models.ts | Proceduralne modele, materiały i animacje |
 | src/combat3d/rules.ts | Reguły oraz czyste funkcje geometrii i XP |
 | src/combat3d/style.css | HUD, drążki, poziomy układ mobilny i komunikaty |
@@ -21,13 +25,19 @@ main.ts pozostaje dużym plikiem prototypowym. To celowo zachowany, działający
 
 ## Mapa
 
-Origin 51.2482,22.5681; promień wejściowy 560 m, przelicznik 0.18 jednostki/m. To skala techniczna lokalnego testu, nie ostateczna skala całej Ziemi. Lokalna projekcja ma wystarczać do małego obszaru. Globalna podróż, kafelkowanie i poziomy szczegółowości nie są zaimplementowane.
+Origin 51.2482,22.5681, przelicznik 0.18 jednostki/m (zgodny ze starymi zapisami). Projekcja równoodległościowa wokół originu wystarcza na dziesiątki kilometrów; dalekie podróże będą wymagały przesuwania originu.
 
-Budynki są ekstrudowanymi poligonami OSM, nie sprite'ami. Drogi i elementy statyczne są scalane, drzewa instancjonowane, a przeszkody indeksowane przestrzennie. Modele gracza i przeciwników są zbudowane kodem z brył.
+Źródło: kafelki wektorowe OpenMapTiles z OpenFreeMap, zoom 14 (ok. 1,5 km). Dekodowanie wzorowane na world.ts z erpeg (`@mapbox/vector-tile` + `pbf`). Archiwum PMTiles erpeg leży na prywatnym kubełku właściciela, więc go nie podpięto; `?tiles=<adres z {z}/{x}/{y}>` pozwala podmienić źródło. `?map=local` wymusza dołączony wycinek.
+
+Zasada ładowania: przed startem cały promień 2,5 km jest pobierany, dekodowany i zamieniany na siatki w workerach. Podczas gry nic się nie doczytuje. Kolejne kilometry wczytuje dopiero obóz (promień 2,5 km wokół obozu); kafelki dalsze niż ok. 4,2 km są wtedy zwalniane. Poza wczytanym obszarem teren jest ciemniejszy i nieprzechodni, a gra podpowiada rozbicie obozu.
+
+Wydajność: budynki są scalone w kawałki 48×48 jednostek z kolorami wierzchołków i jednym wspólnym materiałem (zamiast osobnej siatki i dwóch materiałów na budynek). Kafelek centrum Lublina to ok. 26 tys. trójkątów brył; scena rysuje ok. 30 wywołań zamiast ~350. Zasłanianie postaci liczone jest analitycznie (odcinek kamera–postać kontra obrys), a zasłaniający budynek wygasza się wzorem rastrowym w shaderze, bez przezroczystości. Mapa cieni jest statyczna i przerysowuje się, gdy postać przejdzie ok. 20 jednostek.
+
+Kafelki przy z14 łączą przylegające budynki w kwartały, więc bryły są większe niż w surowym OSM.
 
 ## Stan i zapis
 
-localStorage: exp-lore:combat3d:v1. Zapis jest lokalny dla origin przeglądarki, bez konta i synchronizacji. Na innym hostingu/urządzeniu nie pojawi się automatycznie. Przy rozbudowie schematu dodaj wersjonowanie i migrację. Obecnie nie istnieje przepływ logowania.
+localStorage: exp-lore:combat3d:v1 (opcjonalne pola hx/hz: pozycja ostatniego obozu). Zapis jest lokalny dla origin przeglądarki, bez konta i synchronizacji. Na innym hostingu/urządzeniu nie pojawi się automatycznie. Przy rozbudowie schematu dodaj wersjonowanie i migrację. Obecnie nie istnieje przepływ logowania.
 
 ## Urządzenia mobilne
 

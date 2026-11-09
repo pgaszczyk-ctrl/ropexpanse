@@ -26,6 +26,10 @@ Nowy gracz potrafi bez objaśnień rozpocząć wyprawę, walczyć, wrócić z ł
 
 Większy obszar, sensowny model podróży, kolejne lokalne historie i biomy. Backend, konta, handel, rankingi i monetyzacja dopiero po sprawdzeniu podstawowej pętli.
 
+## Mapa i obóz (09.11.2026)
+
+Wdrożono ładowanie 2,5 km przed startem i doczytywanie podczas obozu. Do sprawdzenia na fizycznym telefonie: płynność chodzenia po starcie, czas wczytywania przez sieć komórkową, pamięć przy ok. 20 tys. brył. Otwarte: wybór docelowego źródła kafelków, przesuwanie originu przy podróżach na setki kilometrów, zwijanie namiotu przy kolejnym obozie (teraz istnieje tylko jeden obóz i przenosi się).
+
 ## Bieżący stan interfejsu (23.10.2026)
 
 Wykonano pierwszy HUD steampunk inspirowany starym EXP-LORE: mosiężne obramowania, nity, ciemne szkło, portret z pierścieniem XP, czerwone HP, wektorowe ikony broni, mikstury i cięcia. Funkcje walki pozostają dotychczasowe. Kolejna ocena: użytkownik sprawdza czytelność i charakter GUI na komputerze oraz rzeczywistym telefonie. Nadal otwarty jest test renderowania na jego Androidzie.

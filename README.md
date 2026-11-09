@@ -20,16 +20,18 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-Test przeglądarkowy uruchamia własny podgląd Vite na 127.0.0.1:4178; najpierw wykonaj build. Opcjonalne zmienne `BROWSER_EXECUTABLE` i `PLAYWRIGHT_MODULE` wskazują istniejącą przeglądarkę i moduł Playwright. Zrzuty testów trafiają do `work/combat3d/`.
+Test przeglądarkowy uruchamia własny podgląd Vite na 127.0.0.1:4178; najpierw wykonaj build. Domyślnie używa dołączonego wycinka (`?map=local`), więc nie wymaga sieci; `TILES=1 npm run test:browser` sprawdza też prawdziwe kafelki. Opcjonalne zmienne `BROWSER_EXECUTABLE` i `PLAYWRIGHT_MODULE` wskazują istniejącą przeglądarkę i moduł Playwright. Zrzuty testów trafiają do `work/combat3d/`.
 
 Po buildzie `npm run export:offline` zapisuje pojedynczy HTML do `work/combat3d/EXP-LORE_proba_walki_3D.html`. To pomocnicza forma testowa, nie docelowy sposób dystrybucji.
 
 ## Co działa
 
-- Fragment Lublina z rzeczywistych obrysów OSM, bryły budynków, drogi, kolizje.
+- Mapa z wektorowych kafelków OSM (OpenFreeMap): przed startem wczytuje się 2,5 km wokół postaci (ok. 16 kafelków, ~20 tys. brył w Lublinie). Bez sieci gra używa dołączonego wycinka Starego Miasta.
+- Obóz (przycisk lub C, poza walką): animacja wbijania palików i rozkładania namiotu z plecaka; w tym czasie doczytują się kolejne kilometry mapy, a obóz staje się nowym schronieniem.
+- Przeciwnicy pojawiają się i odradzają tylko poza kadrem kamery.
 - Proceduralne modele postaci, wilków i łuczników; animacje i zapowiedzi ataków.
 - Miecz, magia, sweep, mikstura, regeneracja, HP, XP, prosty cel sześciu zabójstw.
-- Klawiatura/mysz i dwa drążki dotykowe; pauza, obsługa zmiany orientacji.
+- Klawiatura/mysz i dwa drążki dotykowe; pauza (P/Esc, automatycznie po wyjściu z karty; wznowienie dotknięciem), obsługa zmiany orientacji.
 - Lokalny zapis, odrodzenie w schronieniu, utrata złota z plecaka i części XP.
 - Pełny ekran po starcie, lżejszy tryb mobilny i komunikaty błędów WebGL.
 

@@ -10,6 +10,10 @@ const server = await preview({
 });
 const browser = await chromium.launch({
   executablePath: process.env.BROWSER_EXECUTABLE,
+  // Optional: TILES=1 also loads real map tiles through the environment's proxy.
+  ...(process.env.TILES && process.env.HTTPS_PROXY
+    ? { proxy: { server: process.env.HTTPS_PROXY, bypass: "127.0.0.1" } }
+    : {}),
   args: [
     "--no-sandbox",
     "--enable-unsafe-swiftshader",
@@ -46,7 +50,10 @@ try {
     });
     page.on("pageerror", (e) => errors.push(e.message));
     page.on("request", (r) => network.push(r.url()));
-    await page.goto("http://127.0.0.1:4178/?qa=1");
+    // The bundled extract keeps the assertions deterministic and offline.
+    await page.goto(
+      `http://127.0.0.1:4178/?qa=1${process.env.TILES ? "" : "&map=local"}`,
+    );
     await page.waitForSelector("#start:not([hidden])", { timeout: 60000 });
     await page.click("#start");
     const snap = () => page.evaluate(() => window.__combat3d.snapshot());
@@ -81,6 +88,15 @@ try {
       "fullscreen is requested directly from the trusted Start click",
     );
     assert((await snap()).map.buildings > 100);
+    assert.equal(
+      (await snap()).map.source,
+      process.env.TILES ? "tiles" : "local",
+    );
+    assert.equal(await page.locator("#pause").count(), 0, "no pause button");
+    assert(
+      (await snap()).enemies.every((e) => !e.onScreen),
+      "enemies start out of sight",
+    );
     assert.equal(await page.locator("#attack-symbol svg").count(), 1);
     assert.equal(await page.locator('.health').getAttribute('aria-valuenow'), '100');
     const panels = await page.evaluate(() => ['.objective', '.loadout', '.vitals'].map(selector => {
@@ -89,7 +105,7 @@ try {
     }));
     for (let i = 0; i < panels.length; i++) for (let j = i + 1; j < panels.length; j++) {
       const a = panels[i], b = panels[j];
-      assert(!(a.x < b.right && a.right > b.x && a.y < b.bottom && a.bottom > b.y), 'HUD panels must not overlap');
+      assert(!(a.x < b.right && a.right > b.x && a.y < b.bottom && a.bottom > b.y), `HUD panels must not overlap ${JSON.stringify([a,b])}`);
     }
     await page.screenshot({ path: `work/combat3d/${tag}-city.png` });
     await fixture("target");
@@ -133,11 +149,13 @@ try {
       63,
       "potion cooldown works",
     );
-    await page.click("#pause");
+    await page.keyboard.press("KeyP");
     const t = (await snap()).time;
     await page.waitForTimeout(350);
     assert.equal((await snap()).time, t, "pause freezes simulation");
-    await page.click("#pause");
+    if (mobile) await page.touchscreen.tap(422, 170);
+    else await page.mouse.click(640, 300);
+    assert(!(await snap()).paused, "a tap resumes the game");
     await gameWait(0.2);
     console.log(`PASS ${tag}: healing and pause`);
     if (mobile) {
@@ -151,7 +169,7 @@ try {
         bounds: { windowState: "normal" },
       });
       await page.waitForTimeout(300);
-      if ((await snap()).paused) await page.click("#pause");
+      if ((await snap()).paused) await page.keyboard.press("KeyP");
       await page.setViewportSize({ width: 390, height: 844 });
       await page.waitForFunction(
         () => window.__combat3d.snapshot().orientationHeld,
@@ -227,6 +245,25 @@ try {
       );
     }
     console.log(`PASS ${tag}: movement and input cleanup`);
+    await fixture("empty");
+    const tentAt = await page.evaluate(() => window.__combat3d.camp());
+    assert(tentAt, "camp can be pitched out of combat");
+    const campAt = (await snap()).player;
+    await page.waitForFunction(
+      () => window.__combat3d.snapshot().camp?.t > 3,
+      null,
+      { timeout: 120000 },
+    );
+    await page.screenshot({ path: `work/combat3d/${tag}-camp.png` });
+    await page.waitForFunction(() => !window.__combat3d.snapshot().camp, null, {
+      timeout: 180000,
+    });
+    const afterCamp = await snap();
+    assert(
+      Math.hypot(afterCamp.home.x - campAt.x, afterCamp.home.z - campAt.z) < 0.1,
+      "the camp becomes the new refuge",
+    );
+    console.log(`PASS ${tag}: camp animation and new refuge`);
     await fixture("death");
     await gameWait(1.3);
     const restored = await snap();

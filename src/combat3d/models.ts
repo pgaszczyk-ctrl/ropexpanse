@@ -299,3 +299,83 @@ export function sector(
   m.rotation.x = -Math.PI / 2;
   return m;
 }
+/** A-frame tent; its door faces local +z. Built at full size; the camp scales it while unfolding. */
+export function tent() {
+  const root = new T.Group(),
+    body = new T.Group();
+  root.add(body);
+  const canvas = 0xb59a68,
+    shade = 0x8f7550,
+    wood = 0x5a4630;
+  const slope = Math.atan2(1.5, 1.05),
+    side = Math.hypot(1.05, 1.5);
+  for (const sign of [-1, 1]) {
+    const panel = box(body, sign < 0 ? canvas : shade, [side, 0.05, 2.3], [sign * 0.525, 0.75, 0]);
+    panel.rotation.z = -sign * slope;
+  }
+  const gable = (z: number, color: number, w: number, h: number) => {
+    const shape = new T.Shape();
+    shape.moveTo(-w, 0);
+    shape.lineTo(w, 0);
+    shape.lineTo(0, h);
+    shape.lineTo(-w, 0);
+    const m = new T.Mesh(new T.ShapeGeometry(shape), material(color));
+    m.position.z = z;
+    m.castShadow = true;
+    body.add(m);
+    return m;
+  };
+  gable(-1.14, shade, 1.03, 1.48).rotation.y = Math.PI;
+  gable(1.13, canvas, 1.03, 1.48);
+  gable(1.15, 0x3a2e22, 0.42, 0.95);
+  box(body, wood, [0.08, 0.08, 2.7], [0, 1.52, 0]);
+  for (const z of [-1.2, 1.2]) box(body, wood, [0.07, 1.6, 0.07], [0, 0.78, z]);
+  return { root, body };
+}
+/** Stakes, mallet, tent bundle and a small fire for the camp animation. */
+export function campProps() {
+  const wood = 0x7b5b3a,
+    canvas = 0xb59a68;
+  const stake = () => {
+    const g = new T.Group();
+    box(g, wood, [0.07, 0.55, 0.07], [0, 0.27, 0]);
+    box(g, 0x3b2c1e, [0.13, 0.06, 0.13], [0, 0.55, 0]);
+    return g;
+  };
+  const stakeGroup = new T.Group(),
+    stakes = [0, 1, 2, 3].map(() => {
+      const s = stake();
+      s.visible = false;
+      stakeGroup.add(s);
+      return s;
+    });
+  const stakeInHand = stake();
+  stakeInHand.position.set(0, -0.62, 0.12);
+  stakeInHand.rotation.x = Math.PI;
+  stakeInHand.visible = false;
+  const mallet = new T.Group();
+  box(mallet, 0x5c4329, [0.07, 0.07, 0.55], [0, -0.5, 0.25]);
+  box(mallet, 0x4c4f4a, [0.17, 0.32, 0.19], [0, -0.5, 0.55]);
+  mallet.visible = false;
+  const bundle = new T.Group();
+  const roll = new T.Mesh(new T.CylinderGeometry(0.17, 0.17, 0.62, 10), material(canvas));
+  roll.rotation.z = Math.PI / 2;
+  roll.position.set(0, -0.55, 0.12);
+  bundle.add(roll);
+  box(bundle, 0x483e32, [0.05, 0.36, 0.36], [0.16, -0.55, 0.12]);
+  box(bundle, 0x483e32, [0.05, 0.36, 0.36], [-0.16, -0.55, 0.12]);
+  bundle.visible = false;
+  const fire = new T.Group();
+  for (const a of [0, 1.1, 2.2]) {
+    const log = box(fire, 0x5a4026, [0.12, 0.12, 0.7], [0, 0.07, 0]);
+    log.rotation.y = a;
+  }
+  const flame = new T.Mesh(
+    new T.ConeGeometry(0.22, 0.6, 6),
+    new T.MeshBasicMaterial({ color: 0xffb347 }),
+  );
+  flame.position.y = 0.38;
+  fire.add(flame);
+  fire.visible = false;
+  return { stakeGroup, stakes, stakeInHand, mallet, bundle, fire, flame };
+}

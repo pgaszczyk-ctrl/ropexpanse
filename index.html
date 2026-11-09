@@ -15,7 +15,7 @@
       <a class="brand" href="./"
         ><span class="emblem" data-icon="goggles"></span
         ><span>ROPExpanse<small>LUBLIN · STARY GRÓD</small></span></a
-      ><button id="pause" class="plain" aria-label="Pauza">Ⅱ</button>
+      >
     </header>
     <section class="vitals" aria-label="Stan postaci">
       <div class="avatar" aria-hidden="true">
@@ -44,6 +44,7 @@
       <button data-weapon="sword" class="selected" aria-label="Miecz" aria-pressed="true">
         <i class="icon" data-icon="sword"></i><span>Miecz</span><kbd>1</kbd></button
       ><button data-weapon="magic" aria-label="Magia" aria-pressed="false"><i class="icon" data-icon="magic"></i><span>Magia</span><kbd>2</kbd></button
+      ><button id="camp" aria-label="Rozbij obóz" title="Rozbij obóz (C) — wczytuje dalsze kilometry mapy"><i class="icon" data-icon="tent"></i></button
       ><button id="audio" aria-pressed="false" title="Dźwięk">♫</button
       ><button id="help-button" aria-label="Instrukcja">?</button>
     </nav>
@@ -78,7 +79,8 @@
           target="_blank"
           rel="noopener"
           >OpenStreetMap</a
-        ></span
+        > · <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> ©
+        <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a></span
       ><span>MODELE I ANIMACJE PROTOTYPOWE</span>
     </footer>
     <div id="loading" class="overlay">
@@ -100,12 +102,16 @@
         </p>
         <p>
           <b>Komputer:</b> WASD / strzałki — ruch. Mysz — kierunek, klik /
-          spacja — atak. Q — sweep, H — mikstura. 1 / 2 — miecz / magia. P —
-          pauza.
+          spacja — atak. Q — sweep, H — mikstura. 1 / 2 — miecz / magia. C —
+          obóz. P — pauza.
         </p>
         <p>
           Unikaj czerwonych zapowiedzi ataków. W schronieniu zdrowie wraca
           szybko; poza nim regeneruje się po chwili spokoju.
+        </p>
+        <p>
+          <b>Obóz:</b> poza walką rozbij obóz (przycisk „Obóz” lub C). Staje się
+          nowym schronieniem, a w tym czasie wczytuje się kolejne kilometry mapy.
         </p>
         <p class="muted">
           Pauza zatrzymuje całą próbę. Postęp zapisuje się wyłącznie w tej

@@ -28,7 +28,6 @@ a { color: inherit; }
 .brand { text-decoration: none; display: flex; gap: 10px; align-items: center; font-family: Georgia, serif; font-size: 22px; font-weight: 700; letter-spacing: 2.5px; color: #fff0c9; text-shadow: 0 2px 3px #1d170d, 0 0 15px #1d170d; }
 .brand small { display: block; margin-top: 5px; font: 700 8px "Trebuchet MS", sans-serif; letter-spacing: 2px; color: #f1d6a3; }
 .emblem { display: grid; place-items: center; width: 43px; height: 43px; color: #f5cd7b; background: var(--glass); border: 1px solid #efd493; border-radius: 50%; box-shadow: var(--rim), inset 0 0 0 3px #0005; }
-.plain { width: 42px; height: 42px; font-size: 20px; border-radius: 50%; }
 /* Riveted iron plates share the warm brass of the original EXP-LORE HUD. */
 .vitals, .objective, .sheet, #loot {
   --rivet: #ffe5ab 0 1px, #ab7b3d 1.5px 2px, #302017 2.5px 3px, transparent 3.5px;
@@ -58,7 +57,7 @@ a { color: inherit; }
 .eyebrow { color: #e7bc70; font-size: 8px; letter-spacing: 2px; font-weight: 700; }
 .objective strong { display: block; font: 700 15px/1.4 Georgia, serif; color: #f9edce; margin: 6px 0; }
 .objective > span:last-child { display: block; font-size: 10px; line-height: 1.5; color: #c7b893; }
-.loadout { position: absolute; right: max(28px, env(safe-area-inset-right)); top: 88px; display: flex; gap: 10px; align-items: center; }
+.loadout { position: absolute; right: max(28px, env(safe-area-inset-right)); top: 88px; display: flex; gap: 8px; align-items: center; }
 .loadout button { height: 44px; min-width: 44px; padding: 0 11px; display: flex; align-items: center; justify-content: center; gap: 4px; color: #ecd09a; }
 .loadout button:not([data-weapon]) { padding: 0; border-radius: 50%; font-size: 21px; }
 .loadout span { font-size: 11px; }
@@ -69,6 +68,8 @@ a { color: inherit; }
 .zone.danger { color: #f8bd92; }
 #toast { position: absolute; top: 197px; left: 50%; transform: translateX(-50%); padding: 10px 18px; background: #28221df5; border: 1px solid #bc9454; border-radius: 5px; box-shadow: 0 3px 12px #0003; font-size: 12px; line-height: 1.45; text-align: center; max-width: 60%; opacity: 0; transition: opacity .15s; pointer-events: none; }
 #toast.on { opacity: 1; }
+/* While the camera zooms in on the camp, messages move out of the hero's way. */
+.camping #toast { top: auto; bottom: 205px; }
 .bottom-info { position: absolute; bottom: 46px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 7px; font-size: 11px; pointer-events: none; }
 #loot { padding: 9px 23px; font-weight: 700; color: #f3d38b; white-space: nowrap; }
 #fps { font-size: 8px; color: #f4e5c2; text-shadow: 0 1px 3px #16110b, 0 0 4px #16110b; letter-spacing: .5px; }
@@ -120,7 +121,6 @@ footer a { pointer-events: auto; }
   .brand small { font-size: 6px; letter-spacing: 1.3px; margin-top: 3px; }
   .emblem { width: 32px; height: 32px; }
   .emblem svg { width: 25px; height: 25px; }
-  .plain { width: 38px; height: 38px; }
   .vitals { left: max(20px, env(safe-area-inset-left)); top: 62px; width: 222px; min-height: 66px; padding: 10px 12px 10px 62px; }
   .avatar { width: 46px; height: 46px; left: 7px; top: 8px; padding: 5px; }
   .hero-name { font-size: 11px; margin-bottom: 6px; }
@@ -133,7 +133,7 @@ footer a { pointer-events: auto; }
   .objective .eyebrow { font-size: 7px; letter-spacing: 1.4px; }
   .objective strong { font-size: 12px; line-height: 1.35; margin: 5px 0; }
   .objective > span:last-child { font-size: 8px; line-height: 1.45; }
-  .loadout { right: max(77px, calc(env(safe-area-inset-right) + 57px)); top: 13px; gap: 8px; }
+  .loadout { right: max(20px, env(safe-area-inset-right)); top: 13px; gap: 8px; }
   .loadout button { height: 38px; min-width: 38px; padding: 0; }
   .loadout span, .loadout kbd { display: none; }
   .loadout .icon svg { width: 23px; height: 23px; }
@@ -153,6 +153,7 @@ footer a { pointer-events: auto; }
   #fps { font-size: 7px; }
   footer { bottom: 6px; left: 20px; right: 20px; font-size: 6px; }
   #toast { top: 142px; font-size: 10px; padding: 7px 12px; max-width: 48%; }
+  .camping #toast { top: auto; bottom: 108px; }
   .sheet { max-width: 480px; padding: 22px 29px; }
   .sheet::before { font-size: 10px; margin-bottom: 14px; padding-bottom: 11px; }
   .sheet h1 { font-size: 30px; margin: 10px 0 12px; }
