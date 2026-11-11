@@ -264,6 +264,8 @@ const idle = (job: () => void) =>
 // offline export) the same code runs here, as before.
 let tileWorker: Worker | null | undefined;
 let tileJobs = 0;
+const WORKER_WAIT_MS = 8_000,
+  TILE_WAIT_MS = 30_000;
 const waiting = new Map<number, { resolve: (t: Tile) => void; reject: (e: Error) => void; key: string; box: TileBox }>();
 function startTileWorker() {
   if (tileWorker !== undefined) return tileWorker;
@@ -299,6 +301,14 @@ function loadTile(key: string, box: TileBox): Promise<Tile> {
     const id = ++tileJobs;
     waiting.set(id, { resolve, reject, key, box });
     worker.postMessage({ id, key, box, world: worldUrl() });
+    // A worker that stays silent is given up on: the tile is read here instead, and so
+    // are the next ones. The game must not sit on its loading screen because of it.
+    setTimeout(() => {
+      if (!waiting.delete(id)) return;
+      if (tileWorker === worker) tileWorker = null;
+      console.warn("Tile worker did not answer; reading tiles on the main thread");
+      readTile(key, box).then(resolve, reject);
+    }, WORKER_WAIT_MS);
   });
 }
 async function overpass(
@@ -457,7 +467,11 @@ export class WorldStream {
     try {
       let data: Tile;
       try {
-        data = await loadTile(key, tileBounds(tile.x, tile.y));
+        // A read that never ends (a hung connection) would hold the whole queue.
+        data = await Promise.race([
+          loadTile(key, tileBounds(tile.x, tile.y)),
+          new Promise<never>((_, reject) => setTimeout(() => reject(Error("Mapa nie odpowiada")), TILE_WAIT_MS)),
+        ]);
       } catch (worldError) {
         // The world archive is the source; the public Overpass server is only a fallback.
         console.warn("World map tile failed, trying Overpass", worldError);

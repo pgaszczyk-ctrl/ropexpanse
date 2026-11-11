@@ -63,7 +63,7 @@ import {
   type Vent,
 } from "./vents";
 import { Expedition } from "./expedition";
-import { trackFrame, buildReport, reloadIfStale } from "./report";
+import { trackFrame, buildReport, reloadIfStale, BUILD } from "./report";
 import {
   resourceNodes,
   starterNodes,
@@ -4105,8 +4105,37 @@ function tick() {
     );
   }
 }
+/** Where the start-up is, shown when it takes long, so a screenshot of a stuck loading
+ * screen says what it is waiting for. */
+let loadStage = "start";
+function watchLoading() {
+  const show = () => {
+    if (ready) return;
+    const tiles = worldStream ? `, kafle ${worldStream.tiles.size}${worldStream.error ? ", błąd: " + worldStream.error : ""}` : "";
+    $("loading-text").textContent = `Wczytywanie trwa dłużej niż zwykle (etap: ${loadStage}${tiles}, wersja ${BUILD}). Możesz poczekać albo wczytać grę ponownie — postęp jest zachowany.`;
+    if (!document.getElementById("loading-retry")) {
+      const retry = document.createElement("button");
+      retry.id = "loading-retry";
+      retry.textContent = "Wyczyść pamięć mapy i wczytaj ponownie";
+      retry.onclick = () => {
+        // Only stored map tiles go (they download again); the saved game stays.
+        for (const name of ["ropexpanse-tiles", "ropexpanse-world"])
+          try {
+            indexedDB.deleteDatabase(name);
+          } catch {
+            /* Reload anyway. */
+          }
+        location.reload();
+      };
+      $("loading-text").after(retry);
+    }
+    window.setTimeout(show, 3000);
+  };
+  window.setTimeout(show, 15_000);
+}
 async function init() {
   try {
+    watchLoading();
     $("compatibility").onclick = () => {
       const url = new URL(location.href);
       url.searchParams.set("quality", "safe");
@@ -4150,6 +4179,7 @@ async function init() {
     // Neutral tone mapping keeps colours saturated (ACES greyed them out).
     renderer.toneMapping = T.NeutralToneMapping;
     renderer.toneMappingExposure = 0.9;
+    loadStage = "mapa startowa";
     const response = await fetch("combat3d/lublin.json");
     if (!response.ok) throw new Error(`Mapa: HTTP ${response.status}`);
     map = (await response.json()) as MapData;
@@ -4161,15 +4191,18 @@ async function init() {
       ) > 0.000001
     ) {
       worldStream = openWorld(campaign.origin);
+      loadStage = "mapa okolicy (zapisana gra)";
       await worldStream.load(player);
       map = worldStream.snapshot();
     } else {
       worldStream = openWorld(campaign.origin, map);
       if (!worldStream.contains(player)) {
+        loadStage = "mapa okolicy";
         await worldStream.load(player);
         map = worldStream.snapshot();
       }
     }
+    loadStage = "budowanie świata";
     buildWorld();
     expedition = new Expedition({
       scene,

@@ -11,17 +11,25 @@ export type Tile = {
   savedAt: number;
 };
 export type TileBox = { south: number; west: number; north: number; east: number };
-const CACHED_TILES = 96;
+const CACHED_TILES = 96,
+  STORE_WAIT_MS = 1500;
 let dbPromise: Promise<IDBDatabase> | undefined;
 function database() {
   return (dbPromise ??= new Promise<IDBDatabase>((resolve, reject) => {
-    const r = indexedDB.open("ropexpanse-world", 2);
+    // A fresh store under a new name (12 Nov 2026). Adding the age index to the old
+    // store ("ropexpanse-world") made the browser read every stored tile first, and
+    // the game sat on its loading screen for as long as that took. The old store is
+    // simply removed; its tiles are downloaded again when needed.
+    const r = indexedDB.open("ropexpanse-tiles", 1);
     r.onupgradeneeded = () => {
-      const store = r.result.objectStoreNames.contains("tiles")
-        ? r.transaction!.objectStore("tiles")
-        : r.result.createObjectStore("tiles", { keyPath: "key" });
+      const store = r.result.createObjectStore("tiles", { keyPath: "key" });
       // Age index: old tiles are found by key alone, without reading any tile back.
-      if (!store.indexNames.contains("savedAt")) store.createIndex("savedAt", "savedAt");
+      store.createIndex("savedAt", "savedAt");
+      try {
+        indexedDB.deleteDatabase("ropexpanse-world");
+      } catch {
+        /* It only takes disk space. */
+      }
     };
     r.onsuccess = () => {
       // Another tab with a newer game may need to upgrade the store: let it.
@@ -34,16 +42,22 @@ function database() {
   }));
 }
 async function cached(key: string): Promise<Tile | undefined> {
-  try {
-    const db = await database();
-    return await new Promise((resolve, reject) => {
-      const r = db.transaction("tiles").objectStore("tiles").get(key);
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-  } catch {
-    return undefined;
-  }
+  // The store is a convenience: when it does not answer promptly (busy, blocked, being
+  // rebuilt by the browser), the tile comes from the world archive instead. Loading
+  // the map never waits on it.
+  const stored = (async () => {
+    try {
+      const db = await database();
+      return await new Promise<Tile | undefined>((resolve, reject) => {
+        const r = db.transaction("tiles").objectStore("tiles").get(key);
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+      });
+    } catch {
+      return undefined;
+    }
+  })();
+  return Promise.race([stored, new Promise<undefined>((r) => setTimeout(r, STORE_WAIT_MS))]);
 }
 export async function cache(tile: Tile) {
   try {
