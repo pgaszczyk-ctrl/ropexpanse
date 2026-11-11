@@ -39,14 +39,44 @@ export function trackFrame(raw: number, context: () => string) {
     secondStart = now;
   }
 }
-export async function buildReport(extra: Record<string, unknown>) {
-  let version = "dev";
+/** The build this page runs (baked in at build time), not the one on the server. */
+export const BUILD = typeof __BUILD__ === "string" ? __BUILD__ : "dev";
+/** What the server publishes now (version.txt), or "" when unknown. */
+async function publishedBuild() {
   try {
     const r = await fetch("./version.txt", { cache: "no-store" });
     const text = (await r.text()).trim();
     // Only the published build has version.txt (a dev server answers with the page).
-    if (r.ok && text.length < 120 && !text.startsWith("<")) version = text;
-  } catch {}
+    return r.ok && text.length < 120 && !text.startsWith("<") ? text : "";
+  } catch {
+    return "";
+  }
+}
+/** The browser may keep the old page for minutes after a new build is published (the
+ * report of 11 Nov 12:43 came from such a stale page while showing the new version
+ * number). On start, a stale page fetches itself afresh and reloads, once per build. */
+export async function reloadIfStale() {
+  if (BUILD === "dev") return;
+  const published = await publishedBuild();
+  if (!published || published.startsWith(BUILD)) return;
+  try {
+    if (sessionStorage.getItem("ropexpanse-reloaded-for") === published) return;
+    sessionStorage.setItem("ropexpanse-reloaded-for", published);
+    await fetch(location.href, { cache: "reload" });
+    location.reload();
+  } catch {
+    // Offline or storage blocked: play the copy we have.
+  }
+}
+export async function buildReport(extra: Record<string, unknown>) {
+  const published = await publishedBuild(),
+    stale = BUILD !== "dev" && published && !published.startsWith(BUILD);
+  const version =
+    BUILD === "dev"
+      ? published || "dev"
+      : stale
+        ? `${BUILD} — STARA KOPIA w przeglądarce (opublikowana: ${published}); odśwież Ctrl+F5`
+        : published || BUILD;
   const last = seconds.slice(-30),
     avg = last.length ? Math.round(last.reduce((n, s) => n + s.fps, 0) / last.length) : 0;
   const lines = [

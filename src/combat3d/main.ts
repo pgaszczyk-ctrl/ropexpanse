@@ -63,7 +63,7 @@ import {
   type Vent,
 } from "./vents";
 import { Expedition } from "./expedition";
-import { trackFrame, buildReport } from "./report";
+import { trackFrame, buildReport, reloadIfStale } from "./report";
 import {
   resourceNodes,
   starterNodes,
@@ -86,6 +86,7 @@ import {
 } from "./world";
 import { mountHud, hudIcon, layoutArc } from "./hud";
 import { lootFor, coinSplit, isValuable, type ItemRarity } from "./loot";
+void reloadIfStale();
 mountHud();
 import * as T from "three";
 import { animate, material, person, sector, wolf, type Rig } from "./models";
