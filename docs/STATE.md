@@ -1,6 +1,6 @@
 # ROPExpanse — stan projektu
 
-Aktualizacja: 08.11.2026 (plan poprawek dopisany po południu). Ta sekcja jest aktualna; niżej („Historia”) zostają starsze notatki, częściowo nieaktualne.
+Aktualizacja: 11.11.2026 (poprawki płynności po raporcie właściciela). Ta sekcja jest aktualna; niżej („Historia”) zostają starsze notatki, częściowo nieaktualne.
 
 ## Przekazanie do nowego wątku
 
@@ -12,6 +12,18 @@ Aktualizacja: 08.11.2026 (plan poprawek dopisany po południu). Ta sekcja jest a
 - **Podgląd gry:** https://pgaszczyk-ctrl.github.io/ropexpanse/ — workflow `.github/workflows/pages.yml` publikuje każdy push do `main` i `feat/camps-world` na gałąź `gh-pages`. Właściciel musi raz włączyć Settings → Pages → Deploy from a branch → `gh-pages` / root (nie potwierdzono, czy włączył).
 - **Do sprawdzenia przez właściciela:** CORS kubełka R2 erpeg musi dopuszczać `https://pgaszczyk-ctrl.github.io` (inaczej mapa spoza Lublina idzie wolnym Overpass); listy imion regionów (szkic) do weryfikacji przez osoby z regionów; test na fizycznym telefonie.
 - **Grafika:** właściciel zamawia modele voxel chibi u grafika. Uwagi do pierwszej próbki (ciało bazowe): głowa ~40% wysokości, poza w gotowości, rzuty ortograficzne w jednej skali, 5–6 kolorów, potem pełny wojownik jako wzorzec. Wszystkie obecne modele (postacie, wrogowie, broń, zasoby, wyziewy) są tymczasowe z kodu — do podmiany na GLB, gdy przyjdą.
+
+## Poprawki po raporcie z 11 listopada (żabkowanie)
+
+Raport właściciela (wersja `feat/camps-world 5d0f4ea`, 25 kafli, 6699 budynków, Intel HD 530): klatki po 3–4 s podczas ciągnięcia liny, ~0,1 s przy każdym nowym kaflu, 0,9 s na przerysowanie świata. Gałąź `claude/nice-dijkstra-2pq7w0`.
+
+- **Lina (zacięcia 3–4 s):** każdy krok z liną sprawdzał wszystkie budynki mapy, a gdy lina zahaczała o róg, objazd szukany był wśród budynków w kolejności z mapy (limit 450 punktów), więc często go nie znajdował, odmawiał kroku i powtarzał pełne szukanie w każdej klatce. Teraz budynki są w siatce (`ObstacleIndex` w `rope.ts`), kandydaci na objazd idą od najbliższych liny, szukanie jest ukierunkowane (A*), a odmówiony krok nie jest liczony ponownie przez 0,3 s. Test `scripts/tests/rope-city.mjs` (w `npm test`): marsz z liną przez centrum Lublina, średnio ~0,06 ms na krok, najgorszy ~20 ms (wcześniej setki ms i odmowy).
+- **Kafle:** po zapisie każdego kafla gra odczytywała z IndexedDB wszystkie zapisane kafle, żeby usunąć stare (ponad 1/3 czasu ładowania). Teraz stare kafle znajduje indeks `savedAt` po samych kluczach (baza w wersji 2). Odczyt, dekodowanie i zapis kafla działają w osobnym wątku (`tileWorker.ts`, `tileStore.ts`); bez Workera (testy Node, eksport jednoplikowy) ten sam kod działa w głównym wątku.
+- **Budowanie świata:** kafel jest zamieniany na kształty raz (`WorldStream.tileData`), kształt budynku liczony raz i trzymany (`prepareBuilding`), w krótkich porcjach między klatkami, od razu gdy kafel dojdzie. Przerysowanie (`buildTerrain`) jest pocięte na kroki po ~5 ms (ćwierć klatki na wolnym sprzęcie): grunt → drogi → budynki partiami → podmiana w jednej klatce → drzewa; fragmenty budynków (`CHUNK`), w których nic się nie zmieniło, zostają bez przebudowy i bez ponownego wysyłania do karty. Kolory budynków wynikają z identyfikatora, więc nie zmieniają się, gdy dochodzą kafle.
+- **Drobniejsze:** woda, obszary (zasoby, biomy) i drogi przy drzewach szukane w siatkach zamiast po całej mapie; shadery cieni (także drzew) kompilują się pod ekranem startu, a nie przy pierwszym przerysowaniu.
+- **Pomiar (headless, procesor spowolniony 4×, wejście w nowy obszar 25 kafli):** komplet kafli po 5 s zamiast 16 s; suma blokad wątku 15,3 s → ~5 s, z czego większość to sama podróż pod zasłoną; najdłuższa blokada w trakcie gry ~2,1 s → ~0,25 s. Raport „Zgłoś błąd” pokazuje teraz, w ilu krokach poszło ostatnie przerysowanie i ile trwał najdłuższy.
+- Testy: `npm test` (15 plików) i `npm run test:browser` (10 plików) zaliczone. Nie sprawdzono na komputerze właściciela ani na fizycznym telefonie — potrzebny nowy raport po aktualizacji.
+- Zostało: podróż (`travelTo`) i pierwsze wejście nadal budują świat jednym ciągiem pod zasłoną; kafle pobierają się jeden po drugim (można równolegle); tworzenie modeli wrogów przy pojawieniu się bywa widoczne na wolnym sprzęcie.
 
 ## Poprawki po zgłoszeniu z 8 listopada (wieczór)
 
@@ -40,7 +52,7 @@ Aktualizacja: 08.11.2026 (plan poprawek dopisany po południu). Ta sekcja jest a
 
 ## Testy
 
-- `npm ci`, `npm run build`, `npm test` (14 testów reguł w Node, bez sieci).
+- `npm ci`, `npm run build`, `npm test` (15 plików testów reguł w Node, bez sieci).
 - `BROWSER_EXECUTABLE=/opt/pw-browsers/chromium npm run test:browser` po buildzie (8 plików: walka, świat/PMTiles, wyziewy+ratowanie, drużyna, umiejętności, bestiariusz, kamera). Testy przeglądarkowe blokują kafle wysokości i pogodę (świat płaski, offline); zrzuty w `work/`.
 - Tryb QA: `?qa=1` → `window.__combat3d` (snapshot + skróty testowe: fixture, travel, companion, spawnSpecies, equipTemplate, vent, rescue, production, setHp…).
 - Gra w headless Chromium biegnie wolniej niż zegar: w testach czekać na czas gry (`snapshot().time`), nie na sekundy.

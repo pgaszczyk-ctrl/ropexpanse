@@ -31,7 +31,7 @@ import { circleRates, workerRates } from "./production";
 import { weaponSkill, offhandSkill, weaponMode, SKILLS } from "./skills";
 import { timeOfDayAt, LIGHT } from "./sky";
 import { Elevation, HeightField, waterTest, CELL } from "./terrain";
-import { markSeen, cellOf, greyed } from "./explore";
+import { markSeen, cellOf, greyed, DESATURATE } from "./explore";
 import { fetchWeather, WEATHER_NAMES } from "./weather";
 import {
   biomeAt,
@@ -319,13 +319,17 @@ const enemies: Enemy[] = [],
  * every building keeps its own vertex range there for fading and fog-of-war colour.
  * Before, each building was its own mesh with two transparent materials (3000+ in a
  * city centre), which made every frame and every world redraw slow. */
-type Chunk = { mesh: T.Mesh; base: Float32Array };
+type Chunk = { mesh: T.Mesh; base: Float32Array; signature: number; views: BuildingView[] };
+type Building = MapData["buildings"][number];
+type BuildingView = (typeof buildingViews)[number];
 const buildingViews: {
   data: MapData["buildings"][number];
   chunk: Chunk;
   start: number;
   count: number;
   fade: number;
+  /** Whether it is painted in full colour (seen) or greyed (fog of war). */
+  lit: boolean;
   top: number;
   ring: number[][];
   box: { x0: number; x1: number; z0: number; z1: number };
@@ -346,11 +350,209 @@ buildingMaterial.onBeforeCompile = (shader) => {
     );
 };
 const obstacleCells = new Map<string, typeof buildingViews>();
+/** A building's shape is worked out once (the costly part: cutting its outline into
+ * triangles) and kept for as long as the map keeps the building. Only its height on the
+ * ground changes later, and that is two numbers. `pos` holds x, 0|1 (floor|roof), z. */
+type Prepared = {
+  serial: number;
+  pos: Float32Array;
+  nor: Float32Array;
+  count: number;
+  wallsFrom: number;
+  box: BuildingView["box"];
+  cx: number;
+  cz: number;
+  chunk: string;
+};
+const preparedBuildings = new WeakMap<Building, Prepared>();
+let preparedSerial = 0;
+function prepareBuilding(b: Building) {
+  let p = preparedBuildings.get(b);
+  if (p) return p;
+  const g = new T.ExtrudeGeometry(polyShape(b.rings), { depth: 1, bevelEnabled: false });
+  g.rotateX(-Math.PI / 2);
+  const pos = (g.getAttribute("position").array as Float32Array).slice(),
+    nor = (g.getAttribute("normal").array as Float32Array).slice(),
+    count = pos.length / 3,
+    ring = b.rings[0],
+    box = { x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity };
+  for (let v = 0; v < count; v++) pos[v * 3 + 1] = pos[v * 3 + 1] > 0.5 ? 1 : 0;
+  let cx = 0,
+    cz = 0;
+  for (const q of ring) {
+    cx += q[0];
+    cz += q[1];
+    if (q[0] < box.x0) box.x0 = q[0];
+    if (q[0] > box.x1) box.x1 = q[0];
+    if (q[1] < box.z0) box.z0 = q[1];
+    if (q[1] > box.z1) box.z1 = q[1];
+  }
+  p = {
+    serial: ++preparedSerial,
+    pos,
+    nor,
+    count,
+    // Group 0 = roof and floor caps, group 1 = walls (ExtrudeGeometry order).
+    wallsFrom: g.groups[1]?.start ?? count,
+    box,
+    cx: cx / ring.length,
+    cz: cz / ring.length,
+    chunk: `${Math.floor((box.x0 + box.x1) / 2 / CHUNK)},${Math.floor((box.z0 + box.z1) / 2 / CHUNK)}`,
+  };
+  g.dispose();
+  preparedBuildings.set(b, p);
+  return p;
+}
+/** Shapes of new buildings are prepared in short slices between frames, starting as
+ * soon as their tile arrives, so thousands of new buildings never land in one frame
+ * (report of 11 Nov 2026). The redraw waits until they are ready. */
+const prepQueue: Building[] = [],
+  PREPARE_SLICE_MS = 5;
+let prepTimer = 0,
+  prepSince = 0;
+function queuePreparation(list: Building[]) {
+  for (const b of list) if (!preparedBuildings.has(b)) prepQueue.push(b);
+  if (!prepQueue.length || prepTimer) return;
+  prepSince ||= performance.now();
+  prepTimer = window.setTimeout(prepareSlice, 0);
+}
+function prepareSlice() {
+  prepTimer = 0;
+  const until = performance.now() + PREPARE_SLICE_MS;
+  while (prepQueue.length && performance.now() < until) prepareBuilding(prepQueue.pop()!);
+  if (prepQueue.length) prepTimer = window.setTimeout(prepareSlice, PREPARE_SLICE_MS);
+  else prepSince = 0;
+}
+function openWorld(origin: Geo, seed?: MapData) {
+  const stream = new WorldStream(origin, seed);
+  stream.onTile = (data) => queuePreparation(data.buildings);
+  return stream;
+}
+/** Still shaping buildings (gives up waiting after a few seconds, e.g. in a hidden tab). */
+const preparing = () => prepQueue.length > 0 && performance.now() - prepSince < 6000;
+const buildingChunks = new Map<string, Chunk>(),
+  buildingGroup = new T.Group(),
+  wallTint = new T.Color(),
+  roofTint = new T.Color(),
+  mixBits = new Float32Array(1),
+  mixInts = new Int32Array(mixBits.buffer);
+const mix = (h: number, value: number) => {
+  mixBits[0] = value;
+  return Math.imul(h ^ mixInts[0], 16777619);
+};
+/** Puts every building of the map on the ground. Buildings are merged into square
+ * chunks; a chunk whose buildings and ground did not change keeps its mesh (nothing is
+ * rebuilt or sent to the graphics card again), so a redraw after a short walk or after
+ * new tiles at the edge only touches the chunks that really differ. */
+function* placeBuildings(): Generator<void, () => void, void> {
+  const wallColors = WORLD_COLORS.walls,
+    roofColors = WORLD_COLORS.roofs,
+    sink = field.w ? 0.5 : 0;
+  type Seat = { b: Building; p: Prepared; low: number; high: number; tint: number };
+  const parts = new Map<string, { seats: Seat[]; count: number; signature: number }>();
+  map.buildings.forEach((b, i) => {
+    const p = prepareBuilding(b);
+    // Sits on the lowest point of its outline with a foundation sunk into the ground,
+    // so it never hangs on a slope; a plinth fills the downhill side.
+    let low = groundY(p.cx, p.cz),
+      high = -Infinity;
+    for (const q of b.rings[0]) {
+      const y = groundY(q[0], q[1]);
+      if (y < low) low = y;
+      if (y > high) high = y;
+    }
+    // Colours follow the building, not its place in the list, so they stay put when
+    // tiles come and go.
+    const tint = b.id ? hash(b.id) : i;
+    let part = parts.get(p.chunk);
+    if (!part) parts.set(p.chunk, (part = { seats: [], count: 0, signature: sink ? 7 : 3 }));
+    part.seats.push({ b, p, low, high, tint });
+    part.count += p.count;
+    part.signature = mix(mix(mix(part.signature, p.serial), low), high);
+  });
+  // New chunks are built aside, a few per frame; nothing on screen changes until the
+  // whole world is ready and `commit` swaps them in.
+  const next = new Map<string, Chunk>();
+  for (const [key, part] of parts) {
+    let chunk = buildingChunks.get(key);
+    if (chunk?.signature !== part.signature) {
+      if (overBudget()) yield;
+      const pos = new Float32Array(part.count * 3),
+        nor = new Float32Array(part.count * 3),
+        base = new Float32Array(part.count * 3),
+        views: BuildingView[] = [];
+      let start = 0;
+      for (const { b, p, low, high, tint } of part.seats) {
+        const bottom = low - sink,
+          top = bottom + b.height + (high - low) + sink,
+          // Soft ambient occlusion: walls darken towards the ground they stand on.
+          lit = 0.7 + 0.3 * Math.min(1, Math.max(0, (top - low) / 1.6)),
+          o0 = start * 3;
+        roofTint.setHex(roofColors[tint % roofColors.length]);
+        wallTint.setHex(wallColors[tint % wallColors.length]);
+        nor.set(p.nor, o0);
+        pos.set(p.pos, o0);
+        // Caps first, then walls (ExtrudeGeometry order); the stored height is 0 or 1.
+        for (const [from, to, c] of [[0, p.wallsFrom, roofTint], [p.wallsFrom, p.count, wallTint]] as const) {
+          const r = c.r, g = c.g, bl = c.b;
+          for (let o = o0 + from * 3, end = o0 + to * 3; o < end; o += 3) {
+            const up = pos[o + 1] > 0,
+              f = up ? lit : 0.7;
+            pos[o + 1] = up ? top : bottom;
+            base[o] = r * f;
+            base[o + 1] = g * f;
+            base[o + 2] = bl * f;
+          }
+        }
+        views.push({ data: b, chunk: null as unknown as Chunk, start, count: p.count, fade: 1, lit: true, top: high + b.height, ring: b.rings[0], box: p.box });
+        start += p.count;
+      }
+      const g = new T.BufferGeometry();
+      g.setAttribute("position", new T.BufferAttribute(pos, 3));
+      g.setAttribute("normal", new T.BufferAttribute(nor, 3));
+      g.setAttribute("color", new T.BufferAttribute(base.slice(), 3));
+      g.setAttribute("aFade", new T.BufferAttribute(new Float32Array(part.count).fill(1), 1));
+      g.computeBoundingSphere();
+      const mesh = new T.Mesh(g, buildingMaterial);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      chunk = { mesh, base, signature: part.signature, views };
+      for (const v of views) v.chunk = chunk;
+      paintBuildings(views);
+    }
+    next.set(key, chunk);
+  }
+  return () => {
+    for (const [key, chunk] of buildingChunks)
+      if (next.get(key) !== chunk) {
+        buildingGroup.remove(chunk.mesh);
+        chunk.mesh.geometry.dispose();
+      }
+    buildingChunks.clear();
+    buildingViews.length = 0;
+    for (const [key, chunk] of next) {
+      if (!chunk.mesh.parent) buildingGroup.add(chunk.mesh);
+      buildingChunks.set(key, chunk);
+      for (const v of chunk.views) buildingViews.push(v);
+    }
+    obstacleCells.clear();
+  for (const b of buildingViews)
+    for (let x = Math.floor((b.box.x0 - 2) / 8); x <= Math.floor((b.box.x1 + 2) / 8); x++)
+      for (let z = Math.floor((b.box.z0 - 2) / 8); z <= Math.floor((b.box.z1 + 2) / 8); z++) {
+        const key = `${x},${z}`,
+          cell = obstacleCells.get(key);
+        if (cell) cell.push(b);
+        else obstacleCells.set(key, [b]);
+      }
+  };
+}
+
 const retiredMaterials: T.Material[] = [];
 const roadMaterials = new Map<number, T.MeshStandardMaterial>();
 const groundMaterial = new T.MeshLambertMaterial({ vertexColors: true });
 /** Hidden samples of materials that appear only later (smooth ground once heights
  * arrive, loot and coins on the first kill), so their shaders compile while loading. */
+let shadowPrimes = 4;
 function addShaderSamples() {
   const shelf = new T.Group();
   shelf.visible = false;
@@ -361,9 +563,24 @@ function addShaderSamples() {
     shelf.add(mesh);
   }
   scene.add(shelf);
+  // Shadow shaders: trees are instanced meshes (crowns with their own colours, trunks
+  // without), and each kind needs its own variant. They used to compile on the frame
+  // the first tree came into view, and all shadow shaders compiled a second time at the
+  // first world redraw (their key includes the lights, known only after one frame) —
+  // both were hitches in the middle of play. These specks cast shadows from the first
+  // frame and the first frames redo the shadows (`shadowPrimes`), all under the loading
+  // screen.
+  for (const coloured of [true, false]) {
+    const speck = new T.InstancedMesh(tiny, material(0xffffff), 1);
+    speck.setMatrixAt(0, new T.Matrix4().makeTranslation(0, -50, 0));
+    if (coloured) speck.setColorAt(0, new T.Color(0xffffff));
+    speck.castShadow = true;
+    speck.frustumCulled = false;
+    scene.add(speck);
+  }
 }
 /** Buildings standing between the camera and someone fade out smoothly, and back. */
-const hiddenBuildings = new Map<object, number>();
+const hiddenBuildings = new WeakMap<object, number>();
 function fadeBuildings(dt: number) {
   const step = dt * 5;
   for (const b of buildingViews) {
@@ -511,7 +728,7 @@ function blocked(x: number, z: number, r = 0.4) {
     if (x < q.x0 - r || x > q.x1 + r || z < q.z0 - r || z > q.z1 + r) continue;
     if (circleBlocked({ x, z }, r, b.data.rings)) return true;
   }
-  return map.areas.some((a) => a.water && circleBlocked({ x, z }, r, a.rings));
+  return waterBlocked(x, z, r);
 }
 function lineClear(a: Point, b: Point) {
   const n = Math.ceil(distance(a, b) / 0.4);
@@ -748,7 +965,7 @@ function buildWorld() {
   skyLight = new T.HemisphereLight(0xe5f2df, 0x6b7557, 2);
   scene.add(skyLight, partyLamp, campFire, rain, snow);
   addShaderSamples();
-  scene.add(terrain);
+  scene.add(terrain, buildingGroup, treeGroup);
   renderTerrain();
   if (!savedCampaign) {
     home = findFree({ x: 15, z: -13 }, 3.6);
@@ -849,16 +1066,63 @@ let renderDue = Infinity;
 function requestRender(delay = 0.6) {
   renderDue = Math.min(renderDue, time + delay);
 }
-let lastRedrawMs = 0;
-function flushRender() {
-  if (time < renderDue || fieldBusy) return;
-  renderDue = Infinity;
-  const t0 = performance.now();
-  renderTerrain();
+let lastRedrawMs = 0,
+  renderJob: Generator<void, void, void> | null = null,
+  jobMap: MapData | null = null,
+  jobField = -1,
+  jobMs = 0,
+  jobSteps = 0,
+  jobWorst = 0,
+  lastRedrawSteps = 1,
+  lastRedrawWorst = 0;
+let groundDrawn = true;
+/** A redraw in play: the world, then (each in its own frame) what hangs on it. */
+function* redraw(): Generator<void, void, void> {
+  yield* buildTerrain();
+  yield;
   expedition.countBuildings();
+  yield;
   expedition.refreshWorld();
   nodeMap = null;
-  lastRedrawMs = Math.round(performance.now() - t0);
+}
+/** Redraw work per frame while playing: about a quarter of a frame, so a slow device
+ * (long frames anyway) is not kept waiting for its new map for many seconds. */
+function redrawSliceMs() {
+  const frame = (frames.reduce((a, b) => a + b, 0) / Math.max(1, frames.length)) * 1000;
+  return Math.max(5, Math.min(25, frame * 0.25));
+}
+function flushRender() {
+  if (renderJob) {
+    // The map or the heights changed under a redraw in progress: start it again.
+    if (jobMap !== map || jobField !== field.version) {
+      renderJob = null;
+      requestRender(0);
+      return;
+    }
+    sliceStart = performance.now();
+    sliceBudget = redrawSliceMs();
+    const done = renderJob.next().done,
+      took = performance.now() - sliceStart;
+    jobMs += took;
+    jobSteps++;
+    jobWorst = Math.max(jobWorst, took);
+    if (!done) return;
+    renderJob = null;
+    lastRedrawMs = Math.round(jobMs);
+    lastRedrawSteps = jobSteps;
+    lastRedrawWorst = Math.round(jobWorst);
+    return;
+  }
+  if (time < renderDue || fieldBusy) return;
+  // New buildings are shaped in the background first; the redraw waits for them unless
+  // the party stands on ground that is not drawn yet.
+  if (preparing() && groundDrawn) return;
+  groundDrawn = !!worldStream?.contains(player, 25);
+  renderDue = Infinity;
+  renderJob = redraw();
+  jobMap = map;
+  jobField = field.version;
+  jobMs = jobSteps = jobWorst = 0;
 }
 const viewPoint = new T.Vector3();
 /** Whether a ground point is on screen (with a small margin). */
@@ -908,8 +1172,9 @@ function updateTerrainField(dt: number) {
 /** Which mapped area (park, forest, water…) lies under a point. Areas are bucketed by
  * their bounding boxes once per map, so a lookup tests a few polygons instead of all. */
 let areaIndexFor: MapData | null = null,
-  areaBuckets = new Map<string, number[]>();
-const AREA_BUCKET = 8;
+  areaBuckets = new Map<number, number[]>();
+const AREA_BUCKET = 8,
+  bucketKey = (bx: number, bz: number) => (bx + 32768) * 65536 + bz + 32768;
 function areaAt(x: number, z: number, water = false) {
   if (areaIndexFor !== map) {
     areaIndexFor = map;
@@ -924,20 +1189,38 @@ function areaAt(x: number, z: number, water = false) {
       }
       for (let bx = Math.floor(x0 / AREA_BUCKET); bx <= Math.floor(x1 / AREA_BUCKET); bx++)
         for (let bz = Math.floor(z0 / AREA_BUCKET); bz <= Math.floor(z1 / AREA_BUCKET); bz++) {
-          const key = `${bx},${bz}`,
+          const key = bucketKey(bx, bz),
             list = areaBuckets.get(key);
           if (list) list.push(i);
           else areaBuckets.set(key, [i]);
         }
     });
   }
-  const list = areaBuckets.get(`${Math.floor(x / AREA_BUCKET)},${Math.floor(z / AREA_BUCKET)}`);
+  const list = areaBuckets.get(bucketKey(Math.floor(x / AREA_BUCKET), Math.floor(z / AREA_BUCKET)));
   if (list)
     for (const i of list) {
       const a = map.areas[i];
       if (a.water === water && inPolygon(x, z, a.rings)) return a;
     }
   return undefined;
+}
+/** Whether a circle touches water: only the water areas bucketed around it are tested. */
+function waterBlocked(x: number, z: number, r: number) {
+  if (areaIndexFor !== map) areaAt(x, z);
+  const bx0 = Math.floor((x - r) / AREA_BUCKET),
+    bx1 = Math.floor((x + r) / AREA_BUCKET),
+    bz0 = Math.floor((z - r) / AREA_BUCKET),
+    bz1 = Math.floor((z + r) / AREA_BUCKET);
+  for (let bx = bx0; bx <= bx1; bx++)
+    for (let bz = bz0; bz <= bz1; bz++) {
+      const list = areaBuckets.get(bucketKey(bx, bz));
+      if (list)
+        for (const i of list) {
+          const a = map.areas[i];
+          if (a.water && circleBlocked({ x, z }, r, a.rings)) return true;
+        }
+    }
+  return false;
 }
 /** Smooth ground: one vertex per height cell, coloured by what OSM shows there,
  * with shared (smoothed) normals so slopes shade softly instead of stepping. */
@@ -946,33 +1229,44 @@ function groundMesh() {
     pos = new Float32Array(w * w * 3),
     col = new Float32Array(w * w * 3),
     c = new T.Color();
-  const kindColor = (x: number, z: number, k: number) =>
-    field.wet[k] ? WORLD_COLORS.water : areaAt(x, z) ? WORLD_COLORS.green : WORLD_COLORS.ground;
+  const tints = [WORLD_COLORS.water, WORLD_COLORS.green, WORLD_COLORS.ground].map((hex) => {
+    c.setHex(hex);
+    return [c.r, c.g, c.b];
+  });
   for (let j = 0; j < w; j++)
     for (let i = 0; i < w; i++) {
       const k = j * w + i,
         x = field.x0 + (i + 0.5) * CELL,
-        z = field.z0 + (j + 0.5) * CELL;
-      pos.set([x, field.v[k], z], k * 3);
-      c.setHex(kindColor(x, z, k));
-      col.set([c.r, c.g, c.b], k * 3);
+        z = field.z0 + (j + 0.5) * CELL,
+        t = tints[field.wet[k] ? 0 : areaAt(x, z) ? 1 : 2];
+      pos[k * 3] = x;
+      pos[k * 3 + 1] = field.v[k];
+      pos[k * 3 + 2] = z;
+      col[k * 3] = t[0];
+      col[k * 3 + 1] = t[1];
+      col[k * 3 + 2] = t[2];
     }
-  const index: number[] = [];
-  for (let j = 0; j < w - 1; j++)
-    for (let i = 0; i < w - 1; i++) {
+  const index = new Uint32Array((w - 1) * (w - 1) * 6);
+  for (let j = 0, o = 0; j < w - 1; j++)
+    for (let i = 0; i < w - 1; i++, o += 6) {
       const a = j * w + i, b = a + 1, d = a + w, e = d + 1;
-      index.push(a, d, b, b, d, e);
+      index[o] = a;
+      index[o + 1] = d;
+      index[o + 2] = b;
+      index[o + 3] = b;
+      index[o + 4] = d;
+      index[o + 5] = e;
     }
   const g = new T.BufferGeometry();
   g.setAttribute("position", new T.BufferAttribute(pos, 3));
   g.setAttribute("color", new T.BufferAttribute(col, 3));
-  g.setIndex(index);
+  g.setIndex(new T.BufferAttribute(index, 1));
   g.computeVertexNormals();
   const m = new T.Mesh(g, groundMaterial);
   m.receiveShadow = true;
   m.userData.baseColors = Float32Array.from(col);
-  m.userData.cellOfVertex = Int32Array.from({ length: w * w }, (_, k) => k);
-  terraceView = m;
+  // Per cell: 0 = not painted yet, 1 = seen (full colour), 2 = greyed.
+  m.userData.lit = new Uint8Array(w * w);
   return m;
 }
 // ---- Fog of war: unexplored land greyed, colour returns once seen ----
@@ -981,37 +1275,61 @@ let seen = new Set<string>();
 let seenClock = 0;
 const isSeen = (x: number, z: number) => seen.has(cellOf(unproject({ x, z }, campaign.origin)));
 function recolor() {
-  if (terraceView) {
-    const base = terraceView.userData.baseColors as Float32Array,
-      cells = terraceView.userData.cellOfVertex as Int32Array,
-      attr = terraceView.geometry.getAttribute("color") as T.BufferAttribute,
-      known = new Map<number, boolean>();
-    for (let v = 0; v < cells.length; v++) {
-      const ci = cells[v];
-      let ok = known.get(ci);
-      if (ok === undefined) {
-        const i = ci % field.w,
-          j = Math.floor(ci / field.w);
-        ok = isSeen(field.x0 + (i + 0.5) * CELL, field.z0 + (j + 0.5) * CELL);
-        known.set(ci, ok);
+  paintGround(terraceView);
+  paintBuildings(buildingViews);
+}
+function paintGround(view: T.Mesh | null) {
+  if (view) {
+    const base = view.userData.baseColors as Float32Array,
+      attr = view.geometry.getAttribute("color") as T.BufferAttribute,
+      col = attr.array as Float32Array,
+      lit = view.userData.lit as Uint8Array,
+      w = field.w;
+    // Seen ground never turns grey again, so only cells still grey are looked up.
+    let changed = false;
+    for (let k = 0; k < w * w; k++) {
+      if (lit[k] === 1) continue;
+      const i = k % w,
+        ok = isSeen(field.x0 + (i + 0.5) * CELL, field.z0 + ((k - i) / w + 0.5) * CELL);
+      if (lit[k] === (ok ? 1 : 2)) continue;
+      lit[k] = ok ? 1 : 2;
+      changed = true;
+      const o = k * 3;
+      if (ok) {
+        col[o] = base[o];
+        col[o + 1] = base[o + 1];
+        col[o + 2] = base[o + 2];
+      } else {
+        const l = 0.3 * base[o] + 0.59 * base[o + 1] + 0.11 * base[o + 2];
+        col[o] = base[o] + (l - base[o]) * DESATURATE;
+        col[o + 1] = base[o + 1] + (l - base[o + 1]) * DESATURATE;
+        col[o + 2] = base[o + 2] + (l - base[o + 2]) * DESATURATE;
       }
-      const [r, g, b] = ok
-        ? [base[v * 3], base[v * 3 + 1], base[v * 3 + 2]]
-        : greyed(base[v * 3], base[v * 3 + 1], base[v * 3 + 2]);
-      attr.setXYZ(v, r, g, b);
     }
-    attr.needsUpdate = true;
+    if (changed) attr.needsUpdate = true;
   }
+}
+/** Buildings: only those whose state changed are repainted (a kept chunk is not sent
+ * to the graphics card again). */
+function paintBuildings(views: BuildingView[]) {
   const touched = new Set<Chunk>();
-  for (const b of buildingViews) {
-    const ok = isSeen((b.box.x0 + b.box.x1) / 2, (b.box.z0 + b.box.z1) / 2),
-      col = b.chunk.mesh.geometry.getAttribute("color") as T.BufferAttribute,
+  for (const b of views) {
+    const ok = isSeen((b.box.x0 + b.box.x1) / 2, (b.box.z0 + b.box.z1) / 2);
+    if (b.lit === ok) continue;
+    b.lit = ok;
+    const col = (b.chunk.mesh.geometry.getAttribute("color") as T.BufferAttribute).array as Float32Array,
       base = b.chunk.base;
-    for (let v = b.start; v < b.start + b.count; v++) {
-      const [r, g, bb] = ok
-        ? [base[v * 3], base[v * 3 + 1], base[v * 3 + 2]]
-        : greyed(base[v * 3], base[v * 3 + 1], base[v * 3 + 2]);
-      col.setXYZ(v, r, g, bb);
+    for (let o = b.start * 3; o < (b.start + b.count) * 3; o += 3) {
+      if (ok) {
+        col[o] = base[o];
+        col[o + 1] = base[o + 1];
+        col[o + 2] = base[o + 2];
+      } else {
+        const [r, g, bb] = greyed(base[o], base[o + 1], base[o + 2]);
+        col[o] = r;
+        col[o + 1] = g;
+        col[o + 2] = bb;
+      }
     }
     touched.add(b.chunk);
   }
@@ -1053,30 +1371,47 @@ function liftActors() {
   partyLamp.position.y = 2.4 + hero.root.position.y;
   campFire.position.y = 1.4 + groundY(home.x, home.z);
 }
-function disposeTerrain() {
-  // Disposing a material frees its compiled program once nothing uses it, and the new
-  // buildings would then compile it again (a visible hitch). Old materials go after the
-  // next frame, when the new ones already hold the programs.
-  terrain.traverse((o) => {
+/** The drawn world in three layers, each swapped as a whole: ground with roads,
+ * buildings (kept chunk by chunk), trees. */
+const treeGroup = new T.Group();
+function clearGroup(group: T.Group) {
+  // Only geometry is freed. Disposing a material frees its compiled program once
+  // nothing uses it, and the next world would compile it again (a visible hitch).
+  group.traverse((o) => {
     if (o instanceof T.Mesh) o.geometry.dispose();
   });
-  terrain.clear();
-  terraceView = null;
-  buildingViews.length = 0;
-  obstacleCells.clear();
+  group.clear();
 }
 let renderCount = 0,
   treeSpots: string[] = [];
+/** A redraw is cut into steps of a few milliseconds; `overBudget` says when to stop for
+ * this frame. A redraw that must finish now (a ride, the first view) never stops. */
+let sliceStart = 0,
+  sliceBudget = Infinity;
+const overBudget = () => performance.now() - sliceStart > sliceBudget;
+/** Redraws the whole world at once (loading screens, rides). */
 function renderTerrain() {
-  renderCount++;
-  disposeTerrain();
+  renderJob = null;
+  sliceBudget = Infinity;
+  for (const _ of buildTerrain());
+}
+/** The world redraw as a sequence of steps. Everything new is built aside while the old
+ * world stays on screen, then swapped in within one frame; trees follow a frame later.
+ * In play this spreads the work over several frames instead of freezing one
+ * (report of 11 Nov 2026: 0.9 s for a redraw of 25 tiles). */
+function* buildTerrain(): Generator<void, void, void> {
+  const fresh: T.Object3D[] = [];
   const land = new T.Mesh(new T.PlaneGeometry(1400, 1400), material(WORLD_COLORS.ground));
   land.rotation.x = -Math.PI / 2;
   // Beyond the height window the plain lies at its lowest point.
   land.position.set(player.x, field.w ? field.low() - 0.02 : 0, player.z);
   land.receiveShadow = true;
-  terrain.add(land);
-  if (field.w) terrain.add(groundMesh());
+  fresh.push(land);
+  let groundView: T.Mesh | null = null;
+  if (field.w) {
+    fresh.push((groundView = groundMesh()));
+    paintGround(groundView);
+  }
   else for (const area of map.areas) {
     const m = new T.Mesh(
       new T.ShapeGeometry(polyShape(area.rings)),
@@ -1085,11 +1420,13 @@ function renderTerrain() {
     m.rotation.x = -Math.PI / 2;
     m.position.y = 0.014;
     m.receiveShadow = true;
-    terrain.add(m);
+    fresh.push(m);
   }
+  yield;
   // Roads are ribbons whose vertices follow the ground every half cell.
   const ribbons = { road: { pos: [] as number[], idx: [] as number[] }, path: { pos: [] as number[], idx: [] as number[] } };
   for (const road of map.roads) {
+    if (overBudget()) yield;
     const r = road.path ? ribbons.path : ribbons.road,
       lift = road.path ? 0.03 : 0.045,
       half = road.width / 2;
@@ -1137,86 +1474,20 @@ function renderTerrain() {
     }
     const m = new T.Mesh(g, mat);
     m.receiveShadow = true;
-    terrain.add(m);
+    fresh.push(m);
   }
-  const wallColors = WORLD_COLORS.walls,
-    roofColors = WORLD_COLORS.roofs;
-  const wallColor = new T.Color(),
-    roofColor = new T.Color();
-  type Chunk_ = { pos: number[]; nor: number[]; col: number[]; views: (typeof buildingViews)[number][] };
-  const chunkParts = new Map<string, Chunk_>();
-  map.buildings.forEach((b, i) => {
-    // Sits on the lowest point of its outline with a foundation sunk into the ground,
-    // so it never hangs on a slope; a plinth fills the downhill side.
-    const hs = b.rings[0].map((p) => groundY(p[0], p[1])),
-      low = Math.min(...hs, groundY(b.rings[0].reduce((s, p) => s + p[0], 0) / b.rings[0].length, b.rings[0].reduce((s, p) => s + p[1], 0) / b.rings[0].length)),
-      high = Math.max(...hs),
-      sink = field.w ? 0.5 : 0;
-    const g = new T.ExtrudeGeometry(polyShape(b.rings), {
-      depth: b.height + (high - low) + sink,
-      bevelEnabled: false,
-    });
-    g.rotateX(-Math.PI / 2);
-    g.translate(0, low - sink, 0);
-    const xs = b.rings[0].map((p) => p[0]),
-      zs = b.rings[0].map((p) => p[1]),
-      box = { x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) };
-    const key = `${Math.floor((box.x0 + box.x1) / 2 / CHUNK)},${Math.floor((box.z0 + box.z1) / 2 / CHUNK)}`;
-    let part = chunkParts.get(key);
-    if (!part) chunkParts.set(key, (part = { pos: [], nor: [], col: [], views: [] }));
-    const pos = g.getAttribute("position"),
-      nor = g.getAttribute("normal"),
-      start = part.pos.length / 3;
-    roofColor.setHex(roofColors[i % roofColors.length]);
-    wallColor.setHex(wallColors[i % wallColors.length]);
-    // Group 0 = roof and floor caps, group 1 = walls (ExtrudeGeometry order).
-    const wallsFrom = g.groups[1]?.start ?? pos.count;
-    for (let v = 0; v < pos.count; v++) {
-      const y = pos.getY(v),
-        // Soft ambient occlusion: walls darken towards the ground they stand on.
-        f = 0.7 + 0.3 * Math.min(1, Math.max(0, (y - low) / 1.6)),
-        c = v >= wallsFrom ? wallColor : roofColor;
-      part.pos.push(pos.getX(v), y, pos.getZ(v));
-      part.nor.push(nor.getX(v), nor.getY(v), nor.getZ(v));
-      part.col.push(c.r * f, c.g * f, c.b * f);
-    }
-    g.dispose();
-    const view = { data: b, chunk: null as unknown as Chunk, start, count: pos.count, fade: 1, top: high + b.height, ring: b.rings[0], box };
-    part.views.push(view);
-    buildingViews.push(view);
-  });
-  for (const part of chunkParts.values()) {
-    const g = new T.BufferGeometry(),
-      base = Float32Array.from(part.col);
-    g.setAttribute("position", new T.Float32BufferAttribute(part.pos, 3));
-    g.setAttribute("normal", new T.Float32BufferAttribute(part.nor, 3));
-    g.setAttribute("color", new T.BufferAttribute(Float32Array.from(base), 3));
-    g.setAttribute("aFade", new T.BufferAttribute(new Float32Array(part.pos.length / 3).fill(1), 1));
-    g.computeBoundingSphere();
-    const mesh = new T.Mesh(g, buildingMaterial);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    terrain.add(mesh);
-    const chunk = { mesh, base };
-    for (const v of part.views) v.chunk = chunk;
-  }
-  for (const b of buildingViews) {
-    for (
-      let x = Math.floor((b.box.x0 - 2) / 8);
-      x <= Math.floor((b.box.x1 + 2) / 8);
-      x++
-    )
-      for (
-        let z = Math.floor((b.box.z0 - 2) / 8);
-        z <= Math.floor((b.box.z1 + 2) / 8);
-        z++
-      ) {
-        const key = `${x},${z}`;
-        const cell = obstacleCells.get(key) ?? [];
-        cell.push(b);
-        obstacleCells.set(key, cell);
-      }
-  }
+  yield;
+  const commitBuildings = yield* placeBuildings();
+  if (overBudget()) yield;
+  // The swap: old ground and stale building chunks go, the new world comes in.
+  renderCount++;
+  clearGroup(terrain);
+  terrain.add(...fresh);
+  terraceView = groundView;
+  commitBuildings();
+  recolor();
+  if (renderer) renderer.shadowMap.needsUpdate = true;
+  yield;
   // Trees on mapped green areas: five types by ground (owner's design doc, Drzewa),
   // each with size and turn variants; deciduous crowns follow the real season.
   // Trees are anchored to the map: a fixed grid, each cell decides from its own hash
@@ -1239,16 +1510,35 @@ function renderTerrain() {
     green: ["round", "birch", "bush"],
   };
   const density: Record<string, number> = { forest: 0.55, wood: 0.55, scrub: 0.4, park: 0.28, cemetery: 0.3, green: 0.16 };
-  const roadNear = map.roads.filter((r) => r.pts.some((p) => Math.abs(p[0] - player.x) < 110 && Math.abs(p[1] - player.z) < 110));
-  const nearRoad = (x: number, z: number) =>
-    roadNear.some((r) => {
-      for (let k = 1; k < r.pts.length; k++) {
-        const [ax, az] = r.pts[k - 1], [bx, bz] = r.pts[k], dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
+  // Road pieces around the party, bucketed, so a tree spot is checked against the few
+  // beside it instead of every road of the loaded map.
+  const ROAD_BUCKET = 6,
+    roadBuckets = new Map<number, number[]>();
+  for (const r of map.roads)
+    for (let k = 1; k < r.pts.length; k++) {
+      const [ax, az] = r.pts[k - 1],
+        [bx, bz] = r.pts[k],
+        pad = r.width / 2 + 1.1;
+      if (Math.max(ax, bx) < player.x - 100 || Math.min(ax, bx) > player.x + 100 || Math.max(az, bz) < player.z - 100 || Math.min(az, bz) > player.z + 100)
+        continue;
+      for (let qx = Math.floor((Math.min(ax, bx) - pad) / ROAD_BUCKET); qx <= Math.floor((Math.max(ax, bx) + pad) / ROAD_BUCKET); qx++)
+        for (let qz = Math.floor((Math.min(az, bz) - pad) / ROAD_BUCKET); qz <= Math.floor((Math.max(az, bz) + pad) / ROAD_BUCKET); qz++) {
+          const key = bucketKey(qx, qz),
+            list = roadBuckets.get(key);
+          if (list) list.push(ax, az, bx, bz, pad);
+          else roadBuckets.set(key, [ax, az, bx, bz, pad]);
+        }
+    }
+  const nearRoad = (x: number, z: number) => {
+    const list = roadBuckets.get(bucketKey(Math.floor(x / ROAD_BUCKET), Math.floor(z / ROAD_BUCKET)));
+    if (list)
+      for (let k = 0; k < list.length; k += 5) {
+        const ax = list[k], az = list[k + 1], dx = list[k + 2] - ax, dz = list[k + 3] - az, l2 = dx * dx + dz * dz || 1;
         const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
-        if (Math.hypot(ax + dx * t - x, az + dz * t - z) < r.width / 2 + 1.1) return true;
+        if (Math.hypot(ax + dx * t - x, az + dz * t - z) < list[k + 4]) return true;
       }
-      return false;
-    });
+    return false;
+  };
   const cx0 = Math.floor((player.x - 95) / TREE_CELL), cx1 = Math.floor((player.x + 95) / TREE_CELL),
     cz0 = Math.floor((player.z - 95) / TREE_CELL), cz1 = Math.floor((player.z + 95) / TREE_CELL);
   for (let cz = cz0; cz <= cz1; cz++)
@@ -1281,7 +1571,8 @@ function renderTerrain() {
     { kind: "birch", trunk: [new T.CylinderGeometry(0.08, 0.11, 1.5, 5), 0xe8e4da, 0.75], crown: [new T.IcosahedronGeometry(0.7, 0), 0x8fc46a, 2.0] },
     { kind: "bush", crown: [new T.IcosahedronGeometry(0.75, 0), 0x5b8a46, 0.4] },
   ];
-  const matrix = new T.Matrix4();
+  const matrix = new T.Matrix4(),
+    grown: T.Object3D[] = [];
   for (const part of parts) {
     const list = trees.filter((t) => t.kind === part.kind);
     if (!list.length) continue;
@@ -1306,15 +1597,13 @@ function renderTerrain() {
     crowns.castShadow = true;
     if (trunks) {
       trunks.castShadow = true;
-      terrain.add(trunks);
+      grown.push(trunks);
     }
-    terrain.add(crowns);
+    grown.push(crowns);
   }
-
-  recolor();
-  if (renderer) {
-    renderer.shadowMap.needsUpdate = true;
-  }
+  clearGroup(treeGroup);
+  if (grown.length) treeGroup.add(...grown);
+  if (renderer) renderer.shadowMap.needsUpdate = true;
 }
 function resolveForQA() {
   for (const o of campaign.offers) o.readyAt = 0;
@@ -1322,7 +1611,7 @@ function resolveForQA() {
 async function switchCharacter(c: Character) {
   let terrainChanged = false;
   if (!worldStream.contains(c)) {
-    const next = new WorldStream(campaign.origin);
+    const next = openWorld(campaign.origin);
     await next.load(c);
     worldStream = next;
     map = next.snapshot();
@@ -2115,7 +2404,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function settleWorld(ms: number) {
   const until = Date.now() + ms;
   await sleep(120);
-  while (Date.now() < until && (worldStream.loading || fieldBusy || renderDue !== Infinity || fieldClock > 50))
+  while (Date.now() < until && (worldStream.loading || fieldBusy || renderDue !== Infinity || renderJob || fieldClock > 50))
     await sleep(60);
 }
 function veil(text: string, on: boolean, light = false) {
@@ -2177,7 +2466,7 @@ function campPitched(camp: Camp) {
   void settleWorld(2400).then(() => veil("", false));
 }
 async function travelTo(geo: Geo) {
-  const next = new WorldStream(geo);
+  const next = openWorld(geo);
   await next.load({ x: 0, z: 0 });
   const nextMap = next.snapshot();
   const destination = findLanding(nextMap, (p) => next.contains(p, 4.6));
@@ -2240,6 +2529,10 @@ function updateWorld(dt: number) {
   // second").
   if (worldStream.changed && (worldStream.pending() === 0 || !worldStream.contains(player, 25))) {
     map = worldStream.snapshot();
+    queuePreparation(map.buildings);
+    // Ground missing under the party is drawn at once; a block that only grows at its
+    // far edges can wait for its buildings to be shaped.
+    if (!worldStream.contains(player, 25)) groundDrawn = false;
     requestRender();
   }
   populateEncounters();
@@ -3509,7 +3802,7 @@ function bindControls() {
       Grafika: info && gl ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : "?",
       Tryb: compatibility ? "lżejszy (telefon)" : "pełny",
       Pełny_ekran: fullscreenState,
-      Przerysowania_świata: `${renderCount} (ostatnie ${lastRedrawMs} ms)`,
+      Przerysowania_świata: `${renderCount} (ostatnie ${lastRedrawMs} ms w ${lastRedrawSteps} krokach, najdłuższy ${lastRedrawWorst} ms)`,
       Mapa: `${worldStream.tiles.size} kafli, ${map.buildings.length} budynków${worldStream.error ? ", błąd: " + worldStream.error : ""}`,
       Miejsce: `${geo.lat.toFixed(5)}, ${geo.lon.toFixed(5)}`,
       Drużyna: `${partyOf(campaign).length}, obozy ${campaign.camps.length}, liny ${campaign.camps.filter((c) => c.parentId).length + (campaign.connections?.length ?? 0)}`,
@@ -3794,6 +4087,10 @@ function tick() {
     lastHud = time;
   }
   try {
+    if (shadowPrimes > 0 && renderer.shadowMap.enabled) {
+      shadowPrimes--;
+      renderer.shadowMap.needsUpdate = true;
+    }
     renderer.render(scene, camera);
     if (retiredMaterials.length) for (const m of retiredMaterials.splice(0)) m.dispose();
     warmShaders();
@@ -3862,11 +4159,11 @@ async function init() {
         map.origin.lon - campaign.origin.lon,
       ) > 0.000001
     ) {
-      worldStream = new WorldStream(campaign.origin);
+      worldStream = openWorld(campaign.origin);
       await worldStream.load(player);
       map = worldStream.snapshot();
     } else {
-      worldStream = new WorldStream(campaign.origin, map);
+      worldStream = openWorld(campaign.origin, map);
       if (!worldStream.contains(player)) {
         await worldStream.load(player);
         map = worldStream.snapshot();

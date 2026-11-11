@@ -1275,10 +1275,18 @@ export class Expedition {
     this.h.save();
     this.h.campPitched(camp);
   }
+  private refusedStep: { x: number; z: number; until: number } | null = null;
   moveAllowed(next: Point) {
     if (!this.rope) return true;
+    // A step the rope just refused is not searched again on every frame while the
+    // player keeps pushing the same way (a failed search is the costly one).
+    const r = this.refusedStep;
+    if (r && performance.now() < r.until && Math.hypot(next.x - r.x, next.z - r.z) < 0.2) return false;
     const points = updateRope(this.rope.points, next, this.h.obstacles());
-    if (!points) return false;
+    if (!points) {
+      this.refusedStep = { x: next.x, z: next.z, until: performance.now() + 300 };
+      return false;
+    }
     // At the end of the rope the hero can still walk back (a step that shortens it).
     const length = routeLength(points);
     if (length > this.ropeMax() && length > routeLength(this.rope.points)) {

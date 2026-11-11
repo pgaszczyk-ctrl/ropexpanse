@@ -33,9 +33,17 @@ export function worldUrl() {
   return fromQuery || env?.VITE_WORLD_URL || DEFAULT_WORLD;
 }
 
-let file: PMTiles | undefined;
+let file: PMTiles | undefined,
+  fileUrl = "";
 function world() {
-  return (file ??= new PMTiles(worldUrl()));
+  return (file ??= new PMTiles(fileUrl || worldUrl()));
+}
+/** The tile worker has no page address to read `?world=` from; the page tells it. */
+export function useWorldUrl(url: string) {
+  if (url === fileUrl) return;
+  fileUrl = url;
+  file = undefined;
+  decoded.clear();
 }
 /** Tests in Node read the archive from a local file. */
 export function useWorldSource(source: Source) {
@@ -169,9 +177,12 @@ async function decodeTile(x: number, y: number): Promise<OsmElement[]> {
     lat0 = latOf(y),
     lat1 = latOf(y + 1);
   const out: OsmElement[] = [];
-  LAYERS.forEach((name, li) => {
+  for (const [li, name] of LAYERS.entries()) {
+    // Each layer is read in its own step: decoding a whole city tile in one go is a
+    // visible hitch on slower computers and phones.
+    if (li) await new Promise<void>((r) => setTimeout(r, 0));
     const layer = vt.layers[name];
-    if (!layer) return;
+    if (!layer) continue;
     const ext = layer.extent;
     const geo = (p: Pt): Coord => ({
       lat: lat0 + (lat1 - lat0) * (p.y / ext),
@@ -241,7 +252,7 @@ async function decodeTile(x: number, y: number): Promise<OsmElement[]> {
           });
       }
     }
-  });
+  }
   return out;
 }
 

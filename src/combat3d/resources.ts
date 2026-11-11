@@ -92,11 +92,36 @@ function inside(p: Point, ring: number[][]) {
   return hit;
 }
 /** Kind of the land area under a point (the last, i.e. topmost, wins), or null. */
+// Areas are bucketed on a grid once per map: a look-up tests the few areas over that
+// spot instead of every area of the loaded map (25 tiles hold thousands).
+const AREA_GRID = 8,
+  areaIndexes = new WeakMap<MapData, Map<number, number[]>>();
+const gridKey = (x: number, z: number) => (Math.floor(x / AREA_GRID) + 32768) * 65536 + Math.floor(z / AREA_GRID) + 32768;
+function areaIndex(map: MapData) {
+  let index = areaIndexes.get(map);
+  if (index) return index;
+  index = new Map();
+  for (let i = 0; i < map.areas.length; i++) {
+    if (map.areas[i].water) continue;
+    const b = boxOf(map.areas[i].rings[0]);
+    for (let x = Math.floor(b[0] / AREA_GRID); x <= Math.floor(b[2] / AREA_GRID); x++)
+      for (let z = Math.floor(b[1] / AREA_GRID); z <= Math.floor(b[3] / AREA_GRID); z++) {
+        const key = gridKey(x * AREA_GRID, z * AREA_GRID),
+          list = index.get(key);
+        if (list) list.push(i);
+        else index.set(key, [i]);
+      }
+  }
+  areaIndexes.set(map, index);
+  return index;
+}
+/** Kind of the mapped area over a point (the last one drawn wins), or null. */
 export function areaKindAt(map: MapData, p: Point): string | null {
-  for (let i = map.areas.length - 1; i >= 0; i--) {
-    const a = map.areas[i];
-    if (a.water) continue;
-    const outer = a.rings[0],
+  const list = areaIndex(map).get(gridKey(p.x, p.z));
+  if (!list) return null;
+  for (let k = list.length - 1; k >= 0; k--) {
+    const a = map.areas[list[k]],
+      outer = a.rings[0],
       b = boxOf(outer);
     if (p.x < b[0] || p.x > b[2] || p.z < b[1] || p.z > b[3]) continue;
     if (!inside(p, outer) || a.rings.slice(1).some((h) => inside(p, h)))

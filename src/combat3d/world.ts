@@ -1,5 +1,7 @@
 import { circleBlocked, type Point } from "./rules.ts";
-import { elementsInBox } from "./osmTiles.ts";
+import { worldUrl } from "./osmTiles.ts";
+import { WORLD_VERSION, cache, readTile, type Tile, type TileBox } from "./tileStore.ts";
+export { WORLD_VERSION, type Tile };
 export type Geo = { lat: number; lon: number };
 export type Building = {
   id?: string;
@@ -29,8 +31,7 @@ export type MapData = {
     kind?: string;
   }[];
 };
-export const WORLD_VERSION = 2,
-  SCALE = 0.18,
+export const SCALE = 0.18,
   TILE_DEGREES = 0.006;
 export const OSM_ENDPOINT = "https://overpass.private.coffee/api/interpreter";
 const METERS = 111320;
@@ -107,12 +108,6 @@ type Element = {
   tags?: Record<string, string>;
   geometry?: Coord[];
   members?: { type: string; role: string; geometry?: Coord[] }[];
-};
-export type Tile = {
-  v: number;
-  key: string;
-  elements: Element[];
-  savedAt: number;
 };
 function stitch(parts: Coord[][]) {
   const pending = parts.map((p) => p.slice()),
@@ -260,47 +255,51 @@ function pointInside(p: Point, ring: number[][]) {
   }
   return hit;
 }
-let dbPromise: Promise<IDBDatabase> | undefined;
-function database() {
-  return (dbPromise ??= new Promise<IDBDatabase>((resolve, reject) => {
-    const r = indexedDB.open("ropexpanse-world", 1);
-    r.onupgradeneeded = () =>
-      r.result.createObjectStore("tiles", { keyPath: "key" });
-    r.onsuccess = () => resolve(r.result);
-    r.onerror = () => reject(r.error);
-  }));
-}
-async function cached(key: string): Promise<Tile | undefined> {
+const breathe = () => new Promise<void>((r) => setTimeout(r, 0));
+const idle = (job: () => void) =>
+  typeof requestIdleCallback === "function" ? requestIdleCallback(job, { timeout: 4000 }) : setTimeout(job, 50);
+// Tiles are read and decoded in a worker, off the thread that draws the game: decoding
+// a city tile and storing it took tens of milliseconds each, in the middle of frames
+// (report of 11 Nov 2026). Where a worker cannot start (tests in Node, the single-file
+// offline export) the same code runs here, as before.
+let tileWorker: Worker | null | undefined;
+let tileJobs = 0;
+const waiting = new Map<number, { resolve: (t: Tile) => void; reject: (e: Error) => void; key: string; box: TileBox }>();
+function startTileWorker() {
+  if (tileWorker !== undefined) return tileWorker;
+  tileWorker = null;
+  if (typeof Worker === "undefined" || typeof location === "undefined") return null;
   try {
-    const db = await database();
-    return await new Promise((resolve, reject) => {
-      const r = db.transaction("tiles").objectStore("tiles").get(key);
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-  } catch {
-    return undefined;
-  }
-}
-async function cache(tile: Tile) {
-  try {
-    const db = await database();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction("tiles", "readwrite");
-      tx.objectStore("tiles").put(tile);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-    const tx = db.transaction("tiles", "readwrite"),
-      store = tx.objectStore("tiles");
-    const r = store.getAll();
-    r.onsuccess = () => {
-      const all = (r.result as Tile[]).sort((a, b) => b.savedAt - a.savedAt);
-      for (const old of all.slice(96)) store.delete(old.key);
+    const worker = new Worker(new URL("./tileWorker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (e: MessageEvent<{ id: number; tile?: Tile; error?: string }>) => {
+      const job = waiting.get(e.data.id);
+      if (!job) return;
+      waiting.delete(e.data.id);
+      if (e.data.tile) job.resolve(e.data.tile);
+      else job.reject(Error(e.data.error || "Mapa niedostępna"));
     };
+    // The worker failed to load or crashed: finish what it held here, and stay here.
+    worker.onerror = () => {
+      tileWorker = null;
+      for (const [id, job] of waiting) {
+        waiting.delete(id);
+        readTile(job.key, job.box).then(job.resolve, job.reject);
+      }
+    };
+    tileWorker = worker;
   } catch {
-    /* Play remains available when persistent cache is full/disabled. */
+    tileWorker = null;
   }
+  return tileWorker;
+}
+function loadTile(key: string, box: TileBox): Promise<Tile> {
+  const worker = startTileWorker();
+  if (!worker) return readTile(key, box);
+  return new Promise((resolve, reject) => {
+    const id = ++tileJobs;
+    waiting.set(id, { resolve, reject, key, box });
+    worker.postMessage({ id, key, box, world: worldUrl() });
+  });
 }
 async function overpass(
   b: ReturnType<typeof tileBounds>,
@@ -456,31 +455,31 @@ export class WorldStream {
     const key = `${tile.x}:${tile.y}`,
       generation = this.generation;
     try {
-      let data = await cached(key);
-      if (!data || data.v !== WORLD_VERSION) {
-        const b = tileBounds(tile.x, tile.y);
-        let elements: Element[];
-        try {
-          elements = await elementsInBox(b);
-        } catch (worldError) {
-          // The world archive is the source; the public Overpass server is only a fallback.
-          console.warn("World map tile failed, trying Overpass", worldError);
-          elements = await overpass(b, () => {
-            const delay = Math.max(0, 3000 - (Date.now() - this.lastRequest));
-            this.lastRequest = Date.now() + delay;
-            return delay;
-          });
-        }
-        data = { v: WORLD_VERSION, key, elements, savedAt: Date.now() };
-        await cache(data);
+      let data: Tile;
+      try {
+        data = await loadTile(key, tileBounds(tile.x, tile.y));
+      } catch (worldError) {
+        // The world archive is the source; the public Overpass server is only a fallback.
+        console.warn("World map tile failed, trying Overpass", worldError);
+        const elements = await overpass(tileBounds(tile.x, tile.y), () => {
+          const delay = Math.max(0, 3000 - (Date.now() - this.lastRequest));
+          this.lastRequest = Date.now() + delay;
+          return delay;
+        });
+        const fresh = (data = { v: WORLD_VERSION, key, elements, savedAt: Date.now() });
+        idle(() => void cache(fresh));
       }
-      if (
-        generation === this.generation &&
-        this.wanted.some((t) => `${t.x}:${t.y}` === key)
-      ) {
+      // A tile is read, turned into shapes and handed over in separate small steps, so
+      // no single frame carries the whole tile.
+      await breathe();
+      const wanted = () => generation === this.generation && this.wanted.some((t) => `${t.x}:${t.y}` === key);
+      if (wanted()) {
+        const shapes = this.tileData(key, data);
         this.tiles.set(key, data);
         this.changed = true;
         this.error = "";
+        await breathe();
+        if (wanted()) this.onTile?.(shapes);
       }
     } catch (e) {
       this.failures.set(key, Date.now());
@@ -489,11 +488,34 @@ export class WorldStream {
       this.loading = false;
     }
   }
+  /** Each tile is turned into map shapes once and kept; a snapshot only joins them.
+   * The same building object comes back in every snapshot, so whatever the game
+   * prepared for it (its mesh data) is reused instead of being built again. */
+  private converted = new Map<string, { tile: Tile; data: MapData }>();
+  /** Told about every tile as it arrives (the game starts preparing its buildings). */
+  onTile?: (data: MapData) => void;
+  private tileData(key: string, tile: Tile) {
+    let c = this.converted.get(key);
+    if (!c || c.tile !== tile)
+      this.converted.set(key, (c = { tile, data: convertElements(tile.elements, this.origin) }));
+    return c.data;
+  }
   snapshot(): MapData {
-    const elements = new Map<string, Element>();
-    for (const t of this.tiles.values())
-      for (const e of t.elements) elements.set(`${e.type}/${e.id}`, e);
-    const next = convertElements([...elements.values()], this.origin);
+    const next: MapData = { origin: this.origin, scale: SCALE, radius: Infinity, buildings: [], roads: [], areas: [] };
+    for (const key of this.converted.keys()) if (!this.tiles.has(key)) this.converted.delete(key);
+    // Shapes on a tile edge come with both tiles; the first copy is kept.
+    for (const list of ["buildings", "roads", "areas"] as const) {
+      const seen = new Set<string>(),
+        out = next[list] as { id?: string }[];
+      for (const [key, tile] of this.tiles)
+        for (const item of this.tileData(key, tile)[list]) {
+          if (item.id !== undefined) {
+            if (seen.has(item.id)) continue;
+            seen.add(item.id);
+          }
+          out.push(item);
+        }
+    }
     if (this.seed) {
       const seed = this.seed; // Bundled geometry wins inside its footprint to avoid duplicate buildings.
       const inside = (pts: number[][]) =>
@@ -516,6 +538,7 @@ export class WorldStream {
     this.origin = origin;
     this.seed = undefined;
     this.generation++;
+    this.converted.clear();
     this.changed = true;
   }
 }
