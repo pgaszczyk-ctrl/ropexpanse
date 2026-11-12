@@ -1,0 +1,1516 @@
+import * as T from "three";
+import { territoryModel } from "./territory";
+import { completedRoutes, invalidateTerritory } from "./territory-rules";
+import { recruitmentProfile } from "./recruitment";
+import { person, material, type Rig } from "./models";
+import {
+  BALANCE,
+  activeCharacter,
+  nearCamp,
+  levelOf,
+  maxHealth,
+  roleName,
+  equip,
+  transfer,
+  postOffer,
+  resolveOffers,
+  offerCandidates,
+  hire,
+  cancelOffer,
+  offerAt,
+  nextId,
+  connectCamps,
+  partyOf,
+  toggleParty,
+  isCampRole,
+  PARTY_SIZE,
+  ropeAvailable,
+  spendRope,
+  twistRope,
+  collect,
+  STOCK_KEYS,
+  STOCK_NAMES,
+  inSafeZone,
+  type Campaign,
+  type Camp,
+  type Character,
+  type Item,
+} from "./campaign";
+import { updateRope, routeLength, type Obstacle } from "./rope";
+import {
+  MAX_CAMP_LINKS,
+  canAddLink,
+  linkAt,
+  pointAlong,
+  travelPlan,
+  fartherEnd,
+  type RopeLink,
+} from "./travel";
+import { distance, type Point } from "./rules";
+import { SCALE, type Geo } from "./world";
+import { RARITY_COLORS, RARITY_NAMES, fullName, traitOf } from "./wayfarers";
+type Hooks = {
+  scene: T.Scene;
+  camera: T.Camera;
+  state: Campaign;
+  blocked: (p: Point, r: number) => boolean;
+  obstacles: () => Obstacle[];
+  contains: (p: Point) => boolean;
+  combat: () => boolean;
+  canAct: () => boolean;
+  notify: (s: string) => void;
+  save: () => void;
+  switch: (c: Character) => void | Promise<void>;
+  /** Re-reads the party (companions appear or leave). */
+  party: () => void;
+  /** Ground height (terraces) and draping of flat overlays onto it. */
+  ground: (x: number, z: number) => number;
+  drape: (o: T.Object3D) => void;
+  panel: (open: boolean) => void;
+  travel: (geo: Geo) => Promise<void>;
+  retry: () => void;
+  worldStatus: () => { loading: boolean; error: string };
+  /** Rides the party along a rope to `dest`, paying `cost` tix. */
+  ropeTravel: (dest: Camp, cost: number) => Promise<void>;
+  /** A camp was just pitched: load a wider area around it while it goes up. */
+  campPitched: (camp: Camp) => void;
+};
+const el = <T extends HTMLElement = HTMLElement>(id: string) =>
+  document.getElementById(id) as T;
+function node<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  text = "",
+  cls = "",
+) {
+  const e = document.createElement(tag);
+  e.textContent = text;
+  e.className = cls;
+  return e;
+}
+function button(text: string, click: () => void, cls = "") {
+  const b = node("button", text, cls);
+  b.type = "button";
+  b.onclick = click;
+  return b;
+}
+const paths: Record<string, string> = {
+  sword:
+    '<path fill="#a8b5ba" d="m40 5 7 2-2 8-23 25-8-8Z"/><path stroke="#4c5b60" stroke-width="5" d="m10 29 17 15M17 36 8 47"/>',
+  staff:
+    '<path stroke="#8b5c31" stroke-width="7" stroke-linecap="round" d="m14 47 20-34 8-4"/><path fill="#70c9e3" d="m33 5 10 1 5 10-11 4-8-7Z"/>',
+  armor:
+    '<path fill="#668b94" stroke="#3e5860" stroke-width="2" d="m15 10 9 5h8l9-5 9 14-8 7-3-5v23H17V26l-3 5-8-7Z"/><path stroke="#d4b575" stroke-width="3" d="M17 36h22"/>',
+  helmet:
+    '<path fill="#99a8ab" stroke="#53696f" stroke-width="2" d="M11 38V27a17 17 0 0 1 34 0v11l-10 8V29H21v17Z"/><path stroke="#d0aa63" stroke-width="4" d="M9 28h38"/>',
+  axe:
+    '<path stroke="#8b5c31" stroke-width="5" stroke-linecap="round" d="M14 48 38 12"/><path fill="#b9c3c6" stroke="#4c5b60" stroke-width="2" d="M33 8c9 0 15 6 15 15l-9 1-8-8Z"/>',
+  hammer:
+    '<path stroke="#8b5c31" stroke-width="5" stroke-linecap="round" d="M16 48 34 18"/><path fill="#9aa5a8" stroke="#4c5b60" stroke-width="2" d="m24 10 16-6 8 14-16 6Z"/>',
+  shield:
+    '<path fill="#9a6a3c" stroke="#5d452f" stroke-width="2" d="M28 6c8 4 14 5 20 5 0 19-6 31-20 39C14 42 8 30 8 11c6 0 12-1 20-5Z"/><path stroke="#c9ccc6" stroke-width="4" d="M28 9v38M12 22h32"/><circle cx="28" cy="22" r="5" fill="#d4b575"/>',
+  hide: '<path fill="#9a6b45" stroke="#5c3d26" stroke-width="2" d="M14 12 22 8l6 4 6-4 8 4-2 9 5 8-5 6 2 9-8 3-6-4-6 4-8-3 2-9-5-6 5-8Z"/><path stroke="#c99a6c" stroke-width="2" d="M22 20q6 4 12 0M21 32q7 4 14 0"/>',
+  fang: '<path fill="#f1e8d2" stroke="#7d6b55" stroke-width="2" d="M20 8q14 2 16 14-2 14-10 28-2-14-9-24Q14 14 20 8Z"/><path stroke="#c9b894" stroke-width="2" d="M24 16q6 3 7 10"/>',
+  orb: '<circle cx="28" cy="25" r="15" fill="#70c9e3" stroke="#2f6f85" stroke-width="2"/><circle cx="23" cy="20" r="4" fill="#e9fbff"/><path fill="#8b5c31" stroke="#5d452f" stroke-width="2" d="M17 40h22l-4 9H21Z"/>',
+  boots:
+    '<path fill="#8e643f" stroke="#5d452f" stroke-width="2" d="m15 8 17 2-3 22 14 9v8H10V34Z"/><path stroke="#d4b575" stroke-width="3" d="M14 18h17"/>',
+};
+const STOCK_ICONS: Record<string, string> = {
+  wood: '<path fill="#8b5c31" stroke="#4a3220" stroke-width="2" d="M4 12h20v10H4z"/><ellipse cx="24" cy="17" rx="4" ry="5" fill="#d9a86a" stroke="#4a3220" stroke-width="2"/>',
+  ore: '<path fill="#8f9aa0" stroke="#3e474c" stroke-width="2" d="m6 22 4-11 9-4 8 8-3 10H9Z"/><path fill="#d27a4a" d="m13 13 4-2 2 4-4 2Z"/>',
+  fiber: '<path fill="none" stroke="#c9d36a" stroke-width="2.5" stroke-linecap="round" d="M16 28V8M16 20c-4-3-7-8-8-12M16 18c4-3 7-7 8-11"/>',
+  herbs: '<path fill="#6fcf7a" stroke="#2f6b3a" stroke-width="1.5" d="M16 28c0-10 2-15 9-19-1 8-4 13-9 14M16 28C14 19 11 15 6 13c1 7 4 11 10 12"/><circle cx="16" cy="9" r="3" fill="#e98fc6"/>',
+  rope: '<circle cx="16" cy="17" r="9" fill="none" stroke="#e8c27a" stroke-width="3"/><circle cx="16" cy="17" r="4" fill="none" stroke="#b0793c" stroke-width="2.5"/>',
+};
+/** Small picture of a gathered good (Vault and HUD). */
+export function stockIcon(key: string) {
+  return `<svg viewBox="0 0 32 32" aria-hidden="true">${STOCK_ICONS[key] ?? ""}</svg>`;
+}
+const CAMP_ICONS = {
+  rope: '<path fill="none" stroke="#e8c27a" stroke-width="3" stroke-linecap="round" d="M5 25c4-9 8-9 11-3s7 6 11-5"/><path fill="#8b5c31" d="M3 23h5v7H3zM24 13h5v7h-5z"/><circle cx="26.5" cy="10" r="2.5" fill="#ffd27a"/>',
+  vault:
+    '<path fill="#8b5c31" stroke="#4a3220" stroke-width="2" d="M4 13h24v14H4z"/><path fill="#b0793c" stroke="#4a3220" stroke-width="2" d="M4 13c0-6 4-8 12-8s12 2 12 8z"/><path fill="#e8c27a" d="M13 15h6v6h-6z"/><path stroke="#e8c27a" stroke-width="2" d="M4 18h24"/>',
+  recruit:
+    '<circle cx="12" cy="10" r="5" fill="#e8c27a"/><path fill="#b0793c" d="M3 28c0-7 4-11 9-11s9 4 9 11z"/><path stroke="#8ff0bf" stroke-width="3" stroke-linecap="round" d="M25 9v10M20 14h10"/>',
+};
+/** Name (with a legend's title), class, level, rarity and trait of a Wayfarer. */
+function wayfarerLabel(
+  v: { name: string; title?: string; role: Character["role"]; rarity?: keyof typeof RARITY_NAMES; trait?: string },
+  level: number,
+  action = "",
+) {
+  const trait = traitOf(v.role, v.trait);
+  return [
+    node("strong", fullName(v)),
+    node(
+      "span",
+      ` · ${roleName(v.role)} · poz. ${level} · ${RARITY_NAMES[v.rarity ?? "common"]}${action ? ` — ${action}` : ""}`,
+    ),
+    ...(trait ? [node("small", `${trait.name}: ${trait.text}`, "trait-line")] : []),
+  ];
+}
+function withLabel(
+  b: HTMLButtonElement,
+  v: Parameters<typeof wayfarerLabel>[0],
+  level: number,
+  action: string,
+) {
+  b.append(...wayfarerLabel(v, level, action));
+  b.style.setProperty("--rarity", RARITY_COLORS[v.rarity ?? "common"]);
+  return b;
+}
+/** What an item gives, in a few words. */
+export function itemStat(item: Item) {
+  return item.slot === "material"
+    ? "materiał"
+    : `${item.slot === "weapon" ? "Atak" : "Obrona"} ${item.power}`;
+}
+/** How far an offer's waiting time has gone, 0–100. */
+function offerShare(o: { readyAt: number }) {
+  return Math.max(
+    0,
+    Math.min(100, 100 - ((o.readyAt - Date.now()) / BALANCE.recruitmentMs) * 100),
+  );
+}
+/** Faint outline in an empty slot of the figure. */
+const SLOT_GHOST = { weapon: "sword", offhand: "shield", armor: "armor", helmet: "helmet", boots: "boots" } as const;
+/** The figure behind the equipment slots (simple, readable at phone size). */
+const DOLL_FIGURE = `<svg class="doll-figure" viewBox="0 0 180 300" aria-hidden="true"><g fill="#7c8b79" opacity=".28"><circle cx="90" cy="42" r="27"/><path d="M57 80 24 104 5 190 25 198 51 137 51 205 60 296 81 296 89 221 98 296 122 296 130 204 130 135 156 198 175 190 154 104 123 80Z"/></g></svg>`;
+function itemBadge(item: Item) {
+  return item.slot === "material"
+    ? ""
+    : `<span class="item-power" aria-hidden="true">${item.power}</span>`;
+}
+export function itemIcon(item: Item) {
+  return `<svg viewBox="0 0 56 56" aria-hidden="true">${paths[item.icon] ?? paths.sword}</svg>`;
+}
+function mesh(
+  group: T.Group,
+  g: T.BufferGeometry,
+  color: number,
+  x: number,
+  y: number,
+  z: number,
+) {
+  const m = new T.Mesh(g, material(color));
+  m.position.set(x, y, z);
+  group.add(m);
+  return m;
+}
+function campModel(c: Camp) {
+  const g = new T.Group();
+  g.position.set(c.x, 0, c.z);
+  g.userData.campId = c.id;
+  const tent = mesh(
+    g,
+    new T.CylinderGeometry(0, 1.8, 2.2, 4, 1, false, Math.PI / 4),
+    0xbd9b65,
+    -1.6,
+    1.1,
+    -1.2,
+  );
+  tent.scale.z = 0.8;
+  mesh(g, new T.PlaneGeometry(0.7, 1.25), 0x4c5142, -1.6, 0.65, 0.12);
+  mesh(g, new T.CylinderGeometry(0.13, 0.18, 1.7, 7), 0x82623d, 1.2, 0.85, 0.5);
+  mesh(g, new T.BoxGeometry(1.5, 1.1, 0.14), 0x87643c, 1.2, 1.8, 0.5);
+  mesh(g, new T.PlaneGeometry(0.62, 0.72), 0xe9d8b0, 1, 1.8, 0.58);
+  mesh(g, new T.PlaneGeometry(0.4, 0.5), 0xdcc38f, 1.62, 1.9, 0.59);
+  mesh(g, new T.CylinderGeometry(0.12, 0.16, 0.85, 7), 0x755235, 0, 0.43, 1.7);
+  mesh(g, new T.TorusGeometry(0.18, 0.05, 6, 10), 0xc5a15c, 0, 0.75, 1.7);
+  const highlight = new T.Mesh(
+    new T.RingGeometry(2.7, 2.85, 40),
+    new T.MeshBasicMaterial({
+      color: 0xe6bb62,
+      transparent: true,
+      opacity: 0.65,
+      depthWrite: false,
+    }),
+  );
+  highlight.rotation.x = -Math.PI / 2;
+  highlight.position.y = 0.08;
+  highlight.visible = false;
+  g.add(highlight);
+  g.userData.highlight = highlight;
+  return g;
+}
+function ropeLine(points: Point[], time: number, live: boolean) {
+  const out: T.Vector3[] = [];
+  for (let j = 1; j < points.length; j++) {
+    const a = points[j - 1],
+      b = points[j],
+      d = distance(a, b),
+      count = Math.max(2, Math.ceil(d * 2));
+    for (let i = 0; i <= count; i++) {
+      const t = i / count;
+      out.push(
+        new T.Vector3(
+          a.x + (b.x - a.x) * t,
+          Math.max(
+            0.12,
+            0.8 - Math.sin(Math.PI * t) * Math.min(0.65, d * 0.055),
+          ) + (live ? Math.sin(time * 3 + t * 7) * 0.025 : 0),
+          a.z + (b.z - a.z) * t,
+        ),
+      );
+    }
+  }
+  return out;
+}
+/** A flat yellow arrow with a dark rim, laid on a rope to show where a ride goes. */
+function travelArrow() {
+  const shape = new T.Shape();
+  shape.moveTo(0, 1.1);
+  shape.lineTo(0.85, 0);
+  shape.lineTo(0.32, 0);
+  shape.lineTo(0.32, -0.9);
+  shape.lineTo(-0.32, -0.9);
+  shape.lineTo(-0.32, 0);
+  shape.lineTo(-0.85, 0);
+  shape.closePath();
+  const g = new T.Group(),
+    rim = new T.Mesh(
+      new T.ShapeGeometry(shape),
+      new T.MeshBasicMaterial({ color: 0x1b1730, depthTest: false, transparent: true }),
+    ),
+    fill = new T.Mesh(
+      new T.ShapeGeometry(shape),
+      new T.MeshBasicMaterial({ color: 0xffd23f, depthTest: false, transparent: true }),
+    );
+  rim.scale.setScalar(1.25);
+  rim.position.y = -0.14;
+  fill.position.z = 0.01;
+  rim.renderOrder = fill.renderOrder = 20;
+  // The shape points along +Y; laid flat that becomes -Z, and the outer group turns it.
+  const flat = new T.Group();
+  flat.rotation.x = -Math.PI / 2;
+  flat.add(rim, fill);
+  g.add(flat);
+  g.scale.setScalar(1.1);
+  g.visible = false;
+  return g;
+}
+export class Expedition {
+  h: Hooks;
+  group = new T.Group();
+  campViews = new Map<string, T.Group>();
+  waiting = new Map<string, Rig>();
+  private territory = new T.Group();
+  private liveLine = new T.Line(
+    new T.BufferGeometry(),
+    new T.LineBasicMaterial({ color: 0x795437 }),
+  );
+  private connections = new T.LineSegments(
+    new T.BufferGeometry(),
+    new T.LineBasicMaterial({ color: 0x886d49 }),
+  );
+  private marker = new T.Mesh(
+    new T.RingGeometry(3.5, 3.6, 32),
+    new T.MeshBasicMaterial({
+      color: 0xd3b36b,
+      transparent: true,
+      opacity: 0.8,
+      depthTest: false,
+    }),
+  );
+  // Where a camp can stand when the hero's own spot is not allowed (shown instead of a message).
+  private spots = new T.Group();
+  private spotList: Point[] = [];
+  /** Green circles currently shown (QA diagnostics). */
+  get spotCount() {
+    return this.spotList.length;
+  }
+  /** Where those circles stand (QA). */
+  get spotPoints() {
+    return this.spotList.map((p) => ({ ...p }));
+  }
+  private spotPulse = 0;
+  rope: { campId: string; points: Point[] } | null = null;
+  selected: Camp | undefined;
+  private menuCamp: Camp | undefined;
+  private dialog: HTMLDialogElement;
+  private body: HTMLElement;
+  private title: HTMLElement;
+  private previousFocus: HTMLElement | null = null;
+  private selectedItem: string | null = null;
+  private view = "";
+  private offerItems = new Set<string>();
+  private offerGold = 0;
+  private clock = 0;
+  private noticeClock = 0;
+  /** A tapped rope: which one, which end the arrow points to, and where it was tapped. */
+  private pick: { link: RopeLink; to: string; along: number } | null = null;
+  private arrow = travelArrow();
+  /** Camps going up (pitch animation), by id → seconds since pitched. */
+  private rising = new Map<string, number>();
+  constructor(h: Hooks) {
+    this.h = h;
+    h.scene.add(
+      this.group,
+      this.liveLine,
+      this.connections,
+      this.marker,
+      this.territory,
+      this.spots,
+      this.arrow,
+    );
+    for (let i = 0; i < 3; i++) {
+      const spot = new T.Group();
+      const disc = new T.Mesh(
+        new T.CircleGeometry(3.6, 40),
+        new T.MeshBasicMaterial({ color: 0x6fd3a0, transparent: true, opacity: 0.18, depthWrite: false }),
+      );
+      const ring = new T.Mesh(
+        new T.RingGeometry(3.3, 3.6, 40),
+        new T.MeshBasicMaterial({ color: 0x8ff0bf, transparent: true, opacity: 0.85, depthTest: false }),
+      );
+      disc.rotation.x = ring.rotation.x = -Math.PI / 2;
+      spot.add(disc, ring);
+      spot.visible = false;
+      this.spots.add(spot);
+    }
+    this.marker.rotation.x = -Math.PI / 2;
+    this.marker.visible = false;
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<button id="action" class="context-action" aria-label="Akcja"><span>⚑</span><small id="action-label">Akcja</small></button><nav id="camp-menu" hidden aria-label="Obóz"></nav><dialog id="expedition-panel"><div class="panel-heading"><h2 id="panel-title"></h2><button id="panel-close" aria-label="Zamknij">×</button></div><div id="panel-body"></div></dialog><nav id="expedition-tools" aria-label="Wyprawa"><button id="inventory" aria-label="Plecak" title="Plecak">▦</button></nav><button id="world-state" hidden></button><div id="rope-travel" hidden><button id="rope-go" type="button"><span aria-hidden="true">➜</span><b id="rope-dist"></b><small id="rope-cost"></small></button><button id="rope-flip" type="button" aria-label="Odwróć kierunek" title="Odwróć kierunek">⇄</button></div><div id="travel-veil" hidden><div><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="17" r="9" fill="none" stroke="#e8c27a" stroke-width="3"/><circle cx="16" cy="17" r="4" fill="none" stroke="#b0793c" stroke-width="2.5"/></svg><b id="travel-veil-text">Podróż liną…</b></div></div>`,
+    );
+    this.dialog = el<HTMLDialogElement>("expedition-panel");
+    this.body = el("panel-body");
+    this.title = el("panel-title");
+    el("panel-close").onclick = () => this.close();
+    this.dialog.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      this.close();
+    });
+    this.dialog.addEventListener("click", (e) => {
+      if (e.target === this.dialog) {
+        const b = this.dialog.getBoundingClientRect();
+        const m = e as MouseEvent;
+        if (
+          m.clientX < b.left ||
+          m.clientX > b.right ||
+          m.clientY < b.top ||
+          m.clientY > b.bottom
+        )
+          this.close();
+      }
+    });
+    el("action").onclick = () => this.action();
+    el("rope-go").onclick = () => void this.ride();
+    el("rope-flip").onclick = () => {
+      if (!this.pick) return;
+      this.pick.to = this.pick.to === this.pick.link.a ? this.pick.link.b : this.pick.link.a;
+      this.showPick();
+    };
+    el("inventory").onclick = () => this.open("inventory");
+    // Characters are switched by tapping the portrait (owner's design doc), not a "Wędrowiec ▾" button.
+    const portrait = document.createElement("button");
+    portrait.id = "characters";
+    portrait.className = "portrait-switch";
+    portrait.setAttribute("aria-label", "Wędrowcy");
+    document.querySelector(".vitals")?.append(portrait);
+    portrait.onclick = () => this.open("characters");
+    el("world-map").onclick = () => this.open("world");
+    el("world-state").onclick = () => h.retry();
+    document.addEventListener("pointerdown", (e) => {
+      if (!(e.target as HTMLElement).closest("#camp-menu,#world"))
+        this.hideMenu();
+      if (!(e.target as HTMLElement).closest("#rope-travel,#world"))
+        this.clearPick();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (
+        e.code === "Escape" &&
+        !this.dialog.open &&
+        (this.rope || !el("camp-menu").hidden)
+      ) {
+        e.preventDefault();
+        this.rope = null;
+        this.hideMenu();
+      }
+      if (e.code === "KeyE" && !this.dialog.open && !e.repeat) {
+        e.preventDefault();
+        this.action();
+      }
+      if (e.code === "KeyI" && !this.dialog.open) {
+        e.preventDefault();
+        this.open("inventory");
+      }
+    });
+    this.refreshWorld();
+  }
+  close() {
+    this.dialog.close();
+    this.h.panel(false);
+    this.previousFocus?.focus();
+    this.view = "";
+    this.selectedItem = null;
+    this.h.save();
+  }
+  private open(view: string) {
+    if (!this.h.canAct() && !this.dialog.open) return;
+    this.hideMenu();
+    this.view = view;
+    this.selectedItem = null;
+    if (!this.dialog.open) {
+      this.previousFocus = document.activeElement as HTMLElement;
+      this.dialog.showModal();
+      this.h.panel(true);
+    }
+    this.render();
+  }
+  private render() {
+    this.body.replaceChildren();
+    const s = this.h.state,
+      c = activeCharacter(s);
+    el("characters").setAttribute("aria-label", `Wędrowcy · ${c.name}`);
+    if (this.view === "characters") {
+      this.title.textContent = "Drużyna";
+      const party = partyOf(s);
+      this.body.append(
+        node("p", `W drużynie ${party.length} / ${PARTY_SIZE}. Reszta czeka w obozach.`, "party-note"),
+      );
+      for (const v of s.characters) {
+        const row = node("div", "", "character-row");
+        const inParty = party.includes(v.id);
+        const b = button("", () => void this.control(v), "character-choice");
+        b.append(...wayfarerLabel(v, levelOf(v.exp)));
+        b.classList.toggle("selected", v.id === c.id);
+        b.style.setProperty("--portrait-color", `hsl(${v.appearance % 360} 25% 47%)`);
+        b.style.setProperty("--rarity", RARITY_COLORS[v.rarity ?? "common"]);
+        row.append(b);
+        if (v.id !== c.id && isCampRole(v.role)) row.append(node("span", "Pracuje w obozie", "party-job"));
+        else if (v.id !== c.id) {
+          const t = button(inParty ? "Zostaw w obozie" : "Do drużyny", () => {
+            if (!inParty && !nearCamp(s, c) && distance(v, c) > BALANCE.safeRadius) {
+              this.h.notify("Wędrowiec czeka w obozie — idź po niego");
+              return;
+            }
+            if (inParty) {
+              // Left behind: walks back to the nearest camp.
+              const camp = nearCamp(s, v, Infinity) ?? s.camps[0];
+              Object.assign(v, { x: camp.x + 1.5, z: camp.z + 1.5, campId: camp.id });
+            }
+            if (toggleParty(s, v.id)) {
+              this.h.party();
+              this.h.save();
+              this.render();
+            } else this.h.notify(`Drużyna ma najwyżej ${PARTY_SIZE} osoby`);
+          }, "party-toggle");
+          row.append(t);
+        }
+        this.body.append(row);
+      }
+      return;
+    }
+    if (this.view === "world") {
+      this.title.textContent = "Świat";
+      const form = node("form");
+      const lat = node("input"),
+        lon = node("input");
+      lat.type = lon.type = "number";
+      lat.step = lon.step = "any";
+      lat.required = lon.required = true;
+      lat.min = "-90";
+      lat.max = "90";
+      lon.min = "-180";
+      lon.max = "180";
+      lat.placeholder = "Szerokość";
+      lon.placeholder = "Długość";
+      lat.setAttribute("aria-label", "Szerokość geograficzna");
+      lon.setAttribute("aria-label", "Długość geograficzna");
+      const go = button("Wyrusz", () => {});
+      go.type = "submit";
+      form.append(lat, lon, go);
+      form.onsubmit = (e) => {
+        e.preventDefault();
+        void this.travel({ lat: Number(lat.value), lon: Number(lon.value) });
+      };
+      this.body.append(form);
+      const places = [
+        ["Lublin", 51.2482, 22.5681],
+        ["Warszawa", 52.2297, 21.0122],
+        ["Stambuł", 41.0082, 28.9784],
+        ["Singapur", 1.3521, 103.8198],
+        ["Nowy Jork", 40.7128, -74.006],
+      ] as const;
+      for (const [name, latitude, longitude] of places)
+        this.body.append(
+          button(
+            name,
+            () => void this.travel({ lat: latitude, lon: longitude }),
+            "place-choice",
+          ),
+        );
+      return;
+    }
+    if (this.view === "recruit") {
+      this.recruit();
+      return;
+    }
+    const vault = this.view === "vault";
+    this.title.textContent = vault ? "Skarbiec" : "Ekwipunek";
+    const layout = node("div", "", "inventory-layout");
+    const col = node("div", "", "inventory-column");
+    const count = node(
+      "span",
+      `${vault ? s.vault.length : c.bag.length} / ${vault ? "∞" : BALANCE.slots}`,
+      "slot-count",
+    );
+    this.title.append(count);
+    const gold = node("div", `${vault ? s.bank : c.coins} tix`, "gold-line");
+    if (vault) {
+      gold.append(
+        button("Wpłać", () => {
+          s.bank += c.coins;
+          c.coins = 0;
+          this.h.save();
+          this.render();
+        }),
+        button("Wypłać", () => {
+          c.coins += s.bank;
+          s.bank = 0;
+          this.h.save();
+          this.render();
+        }),
+      );
+    }
+    col.append(gold);
+    if (vault) {
+      // Shared goods of the whole rope network.
+      const goods = node("div", "", "stock-row");
+      for (const k of STOCK_KEYS) {
+        const cell = node("span", "", "stock-cell");
+        cell.innerHTML = `${stockIcon(k)}<b>${s.stock[k]}${k === "rope" ? " m" : ""}</b>`;
+        cell.title = STOCK_NAMES[k];
+        cell.setAttribute("aria-label", `${STOCK_NAMES[k]}: ${s.stock[k]}`);
+        goods.append(cell);
+      }
+      col.append(goods);
+      const twist = button(
+        `Skręć linę: 10 włókna → ${10 * BALANCE.ropePerFiber} m`,
+        () => {
+          twistRope(s, 10);
+          this.h.save();
+          this.render();
+        },
+      );
+      twist.disabled = s.stock.fiber < 10;
+      col.append(twist);
+      // What the closed circles produced (also while you were away).
+      const rates = s.rates;
+      if (rates && Object.values(rates).some((v) => (v ?? 0) > 0)) {
+        const made = node("div", "", "stock-row production");
+        for (const k of STOCK_KEYS) {
+          const rate = rates[k] ?? 0;
+          if (rate <= 0) continue;
+          const cell = node("span", "", "stock-cell");
+          const unit = k === "rope" ? " m" : "";
+          cell.innerHTML = `${stockIcon(k)}<b>+${Math.floor(s.pending?.[k] ?? 0)}${unit}</b><small>${rate.toFixed(1)}/h</small>`;
+          cell.setAttribute("aria-label", `${STOCK_NAMES[k]}: ${Math.floor(s.pending?.[k] ?? 0)} czeka, ${rate.toFixed(1)} na godzinę`);
+          made.append(cell);
+        }
+        const take = button("Zbierz z kręgów", () => {
+          collect(s);
+          this.h.save();
+          this.render();
+        });
+        take.disabled = !Object.values(s.pending ?? {}).some((v) => (v ?? 0) >= 1);
+        col.append(made, take);
+      }
+    }
+    const items = vault ? s.vault : c.bag,
+      grid = node("div", "", "item-grid");
+    const slots = vault
+      ? Math.max(24, Math.ceil((items.length + 1) / 4) * 4)
+      : BALANCE.slots;
+    for (let i = 0; i < slots; i++) {
+      const item = items[i],
+        b = button(
+          "",
+          () => {
+            this.selectedItem = item?.id ?? null;
+            this.render();
+          },
+          "item-slot",
+        );
+      if (item) {
+        b.innerHTML = itemIcon(item) + itemBadge(item);
+        b.style.setProperty("--item-rarity", RARITY_COLORS[(item.rarity as keyof typeof RARITY_COLORS) ?? "common"] ?? RARITY_COLORS.common);
+        b.setAttribute("aria-label", `${item.name}, ${itemStat(item)}`);
+        b.title = `${item.name} · ${itemStat(item)}`;
+        b.classList.toggle("selected", this.selectedItem === item.id);
+      } else {
+        b.disabled = true;
+        b.setAttribute("aria-label", "Puste pole");
+      }
+      grid.append(b);
+    }
+    col.append(grid);
+    layout.append(col);
+    const side = node("aside", "", "equipment");
+    // The hero with what they wear: helmet on the head, armour on the body, weapon and
+    // second hand at the sides, boots at the feet. A tap picks the piece (details below).
+    if (!vault) {
+      const doll = node("div", "", "doll");
+      doll.innerHTML = DOLL_FIGURE;
+      for (const [slot, label] of [
+        ["helmet", "Hełm"],
+        ["weapon", "Broń"],
+        ["armor", "Zbroja"],
+        ["offhand", "Druga ręka"],
+        ["boots", "Buty"],
+      ] as const) {
+        const item = c.equipment[slot];
+        const b = button(
+          "",
+          () => {
+            if (!item) return;
+            this.selectedItem = item.id;
+            this.render();
+          },
+          `doll-slot doll-${slot}`,
+        );
+        if (item) {
+          b.innerHTML = itemIcon(item) + itemBadge(item);
+          b.style.setProperty("--item-rarity", RARITY_COLORS[(item.rarity as keyof typeof RARITY_COLORS) ?? "common"] ?? RARITY_COLORS.common);
+          b.setAttribute("aria-label", `${label}: ${item.name}, ${itemStat(item)}`);
+          b.title = `${item.name} · ${itemStat(item)}`;
+          b.classList.add("filled");
+          b.classList.toggle("selected", this.selectedItem === item.id);
+        } else {
+          b.innerHTML = `<svg viewBox="0 0 56 56" aria-hidden="true">${paths[SLOT_GHOST[slot]]}</svg><small>${label}</small>`;
+          b.setAttribute("aria-label", `${label}: puste`);
+        }
+        doll.append(b);
+      }
+      side.append(doll);
+    }
+    const worn = vault ? undefined : Object.entries(c.equipment).find(([, i]) => i?.id === this.selectedItem);
+    const item = items.find((i) => i.id === this.selectedItem) ?? worn?.[1];
+    if (item) {
+      side.append(
+        node("h3", item.name),
+        node(
+          "p",
+          itemStat(item),
+        ),
+      );
+      if (worn)
+        side.append(
+          button("Zdejmij", () => {
+            if (c.bag.length >= BALANCE.slots) {
+              this.h.notify("Plecak jest pełny");
+              return;
+            }
+            delete c.equipment[worn[0] as keyof typeof c.equipment];
+            c.bag.push(item);
+            c.hp = Math.min(c.hp, maxHealth(c));
+            this.h.switch(c);
+            this.h.save();
+            this.render();
+          }),
+        );
+      else if (!vault && item.slot !== "material")
+        side.append(
+          button("Załóż", () => {
+            equip(c, item.id);
+            this.h.switch(c);
+            this.h.save();
+            this.render();
+          }),
+        );
+      if (nearCamp(s, c) && !worn)
+        side.append(
+          button(vault ? "Do plecaka" : "Do skarbca", () => {
+            if (
+              !transfer(
+                items,
+                vault ? c.bag : s.vault,
+                item.id,
+                vault ? BALANCE.slots : Infinity,
+              )
+            )
+              this.h.notify("Plecak jest pełny");
+            this.h.save();
+            this.render();
+          }),
+        );
+    }
+    layout.append(side);
+    this.body.append(layout);
+  }
+  private async travel(geo: Geo) {
+    if (
+      !nearCamp(this.h.state, activeCharacter(this.h.state)) ||
+      this.h.combat() ||
+      this.rope
+    ) {
+      this.h.notify("Wróć do obozu");
+      return;
+    }
+    if (
+      !Number.isFinite(geo.lat) ||
+      Math.abs(geo.lat) > 90 ||
+      !Number.isFinite(geo.lon) ||
+      Math.abs(geo.lon) > 180
+    )
+      return;
+    this.body.replaceChildren(node("p", "Wczytywanie mapy…"));
+    try {
+      await this.h.travel(geo);
+      this.close();
+      this.refreshWorld();
+    } catch {
+      this.body.replaceChildren(
+        node("p", "Mapa jest niedostępna"),
+        button("Spróbuj ponownie", () => void this.travel(geo)),
+        button("Wróć", () => this.render()),
+      );
+    }
+  }
+  private recruit() {
+    const s = this.h.state,
+      c = activeCharacter(s),
+      camp = this.menuCamp ?? nearCamp(s, c);
+    this.title.textContent = "Twoja oferta";
+    if (!camp || distance(camp, c) > BALANCE.safeRadius) {
+      this.body.append(node("p", "Wróć do obozu"));
+      return;
+    }
+    const o = offerAt(s, camp.id);
+    if (o) {
+      this.body.append(node("p", `${o.gold} tix · ${o.items.length} przedm.`));
+      // Candidates can be hired as soon as they turn up, while the notice still hangs.
+      const visible = offerCandidates(o);
+      if (o.candidates !== null || visible.length) {
+        this.title.textContent = visible.length
+          ? "Zgłoszenia"
+          : "Brak zgłoszeń";
+        for (const v of visible)
+          this.body.append(
+            withLabel(
+              button("", () => {
+                const hired = hire(s, o.id, v.id, camp.id);
+                if (hired) {
+                  // A new hire joins the party when there is room.
+                  if (partyOf(s).length < PARTY_SIZE && !isCampRole(hired.role)) {
+                    toggleParty(s, hired.id);
+                    this.h.party();
+                  }
+                  this.h.save();
+                  this.refreshWorld();
+                  this.render();
+                }
+              }, "candidate"),
+              v,
+              v.level,
+              "Zatrudnij",
+            ),
+          );
+      }
+      if (o.candidates === null) {
+        this.body.append(
+          node("p", visible.length ? "Ogłoszenie wisi jeszcze:" : "Czekamy na chętnych… Ogłoszenie wisi jeszcze:"),
+        );
+        const remaining = Math.max(
+          0,
+          Math.ceil((o.readyAt - Date.now()) / 1000),
+        );
+        const timer = node(
+          "p",
+          `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`,
+          "offer-timer",
+        );
+        timer.id = "offer-timer";
+        const bar = node("div", "", "offer-progress");
+        bar.innerHTML = `<i id="offer-bar" style="width:${offerShare(o)}%"></i>`;
+        bar.setAttribute("role", "progressbar");
+        this.body.append(timer, bar);
+      }
+      this.body.append(
+        button(
+          o.candidates?.length === 0 ? "Odbierz ofertę" : "Wycofaj ofertę",
+          () => {
+            cancelOffer(s, o.id);
+            this.h.save();
+            this.render();
+          },
+        ),
+      );
+      return;
+    }
+    const form = node("form");
+    // A slider with ±10/±50 steps: no on-screen keyboard and no "050" (owner's design doc).
+    const gold = node("input");
+    gold.type = "range";
+    gold.min = "0";
+    gold.max = String(c.coins);
+    gold.step = "1";
+    this.offerGold = Math.min(this.offerGold, c.coins);
+    gold.value = String(this.offerGold);
+    gold.setAttribute("aria-label", "Tix w ofercie");
+    const readout = node("output", `${this.offerGold} tix`, "gold-readout");
+    const setGold = (v: number) => {
+      this.offerGold = Math.max(0, Math.min(c.coins, Math.round(v)));
+      gold.value = String(this.offerGold);
+      readout.textContent = `${this.offerGold} tix`;
+      updateProfile();
+    };
+    gold.oninput = () => setGold(Number(gold.value));
+    const stepper = node("div", "", "gold-stepper");
+    for (const d of [-50, -10, 10, 50])
+      stepper.append(
+        button(d > 0 ? `+${d}` : `−${-d}`, () => setGold(this.offerGold + d), "gold-step"),
+      );
+    stepper.insertBefore(readout, stepper.children[2]);
+    form.append(stepper, gold);
+    const grid = node("div", "", "offer-grid");
+    for (const item of c.bag) {
+      const b = button(
+        "",
+        () => {
+          if (this.offerItems.has(item.id)) this.offerItems.delete(item.id);
+          else this.offerItems.add(item.id);
+          this.render();
+        },
+        "item-slot",
+      );
+      b.innerHTML = itemIcon(item) + itemBadge(item);
+      b.setAttribute("aria-label", `${item.name}, ${itemStat(item)}`);
+      b.title = `${item.name} · ${itemStat(item)}`;
+      b.setAttribute("aria-pressed", String(this.offerItems.has(item.id)));
+      b.classList.toggle("selected", this.offerItems.has(item.id));
+      grid.append(b);
+    }
+    form.append(grid);
+    const chosen = c.bag.filter((i) => this.offerItems.has(i.id));
+    if (chosen.length) {
+      const list = node("ul", "", "offer-items");
+      for (const i of chosen)
+        list.append(node("li", `${i.name} · ${itemStat(i)} · ${i.value} tix`));
+      form.append(list);
+    }
+    const submit = button("Wystaw", () => {});
+    submit.type = "submit";
+    const summary = node("div", "", "recruitment-profile");
+    const updateProfile = () => {
+      const profile = recruitmentProfile(
+        {
+          gold: this.offerGold,
+          items: c.bag.filter((i) => this.offerItems.has(i.id)),
+          ceiling: levelOf(c.exp),
+        },
+        camp.buildings,
+      );
+      submit.disabled =
+        !Number.isSafeInteger(this.offerGold) ||
+        this.offerGold < 0 ||
+        this.offerGold > c.coins ||
+        !profile.chance;
+      summary.replaceChildren(
+        node("p", `Szansa zgłoszenia: ${Math.round(profile.chance * 100)}%`),
+        node(
+          "p",
+          `Wojownik ${Math.round(profile.roles.warrior * 100)}% · Mag ${Math.round(profile.roles.mage * 100)}% · Łucznik ${Math.round(profile.roles.archer * 100)}%`,
+        ),
+        node(
+          "p",
+          `Poziom: ${profile.minLevel === profile.maxLevel ? profile.maxLevel : `${profile.minLevel}–${profile.maxLevel}`}`,
+        ),
+      );
+    };
+    updateProfile();
+    form.append(summary);
+    form.append(submit);
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const o = postOffer(s, camp.id, this.offerGold, [...this.offerItems]);
+      if (!o) {
+        this.h.notify("Dodaj tix lub przedmiot");
+        return;
+      }
+      this.offerGold = 0;
+      this.offerItems.clear();
+      this.h.save();
+      this.render();
+    };
+    this.body.append(form);
+  }
+  private hideMenu() {
+    el("camp-menu").hidden = true;
+  }
+  private menu(camp: Camp) {
+    this.menuCamp = camp;
+    const menu = el("camp-menu");
+    const item = (label: string, icon: string, click: () => void) => {
+      const b = button("", click, "camp-item");
+      b.innerHTML = `<svg viewBox="0 0 32 32" aria-hidden="true">${icon}</svg><span>${label}</span>`;
+      b.setAttribute("aria-label", label);
+      return b;
+    };
+    menu.replaceChildren(
+      item("Rozciągnij linę", CAMP_ICONS.rope, () => {
+        if (!canAddLink(this.h.state, camp.id)) {
+          this.h.notify(`Z obozu wychodzi już ${MAX_CAMP_LINKS} liny`);
+          this.hideMenu();
+          return;
+        }
+        // Without enough rope for the nearest possible camp the hero would stand tied
+        // to the tent, unable to take a step.
+        if (this.ropeMax() < BALANCE.minCampDistance) {
+          this.hideMenu();
+          this.h.notify(
+            `Za mało liny (masz ${this.h.state.stock.rope} m, potrzeba ${Math.ceil(BALANCE.minCampDistance / SCALE)} m). Skręć ją z włókna w Skarbcu.`,
+          );
+          return;
+        }
+        this.rope = {
+          campId: camp.id,
+          points: [
+            { x: camp.x, z: camp.z },
+            { ...activeCharacter(this.h.state) },
+          ],
+        };
+        this.hideMenu();
+      }),
+      item("Skarbiec", CAMP_ICONS.vault, () => this.open("vault")),
+      item("Rekrutuj", CAMP_ICONS.recruit, () => {
+        this.offerGold = 0;
+        this.offerItems.clear();
+        this.open("recruit");
+      }),
+    );
+    menu.hidden = false;
+    this.positionMenu();
+  }
+  private positionMenu() {
+    if (!this.menuCamp) return;
+    const p = new T.Vector3(this.menuCamp.x, 2.6, this.menuCamp.z).project(
+        this.h.camera,
+      ),
+      menu = el("camp-menu");
+    menu.style.left = `${Math.max(10, Math.min(innerWidth - 195, ((p.x + 1) * innerWidth) / 2 + 30))}px`;
+    menu.style.top = `${Math.max(10, Math.min(innerHeight - 160, ((1 - p.y) * innerHeight) / 2 - 40))}px`;
+  }
+  /** Holding the stake by the camp it came from: the action rolls the rope back in. */
+  private canRollBack() {
+    if (!this.rope || this.connectionTarget()) return false;
+    const from = this.h.state.camps.find((c) => c.id === this.rope!.campId);
+    return !!from && distance(from, activeCharacter(this.h.state)) <= BALANCE.safeRadius;
+  }
+  private rollBack() {
+    this.rope = null;
+    this.spotList = [];
+    this.h.notify("Lina zwinięta");
+  }
+  action() {
+    if (this.rope && this.canRollBack()) {
+      this.rollBack();
+      return;
+    }
+    if (!this.h.canAct()) return;
+    if (this.rope) {
+      this.place();
+      return;
+    }
+    if (this.selected) this.menu(this.selected);
+  }
+  click(clientX: number, clientY: number) {
+    if (!this.h.canAct()) return false;
+    if (this.rope) {
+      if (this.canRollBack()) this.rollBack();
+      else this.place();
+      return true;
+    }
+    const v = new T.Vector2(
+        (clientX / innerWidth) * 2 - 1,
+        (-clientY / innerHeight) * 2 + 1,
+      ),
+      ray = new T.Raycaster();
+    ray.setFromCamera(v, this.h.camera);
+    const hits = ray.intersectObjects([...this.campViews.values()], true);
+    if (hits.length) {
+      let object: T.Object3D | null = hits[0].object;
+      while (object && !object.userData.campId) object = object.parent;
+      const camp = this.h.state.camps.find(
+        (c) => c.id === object?.userData.campId,
+      );
+      if (camp) {
+        if (distance(camp, activeCharacter(this.h.state)) > BALANCE.safeRadius)
+          this.h.notify("Podejdź do obozu");
+        else this.menu(camp);
+        return true;
+      }
+    }
+    this.hideMenu();
+    // A tap on a finished rope offers a ride to one of its camps.
+    const c = activeCharacter(this.h.state),
+      plane = new T.Plane(new T.Vector3(0, 1, 0), -this.h.ground(c.x, c.z)),
+      hit = ray.ray.intersectPlane(plane, new T.Vector3());
+    const found = hit && linkAt(this.h.state, { x: hit.x, z: hit.z }, 1.4);
+    if (found) {
+      this.pick = { link: found.link, to: fartherEnd(found.link, c), along: found.along };
+      this.showPick();
+      return true;
+    }
+    this.clearPick();
+    return false;
+  }
+  private plan() {
+    if (!this.pick) return null;
+    return travelPlan(
+      this.h.state,
+      this.pick.link,
+      activeCharacter(this.h.state),
+      this.pick.to,
+      SCALE,
+      BALANCE.safeRadius,
+    );
+  }
+  private showPick() {
+    const plan = this.plan();
+    if (!this.pick || !plan) return this.clearPick();
+    const c = activeCharacter(this.h.state);
+    el("rope-dist").textContent =
+      plan.meters >= 1000 ? `${(plan.meters / 1000).toFixed(1)} km` : `${Math.round(plan.meters)} m`;
+    el("rope-cost").textContent = `${plan.cost} tix`;
+    el("rope-travel").classList.toggle("short", c.coins < plan.cost);
+    el("rope-go").setAttribute("aria-label", `Podróż liną ${el("rope-dist").textContent}, ${plan.cost} tix`);
+    el("rope-travel").hidden = false;
+    // The arrow lies on the rope where it was tapped, pointing to the chosen camp.
+    const route = this.pick.link.route,
+      at = pointAlong(route, this.pick.along),
+      ahead = pointAlong(route, this.pick.along + (this.pick.to === this.pick.link.b ? 1 : -1));
+    this.arrow.position.set(at.x, 1 + this.h.ground(at.x, at.z), at.z);
+    this.arrow.rotation.set(0, Math.atan2(ahead.x - at.x, ahead.z - at.z) + Math.PI, 0);
+    this.arrow.visible = true;
+    this.positionPick();
+  }
+  private positionPick() {
+    if (!this.pick) return;
+    const p = this.arrow.position.clone().project(this.h.camera),
+      box = el("rope-travel");
+    box.style.left = `${Math.max(10, Math.min(innerWidth - 190, ((p.x + 1) * innerWidth) / 2 - 80))}px`;
+    box.style.top = `${Math.max(10, Math.min(innerHeight - 70, ((1 - p.y) * innerHeight) / 2 - 78))}px`;
+  }
+  clearPick() {
+    this.pick = null;
+    this.arrow.visible = false;
+    el("rope-travel").hidden = true;
+  }
+  /** QA: tap the rope nearest a world point (as a finger would). */
+  pickRope(p: Point, to?: string) {
+    const found = linkAt(this.h.state, p, 1.4);
+    if (!found) return false;
+    this.pick = { link: found.link, to: to ?? fartherEnd(found.link, activeCharacter(this.h.state)), along: found.along };
+    this.showPick();
+    return true;
+  }
+  private async ride() {
+    const plan = this.plan(),
+      s = this.h.state,
+      c = activeCharacter(s);
+    if (!plan) return;
+    if (this.rope) return this.h.notify("Najpierw wbij palik");
+    if (this.h.combat()) return this.h.notify("Najpierw zakończ walkę");
+    if (!plan.onRope || !inSafeZone(s, c, SCALE))
+      return this.h.notify("Stań na tej linie lub przy jej obozie");
+    if (plan.arrived) return this.h.notify("Drużyna już tu jest");
+    if (c.coins < plan.cost) return this.h.notify(`Potrzebujesz ${plan.cost} tix`);
+    this.clearPick();
+    await this.h.ropeTravel(plan.dest, plan.cost);
+  }
+  private connectionTarget() {
+    if (!this.rope) return undefined;
+    const c = activeCharacter(this.h.state);
+    return this.h.state.camps
+      .filter(
+        (camp) => camp.id !== this.rope!.campId && distance(camp, c) <= 2.4,
+      )
+      .sort((a, b) => distance(a, c) - distance(b, c))[0];
+  }
+  private connectingRoute() {
+    const target = this.connectionTarget();
+    return target && this.rope
+      ? updateRope(this.rope.points, target, this.h.obstacles())
+      : null;
+  }
+  private placementError() {
+    const c = activeCharacter(this.h.state);
+    if (!this.rope) return "";
+    if (this.h.combat()) return "Najpierw zakończ walkę";
+    const target = this.connectionTarget();
+    if (target) {
+      const route = this.connectingRoute();
+      if (!route || routeLength(route) > this.ropeMax())
+        return "Lina nie sięga obozu";
+      const from = this.rope.campId,
+        to = target.id,
+        s = this.h.state;
+      if (
+        s.camps.some(
+          (camp) =>
+            (camp.id === from && camp.parentId === to) ||
+            (camp.id === to && camp.parentId === from),
+        ) ||
+        s.connections?.some(
+          (link) =>
+            (link.from === from && link.to === to) ||
+            (link.from === to && link.to === from),
+        )
+      )
+        return "Obozy są już połączone";
+      if (!canAddLink(s, to)) return `Obóz ma już ${MAX_CAMP_LINKS} liny`;
+      return "";
+    }
+    if (!this.h.contains(c)) return "Mapa jeszcze się wczytuje";
+    const nearest = Math.min(...this.h.state.camps.map((v) => distance(v, c)));
+    if (nearest < BALANCE.minCampDistance)
+      return `Za blisko obozu — odejdź jeszcze ${Math.ceil((BALANCE.minCampDistance - nearest) / SCALE)} m`;
+    if (this.h.state.stock.wood < BALANCE.campWood)
+      return `Potrzebujesz ${BALANCE.campWood} drewna`;
+    if (routeLength(this.rope.points) > this.ropeMax())
+      return "Lina jest za krótka";
+    if (this.h.blocked(c, 3.6)) return "Brak miejsca na obóz";
+    return "";
+  }
+  /** Takes control of a character: party members anywhere outside a fight,
+   * others only from a camp (they wait there). */
+  async control(v: Character) {
+    const s = this.h.state,
+      c = activeCharacter(s);
+    if (v.id === c.id) return;
+    const inParty = partyOf(s).includes(v.id);
+    if (isCampRole(v.role)) {
+      this.h.notify(`${v.name} pracuje w obozie`);
+      return;
+    }
+    if (this.rope || this.h.combat() || (!inParty && !nearCamp(s, c))) {
+      this.h.notify(this.h.combat() ? "Najpierw zakończ walkę" : "Wróć do obozu");
+      return;
+    }
+    // Swap places in the party: the new leader keeps the old one as a companion.
+    if (!inParty) s.party = [v.id, ...partyOf(s).filter((id) => id !== c.id), c.id].slice(0, PARTY_SIZE);
+    const previous = s.activeId;
+    s.activeId = v.id;
+    this.h.save();
+    try {
+      await this.h.switch(v);
+      this.refreshWorld();
+      this.close();
+    } catch {
+      s.activeId = previous;
+      this.h.notify("Mapa tej postaci jest niedostępna");
+    }
+  }
+  /** Metres of rope run out right now (0 without the stake in hand). */
+  ropeUsed() {
+    return this.rope ? Math.ceil(routeLength(this.rope.points) / SCALE) : 0;
+  }
+  private tautNotice = 0;
+  /** Longest rope the hero can run out now (stretch limit or what is left in the Vault). */
+  private ropeMax() {
+    return ropeAvailable(this.h.state, SCALE);
+  }
+  /** Up to three nearby places where the rope's next camp may stand. */
+  private freeSpots(): Point[] {
+    const s = this.h.state,
+      c = activeCharacter(s);
+    if (!this.rope || this.connectionTarget() || s.stock.wood < BALANCE.campWood)
+      return [];
+    const used = routeLength(this.rope.points),
+      out: Point[] = [];
+    for (let r = 2; r <= 26 && out.length < 3; r += 1.5)
+      for (let a = 0; a < Math.PI * 2 && out.length < 3; a += Math.PI / 10) {
+        const p = { x: c.x + Math.sin(a) * r, z: c.z + Math.cos(a) * r };
+        if (
+          used + r <= this.ropeMax() &&
+          this.h.contains(p) &&
+          !this.h.blocked(p, 3.6) &&
+          s.camps.every((v) => distance(v, p) >= BALANCE.minCampDistance) &&
+          out.every((q) => distance(q, p) >= 6)
+        )
+          out.push(p);
+      }
+    return out;
+  }
+  private place() {
+    const reason = this.placementError();
+    if (reason) {
+      // A wrong spot is shown on the map (green circles), not explained in words.
+      if (this.spotList.length) this.spotPulse = 1;
+      else this.h.notify(reason);
+      return;
+    }
+    const c = activeCharacter(this.h.state),
+      s = this.h.state;
+    const target = this.connectionTarget();
+    if (target) {
+      const route = this.connectingRoute();
+      if (route && connectCamps(s, this.rope!.campId, target.id, route)) {
+        spendRope(s, routeLength(route), SCALE);
+        this.rope = null;
+        this.refreshWorld();
+        this.h.save();
+        this.h.notify("Obozy połączone");
+      }
+      return;
+    }
+    const camp: Camp = {
+      id: nextId(s, "camp"),
+      x: c.x,
+      z: c.z,
+      parentId: this.rope!.campId,
+      route: this.rope!.points.map((p) => ({ x: p.x, z: p.z })),
+      buildings: 0,
+    };
+    s.camps.push(camp);
+    c.campId = camp.id;
+    s.stock.wood -= BALANCE.campWood;
+    spendRope(s, routeLength(camp.route), SCALE);
+    this.rope = null;
+    this.countBuildings();
+    this.rising.set(camp.id, 0);
+    this.refreshWorld();
+    this.h.save();
+    this.h.campPitched(camp);
+  }
+  private refusedStep: { x: number; z: number; until: number } | null = null;
+  moveAllowed(next: Point) {
+    if (!this.rope) return true;
+    // A step the rope just refused is not searched again on every frame while the
+    // player keeps pushing the same way (a failed search is the costly one).
+    const r = this.refusedStep;
+    if (r && performance.now() < r.until && Math.hypot(next.x - r.x, next.z - r.z) < 0.2) return false;
+    const points = updateRope(this.rope.points, next, this.h.obstacles());
+    if (!points) {
+      this.refusedStep = { x: next.x, z: next.z, until: performance.now() + 300 };
+      return false;
+    }
+    // At the end of the rope the hero can still walk back (a step that shortens it).
+    const length = routeLength(points);
+    if (length > this.ropeMax() && length > routeLength(this.rope.points)) {
+      if (Date.now() - this.tautNotice > 2500) {
+        this.tautNotice = Date.now();
+        this.h.notify(
+          this.ropeMax() < BALANCE.ropeLength
+            ? "Skończyła się lina — wbij palik albo wróć"
+            : `Lina napięta (${Math.round(BALANCE.ropeLength / SCALE)} m) — wbij palik`,
+        );
+      }
+      return false;
+    }
+    this.rope.points = points;
+    return true;
+  }
+  cancelRope() {
+    this.rope = null;
+  }
+  countBuildings() {
+    for (const c of this.h.state.camps) {
+      if (!this.h.contains(c)) continue;
+      const ids = new Set<string>();
+      this.h.obstacles().forEach((b, i) => {
+        const ring = b.rings[0],
+          x = ring.reduce((n, v) => n + v[0], 0) / ring.length,
+          z = ring.reduce((n, v) => n + v[1], 0) / ring.length;
+        if (distance(c, { x, z }) < BALANCE.safeRadius)
+          ids.add((b as { id?: string }).id ?? `building-${i}`);
+      });
+      c.buildings = ids.size;
+    }
+  }
+  refreshWorld() {
+    invalidateTerritory(this.h.state);
+    this.h.scene.remove(this.territory);
+    this.disposeGeometry(this.territory);
+    this.territory = territoryModel(this.h.state, this.h.contains);
+    this.h.drape(this.territory);
+    this.h.scene.add(this.territory);
+    for (const v of this.campViews.values()) {
+      this.group.remove(v);
+      this.disposeGeometry(v);
+    }
+    this.campViews.clear();
+    for (const c of this.h.state.camps) {
+      if (!this.h.contains(c)) continue;
+      const g = campModel(c);
+      g.position.y = this.h.ground(c.x, c.z);
+      this.campViews.set(c.id, g);
+      this.group.add(g);
+    }
+    for (const rig of this.waiting.values()) {
+      this.group.remove(rig.root);
+      this.disposeGeometry(rig.root);
+    }
+    this.waiting.clear();
+    for (const c of this.h.state.characters) {
+      if (partyOf(this.h.state).includes(c.id) || !this.h.contains(c)) continue;
+      const rig = person(
+        c.role === "warrior" ? "hero" : "archer",
+        c.appearance,
+      );
+      rig.root.position.set(c.x + 2.4, this.h.ground(c.x + 2.4, c.z), c.z);
+      rig.sword.visible = c.weapon === "sword";
+      rig.wand.visible = c.weapon === "magic";
+      this.waiting.set(c.id, rig);
+      this.group.add(rig.root);
+    }
+    const points: T.Vector3[] = [];
+    for (const route of completedRoutes(this.h.state)) {
+      const list = ropeLine(route, 0, false);
+      for (let i = 1; i < list.length; i++)
+        if (this.h.contains(list[i]) && this.h.contains(list[i - 1]))
+          points.push(list[i - 1], list[i]);
+    }
+    this.connections.geometry.dispose();
+    this.connections.geometry = new T.BufferGeometry().setFromPoints(
+      points.map((p) => p.clone().setY(p.y + this.h.ground(p.x, p.z))),
+    );
+    el("characters").setAttribute(
+      "aria-label",
+      `Wędrowcy · ${activeCharacter(this.h.state).name}`,
+    );
+  }
+  private disposeGeometry(root: T.Object3D) {
+    root.traverse((o) => {
+      if (o instanceof T.Mesh) o.geometry.dispose();
+    });
+  }
+  tick(dt: number, time: number) {
+    this.clock += dt;
+    const s = this.h.state,
+      c = activeCharacter(s);
+    this.selected = nearCamp(s, c);
+    // While a rope runs out, "Rozstaw obóz" wins, also beside an existing camp; it looks
+    // inactive where the rope cannot end (pressing it then shows the green spots).
+    el("action-label").textContent = this.rope
+      ? this.connectionTarget()
+        ? "Połącz obozy"
+        : this.canRollBack()
+          ? "Zwiń linę"
+          : "Rozstaw obóz"
+      : this.selected
+        ? "Otwórz obóz"
+        : "Akcja";
+    el<HTMLButtonElement>("action").hidden = !this.rope && !this.selected;
+    el("action").classList.toggle("active", !!this.rope || !!this.selected);
+    el("action").classList.toggle("blocked", !!this.rope && !!this.placementError());
+    if (this.pick) this.positionPick();
+    // A new camp springs up from the ground (owner: an animation while the map loads).
+    for (const [id, t] of this.rising) {
+      const next = t + dt,
+        g = this.campViews.get(id);
+      if (next >= 1.2) this.rising.delete(id);
+      else this.rising.set(id, next);
+      if (g) {
+        const k = Math.min(1, next / 1.2),
+          pop = 1 - Math.pow(1 - k, 3) + Math.sin(k * Math.PI) * 0.12;
+        g.scale.set(1, Math.max(0.02, pop), 1);
+        g.rotation.y = (1 - k) * 0.6;
+      }
+    }
+    for (const [id, g] of this.campViews) {
+      const highlight = g.userData.highlight as T.Mesh;
+      highlight.visible = id === this.selected?.id;
+      (highlight.material as T.MeshBasicMaterial).opacity =
+        0.45 + Math.sin(time * 3) * 0.15;
+    }
+    this.marker.visible = !!this.rope;
+    if (this.rope) {
+      const target = this.connectionTarget() ?? c;
+      this.marker.position.set(target.x, 0.09 + this.h.ground(target.x, target.z), target.z);
+      (this.marker.material as T.MeshBasicMaterial).color.set(
+        this.placementError() ? 0xb57b69 : 0xe3c574,
+      );
+      if (this.clock > 0.05) {
+        this.liveLine.geometry.dispose();
+        this.liveLine.geometry = new T.BufferGeometry().setFromPoints(
+          ropeLine(this.rope.points, time, true).map((p) =>
+            p.setY(p.y + this.h.ground(p.x, p.z)),
+          ),
+        );
+      }
+    }
+    this.liveLine.visible = !!this.rope;
+    this.spotPulse = Math.max(0, this.spotPulse - dt * 1.5);
+    this.spots.children.forEach((spot, i) => {
+      const p = this.spotList[i];
+      spot.visible = !!p;
+      if (!p) return;
+      spot.position.set(p.x, 0.08 + this.h.ground(p.x, p.z), p.z);
+      spot.scale.setScalar(1 + Math.sin(time * 4) * 0.04 + this.spotPulse * 0.25);
+    });
+    if (this.clock > 0.25) {
+      const why = this.rope ? this.placementError() : "";
+      this.spotList =
+        why === "Brak miejsca na obóz"
+          ? this.freeSpots()
+          : [];
+      this.clock = 0;
+      this.noticeClock += 0.25;
+      this.positionMenu();
+      const before = new Map(
+        s.offers
+          .filter((o) => o.candidates === null)
+          .map((o) => [o, offerCandidates(o).length] as const),
+      );
+      const changed = resolveOffers(s);
+      if (changed) {
+        this.h.save();
+        let arrived = 0,
+          empty = false;
+        for (const [o, n] of before) {
+          const now = offerCandidates(o).length;
+          arrived += now - n;
+          if (o.candidates?.length === 0) empty = true;
+        }
+        if (arrived)
+          this.h.notify(
+            arrived > 1 ? "Nowi chętni zgłosili się do rekrutacji" : "Ktoś zgłosił się do rekrutacji",
+          );
+        else if (empty) this.h.notify("Brak zgłoszeń do rekrutacji");
+        if (this.view === "recruit") this.render();
+      } else if (
+        this.view === "recruit" &&
+        s.offers.length > 0 &&
+        this.noticeClock >= 1
+      ) {
+        this.noticeClock = 0;
+        const o = offerAt(s, (this.menuCamp ?? nearCamp(s, c))?.id);
+        const timer = document.getElementById("offer-timer");
+        if (o && timer) {
+          const remaining = Math.max(
+            0,
+            Math.ceil((o.readyAt - Date.now()) / 1000),
+          );
+          timer.textContent = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`;
+          const fill = document.getElementById("offer-bar");
+          if (fill) fill.style.width = `${offerShare(o)}%`;
+        }
+      }
+      const status = this.h.worldStatus(),
+        b = el("world-state");
+      b.hidden = !status.error && !status.loading;
+      b.textContent = status.error
+        ? "Mapa niedostępna · ponów"
+        : "Wczytywanie mapy…";
+      el("characters").classList.toggle(
+        "has-candidates",
+        s.offers.some((o) => offerCandidates(o).length > 0),
+      );
+    }
+  }
+  // Reproject persisted camp routes and character coordinates together.
+  reproject(convert: (p: Point) => Point) {
+    for (const c of this.h.state.characters) Object.assign(c, convert(c));
+    for (const c of this.h.state.camps) {
+      Object.assign(c, convert(c));
+      c.route = c.route.map(convert);
+    }
+    for (const link of this.h.state.connections ?? [])
+      link.route = link.route.map(convert);
+    invalidateTerritory(this.h.state);
+    this.cancelRope();
+  }
+}

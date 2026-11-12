@@ -7,15 +7,17 @@
       content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"
     />
     <meta name="theme-color" content="#211b17" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>ROPExpanse</title>
   </head>
   <body>
-    <canvas id="world" aria-label="Trójwymiarowa mapa Lublina i walka"></canvas>
+    <canvas id="world" aria-label="Świat ROPExpanse"></canvas>
     <header class="topbar">
-      <a class="brand" href="./"
-        ><span class="emblem" data-icon="goggles"></span
-        ><span>ROPExpanse<small>LUBLIN · STARY GRÓD</small></span></a
-      ><button id="pause" class="plain" aria-label="Pauza">Ⅱ</button>
+      <button id="pause" class="plain" aria-label="Pauza">Ⅱ</button>
     </header>
     <section class="vitals" aria-label="Stan postaci">
       <div class="avatar" aria-hidden="true">
@@ -32,22 +34,12 @@
         <div class="xp" role="progressbar" aria-label="Doświadczenie do następnego poziomu" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="xp-fill"></i></div>
       </div>
     </section>
-    <section class="objective">
-      <span class="eyebrow">KONTRAKT / 001</span
-      ><strong id="goal">Opuść schronienie i pokonaj 6 przeciwników</strong
-      ><span id="progress">0 / 6 · idź za bursztynowym znacznikiem</span>
-    </section>
-    <nav class="loadout" aria-label="Wyposażenie testowe">
-      <button id="fullscreen" aria-label="Pełny ekran" title="Pełny ekran">
-        <i class="icon" data-icon="fullscreen"></i>
-      </button>
-      <button data-weapon="sword" class="selected" aria-label="Miecz" aria-pressed="true">
-        <i class="icon" data-icon="sword"></i><span>Miecz</span><kbd>1</kbd></button
-      ><button data-weapon="magic" aria-label="Magia" aria-pressed="false"><i class="icon" data-icon="magic"></i><span>Magia</span><kbd>2</kbd></button
-      ><button id="audio" aria-pressed="false" title="Dźwięk">♫</button
-      ><button id="help-button" aria-label="Instrukcja">?</button>
+    <nav class="loadout" aria-label="Menu">
+      <button id="help-button" aria-label="Menu" title="Menu">☰</button>
     </nav>
+    <button id="compass" class="compass" aria-label="Wróć na północ" title="Północ" hidden><span>N</span></button>
     <div id="zone" class="zone safe">SCHRONIENIE · regeneracja</div>
+    <div id="perf" aria-hidden="true"><b id="perf-fps">--</b> FPS</div>
     <div id="toast" role="status"></div>
     <div id="damage-vignette"></div>
     <div class="bottom-info">
@@ -64,8 +56,11 @@
     >
       <span id="attack-symbol" data-icon="sword"></span><i></i><small>ATAK</small>
     </div>
-    <button id="sweep" class="skill" aria-label="Sweep, szerokie cięcie">
-      <span data-icon="sweep"></span><strong>CIĘCIE</strong><small id="sweep-time">GOTOWY</small>
+    <button id="sweep" class="skill" aria-label="Umiejętność postaci">
+      <span id="sweep-icon" data-icon="sweep"></span><strong id="sweep-name">CIĘCIE</strong><small id="sweep-time">GOTOWY</small>
+    </button>
+    <button id="skill2" class="skill skill2" aria-label="Umiejętność drugiej ręki" hidden>
+      <span id="skill2-icon" data-icon="taunt"></span><strong id="skill2-name">TARCZA</strong><small id="skill2-time">GOTOWY</small>
     </button>
     <button id="heal" class="heal" aria-label="Użyj mikstury">
       <span class="icon" data-icon="potion"></span><small id="heal-time">MIKSTURA</small>
@@ -78,21 +73,29 @@
           target="_blank"
           rel="noopener"
           >OpenStreetMap</a
-        ></span
+        > · Teren:
+        <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">Mapzen / AWS Terrain Tiles</a></span
       ><span>MODELE I ANIMACJE PROTOTYPOWE</span>
     </footer>
     <div id="loading" class="overlay">
       <div class="sheet">
-        <span class="eyebrow">ROPExpanse / NOWA WYPRAWA</span>
-        <h1>Świat czeka<br />za bramą.</h1>
+
+        <h1>ROPExpanse</h1>
         <p id="loading-text">Przygotowuję fragment prawdziwego Lublina…</p>
-        <button id="start" hidden>Wyrusz — pełny ekran →</button>
-        <p class="muted">Lublin · walka w czasie rzeczywistym · zapis lokalny.</p>
+        <button id="start" hidden>Wyrusz</button>
+
       </div>
     </div>
     <div id="help" class="overlay" hidden>
       <div class="sheet">
-        <span class="eyebrow">JAK GRAĆ</span>
+        <span class="eyebrow">MENU</span>
+        <div class="menu-options">
+          <button id="fullscreen" aria-label="Pełny ekran" title="Pełny ekran">
+            <i class="icon" data-icon="fullscreen"></i>
+          </button>
+          <button id="audio" aria-pressed="false" aria-label="Dźwięk" title="Dźwięk">♫</button>
+          <button id="world-map" aria-label="Świat" title="Świat: przenieś wyprawę (beta)">◎</button>
+        </div>
         <h2>Ruszaj się. Celuj. Uderzaj.</h2>
         <p>
           <b>Telefon:</b> lewy drążek — ruch. Prawy — przeciągnij, aby celować,
@@ -100,7 +103,7 @@
         </p>
         <p>
           <b>Komputer:</b> WASD / strzałki — ruch. Mysz — kierunek, klik /
-          spacja — atak. Q — sweep, H — mikstura. 1 / 2 — miecz / magia. P —
+          spacja — atak. E — akcja, I — ekwipunek. Q — umiejętność broni, R — umiejętność drugiej ręki, H — mikstura. , / . — obrót kamery (telefon: dwa palce). Broń wynika z ekwipunku. P —
           pauza.
         </p>
         <p>
@@ -111,8 +114,22 @@
           Pauza zatrzymuje całą próbę. Postęp zapisuje się wyłącznie w tej
           przeglądarce.
         </p>
+        <button id="report-open" class="reset">Zgłoś błąd</button>
         <button id="close-help">Wracam do gry →</button
         ><button id="reset" class="reset">Rozpocznij próbę od nowa</button>
+      </div>
+    </div>
+    <div id="report" class="overlay" hidden>
+      <div class="sheet report-sheet">
+        <span class="eyebrow">ZGŁOŚ BŁĄD</span>
+        <p>Skopiuj albo udostępnij raport i wklej go w rozmowie. Zawiera tylko dane techniczne gry i urządzenia; nic nie jest wysyłane samo.</p>
+        <textarea id="report-text" readonly rows="8" aria-label="Raport"></textarea>
+        <div class="report-buttons">
+          <button id="report-copy">Kopiuj</button
+          ><button id="report-share">Udostępnij</button
+          ><button id="report-download">Pobierz plik</button
+          ><button id="report-close" class="reset">Wróć</button>
+        </div>
       </div>
     </div>
     <section

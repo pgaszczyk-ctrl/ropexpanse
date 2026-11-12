@@ -33,7 +33,7 @@ Po buildzie `npm run export:offline` zapisuje pojedynczy HTML do `work/combat3d/
 - Lokalny zapis, odrodzenie w schronieniu, utrata złota z plecaka i części XP.
 - Pełny ekran po starcie, lżejszy tryb mobilny i komunikaty błędów WebGL.
 
-Nie ma jeszcze sklepu, ekwipunku z prawdziwymi przedmiotami, kampanii, kont ani synchronizacji. Biały ekran na fizycznym telefonie użytkownika pozostaje do ponownego sprawdzenia — testy emulowane nie potwierdzają zgodności konkretnego urządzenia.
+Dodano obozy z liną, ekwipunek i wyposażenie, skarbiec, oferty rekrutacyjne, wiele postaci oraz strumieniowanie mapy OSM. Nie ma jeszcze sklepu, kont ani synchronizacji. Biały ekran na fizycznym telefonie użytkownika pozostaje do ponownego sprawdzenia — testy emulowane nie potwierdzają zgodności konkretnego urządzenia.
 
 ## Dokumentacja
 
@@ -45,3 +45,12 @@ Nie ma jeszcze sklepu, ekwipunku z prawdziwymi przedmiotami, kampanii, kont ani 
 - [Instrukcje dla Codexa i Claude Code](AGENTS.md)
 
 Kod wybrano z prototypu w `pgaszczyk-ctrl/erpeg`, commit `97cdb24`. Nie przeniesiono Supabase, sekretów, kont graczy, danych osobowych, starej historii Git ani prywatnych notatek operacyjnych. Nie nadano projektowi licencji open source. Dane OSM mają odrębne warunki opisane w docs/DATA.md.
+
+## Obecna beta obozów
+
+E / przycisk flagi — akcja; I — ekwipunek; spacja — atak także podczas prowadzenia liny; Esc — anulowanie liny. Górny wybór postaci działa w bezpiecznym obozie. Menu Świat otwiera wybór miasta lub współrzędnych (beta narzędzie zmiany regionu). Nowe dane wymagają internetu i odpowiedzi Overpass; startowy fragment Lublina pozostaje offline.
+
+Testy jednostkowe i build są odrębne od pełnej próby renderowania. Aktualne ograniczenia weryfikacji 3D i publicznej sieci opisuje docs/STATE.md.
+
+
+Lina chroni pas po 10 m z obu stron. Doprowadź ją do istniejącego obozu i użyj **Połącz obozy**, aby domknąć bezpieczne wnętrze pętli. Ogłoszenie rekrutacyjne pokazuje szansę zgłoszenia, rozkład klas i poziom; wynik może być pusty, a oferta jest wtedy do odebrania do skarbca. Obecne reguły pogranicza i bossów opisuje docs/STATE.md.

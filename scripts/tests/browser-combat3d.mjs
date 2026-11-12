@@ -33,6 +33,7 @@ try {
     await context.route("https://fonts.googleapis.com/**", (r) =>
       r.fulfill({ status: 200, body: "" }),
     );
+    await context.route("**/elevation-tiles-prod/**", (r) => r.abort()); // offline, flat terrain
     const page = await context.newPage();
     await page.addInitScript(() => {
       const original = Element.prototype.requestFullscreen;
@@ -82,16 +83,39 @@ try {
     );
     assert((await snap()).map.buildings > 100);
     assert.equal(await page.locator("#attack-symbol svg").count(), 1);
-    assert.equal(await page.locator('.health').getAttribute('aria-valuenow'), '100');
-    const panels = await page.evaluate(() => ['.objective', '.loadout', '.vitals'].map(selector => {
-      const r = document.querySelector(selector).getBoundingClientRect();
-      return {x: r.x, y: r.y, right: r.right, bottom: r.bottom};
-    }));
-    for (let i = 0; i < panels.length; i++) for (let j = i + 1; j < panels.length; j++) {
-      const a = panels[i], b = panels[j];
-      assert(!(a.x < b.right && a.right > b.x && a.y < b.bottom && a.bottom > b.y), 'HUD panels must not overlap');
-    }
+    assert.equal(
+      await page.locator(".health").getAttribute("aria-valuenow"),
+      "100",
+    );
+    const panels = await page.evaluate(() =>
+      ["#expedition-tools", ".loadout", ".vitals"].map((selector) => {
+        const r = document.querySelector(selector).getBoundingClientRect();
+        return { x: r.x, y: r.y, right: r.right, bottom: r.bottom };
+      }),
+    );
+    for (let i = 0; i < panels.length; i++)
+      for (let j = i + 1; j < panels.length; j++) {
+        const a = panels[i],
+          b = panels[j];
+        assert(
+          !(a.x < b.right && a.right > b.x && a.y < b.bottom && a.bottom > b.y),
+          "HUD panels must not overlap",
+        );
+      }
     await page.screenshot({ path: `work/combat3d/${tag}-city.png` });
+    await fixture("patrol");
+    const patrolStart = await snap();
+    await gameWait(4);
+    const patrolEnd = await snap();
+    assert(
+      Math.hypot(
+        patrolEnd.enemies[0].x - patrolStart.enemies[0].x,
+        patrolEnd.enemies[0].z - patrolStart.enemies[0].z,
+      ) > 0.1,
+      "enemy must wander while player rests in camp",
+    );
+    assert.equal(patrolEnd.player.hp, patrolStart.player.hp);
+    assert.equal(patrolEnd.enemies[0].state, "idle");
     await fixture("target");
     await attack();
     await gameWait(0.6);
@@ -106,15 +130,28 @@ try {
       60,
       "sweep cooldown cannot be bypassed",
     );
+    // Real rolls: blows vary around the base (16 → 11..21) and may miss.
+    await page.evaluate(() => window.__combat3d.fixedRolls(false));
+    await fixture("target");
+    const dealt = [];
+    for (let k = 0; k < 4; k++) {
+      const before = (await snap()).enemies[0].hp;
+      await attack();
+      await gameWait(0.6);
+      dealt.push(before - (await snap()).enemies[0].hp);
+    }
+    await page.evaluate(() => window.__combat3d.fixedRolls(true));
+    assert.ok(dealt.every((d) => d === 0 || (d >= 11 && d <= 21)), `rolled blows ${dealt}`);
+    assert.ok(new Set(dealt).size > 1, `blows differ: ${dealt}`);
     console.log(`PASS ${tag}: melee, sweep, cooldown`);
-    await page.click('[data-weapon="magic"]');
+    await page.evaluate(() => window.__combat3d.equipTemplate(1)); // staff: the hero attacks with magic
     await fixture("target");
     await gameWait(0.5);
     await attack();
     await gameWait(0.8);
     assert.equal(
       (await snap()).enemies[0].hp,
-      82,
+      78, // 18 + 4 from the equipped staff
       "aimed magic projectile hits",
     );
     console.log(`PASS ${tag}: magic and assisted aim`);
@@ -227,6 +264,164 @@ try {
       );
     }
     console.log(`PASS ${tag}: movement and input cleanup`);
+    // Exercise the public UI with only time/gold/location arranged by QA.
+    await page.evaluate(() => window.__combat3d.camp());
+    await gameWait(0.3);
+    await page.click("#inventory");
+    assert.equal(await page.locator(".item-slot").count(), 24);
+    assert.equal(
+      await page.locator(".doll .doll-slot").count(),
+      5,
+      "weapon, second hand, armour, helmet, boots",
+    );
+    await page.screenshot({ path: `work/combat3d/${tag}-inventory.png` });
+    const holder = (await snap()).campaign.characters[0];
+    const itemCount = holder.bag.length;
+    const replaced = holder.bag[0] && holder.equipment?.[holder.bag[0].slot] ? 1 : 0; // the old item goes back to the bag
+    await page.locator(".item-slot:not(:disabled)").first().click();
+    await page.getByRole("button", { name: "Załóż", exact: true }).click();
+    assert.equal(
+      (await snap()).campaign.characters[0].bag.length,
+      itemCount - 1 + replaced,
+    );
+    // What the hero wears shows on the figure as items, and comes off from there.
+    assert.ok(await page.locator(".doll-slot.filled svg").count() >= 1, "worn item drawn on the figure");
+    await page.screenshot({ path: `work/combat3d/${tag}-inventory-worn.png` });
+    const bagBefore = (await snap()).campaign.characters[0].bag.length;
+    await page.locator(".doll-slot.filled").first().click();
+    await page.getByRole("button", { name: "Zdejmij", exact: true }).click();
+    assert.equal((await snap()).campaign.characters[0].bag.length, bagBefore + 1, "taken off into the bag");
+    await page.click("#panel-close");
+    await page.evaluate(() => window.__combat3d.grantGold(1000));
+    await page.click("#action");
+    await page.screenshot({ path: `work/combat3d/${tag}-camp-menu.png` });
+    // Circles produced for 12 h while away: capped at 10 h, collected in the Vault.
+    await page.evaluate(() => window.__combat3d.production({ wood: 4 }, 12));
+    await page.getByRole("button", { name: "Skarbiec", exact: true }).click();
+    const woodStock = (await snap()).campaign.stock.wood;
+    await page.getByRole("button", { name: "Zbierz z kręgów", exact: true }).click();
+    assert.equal((await snap()).campaign.stock.wood, woodStock + 40, "10 hours of 4 wood/h");
+    assert.equal(await page.locator(".stock-row:not(.production) .stock-cell").count(), 5, "wood, ore, fibre, herbs, rope");
+    await page.screenshot({ path: `work/combat3d/${tag}-vault.png` });
+    // A blow gathers a spot: wood to the Vault, the spot waits to grow back.
+    await page.click("#panel-close");
+    await page.evaluate(() => window.__combat3d.equipTemplate(0)); // sword back
+    await fixture("empty"); // auto-aim prefers enemies; clear them for this check
+    const woodBefore = (await snap()).campaign.stock.wood;
+    const nodeKey = await page.evaluate(() => window.__combat3d.faceNode("wood"));
+    assert.ok(nodeKey, "a wood spot near the camp");
+    await gameWait(0.3);
+    await page.screenshot({ path: `work/combat3d/${tag}-gather.png` });
+    await attack();
+    await gameWait(0.6);
+    assert.equal((await snap()).campaign.stock.wood, woodBefore + 3, "wood gathered");
+    assert.equal((await snap()).resources.find((n) => n.key === nodeKey).ready, false);
+    await page.evaluate(() => window.__combat3d.camp());
+    await gameWait(0.3);
+    await page.click("#action");
+    await page.getByRole("button", { name: "Skarbiec", exact: true }).click();
+    await page.click("#panel-close");
+    await page.click("#action");
+    // Camps stand at least 500 m apart: closer, the game says how much further to go.
+    await page.getByRole("button", { name: "Rozciągnij linę", exact: true }).click();
+    await gameWait(0.3);
+    const home = (await snap()).player;
+    await page.keyboard.down("KeyD");
+    await gameWait(0.6);
+    await page.keyboard.up("KeyD");
+    await gameWait(0.2);
+    assert.match(await page.locator("#loot").textContent(), /m liny \(rozwinięte \d+ m\)/, "rope left counts down while walking");
+    let moved = false;
+    for (const [dx, dz] of [[12, 0], [-12, 0], [0, 12], [0, -12], [9, 9], [-9, -9]]) {
+      await page.evaluate(({ x, z }) => window.__combat3d.moveTo(x, z), { x: home.x + dx, z: home.z + dz });
+      const p = (await snap()).player;
+      if (Math.hypot(p.x - home.x, p.z - home.z) > 10) { moved = true; break; }
+    }
+    assert.ok(moved, "a free spot away from the tent");
+    await gameWait(0.3);
+    await page.click("#action");
+    assert.match(await page.locator("#toast").textContent(), /Za blisko obozu — odejdź jeszcze \d+ m/);
+    await page.screenshot({ path: `work/combat3d/${tag}-camp-spots.png` });
+    await page.evaluate(({ x, z }) => window.__combat3d.moveTo(x, z), home);
+    await gameWait(0.3);
+    // Holding the stake by its own camp, the action rolls the rope back in (no Esc on a phone).
+    assert.equal(await page.locator("#action-label").textContent(), "Zwiń linę");
+    await page.click("#action");
+    await gameWait(0.3);
+    assert.equal((await snap()).rope, null, "rope rolled back in");
+    // Without rope the stake is not taken (it used to tie the hero to the tent).
+    await page.evaluate(() => window.__combat3d.setRope(0));
+    await page.click("#action");
+    await page.getByRole("button", { name: "Rozciągnij linę", exact: true }).click();
+    await gameWait(0.3);
+    assert.equal((await snap()).rope, null, "no rope, no stake");
+    assert.match(await page.locator("#toast").textContent(), /Za mało liny/);
+    await page.evaluate(() => window.__combat3d.setRope(500));
+    // At the end of the rope the hero can still walk back.
+    await page.click("#action");
+    await page.getByRole("button", { name: "Rozciągnij linę", exact: true }).click();
+    await page.keyboard.down("KeyD");
+    await gameWait(0.8);
+    await page.keyboard.up("KeyD");
+    await page.evaluate(() => window.__combat3d.setRope(1)); // rope ran out out there
+    const tied = (await snap()).player;
+    await page.keyboard.down("KeyD");
+    await gameWait(0.6);
+    await page.keyboard.up("KeyD");
+    const stuck = (await snap()).player;
+    assert.ok(Math.abs(stuck.x - tied.x) < 0.05, "no further than the rope allows");
+    await page.keyboard.down("KeyA");
+    await gameWait(0.6);
+    await page.keyboard.up("KeyA");
+    const back = (await snap()).player;
+    assert.ok(tied.x - back.x > 0.5, `walks back on a used-up rope (${tied.x.toFixed(2)} → ${back.x.toFixed(2)})`);
+    await page.evaluate(() => window.__combat3d.setRope(500));
+    await page.keyboard.press("Escape");
+    await gameWait(0.3);
+    await page.click("#action");
+    await page.getByRole("button", { name: "Rekrutuj", exact: true }).click();
+    // Gold is set without a keyboard: +50 steps, then the slider.
+    await page.getByRole("button", { name: "+50", exact: true }).click();
+    assert.equal(await page.locator(".gold-readout").textContent(), "50 tix");
+    await page.getByLabel("Tix w ofercie").fill("500");
+    await page.locator(".offer-grid .item-slot").first().click();
+    assert.match(await page.locator(".offer-items").textContent(), /(Atak|Obrona) \d+/);
+    await page.locator(".offer-grid .item-slot").first().click();
+    await page.screenshot({ path: `work/combat3d/${tag}-offer.png` });
+    await page.getByRole("button", { name: "Wystaw", exact: true }).click();
+    assert.equal((await snap()).campaign.offers.length, 1);
+    assert.equal((await snap()).player.coins, 500);
+    await page.evaluate(() => window.__combat3d.advanceOffers(1));
+    await page.waitForSelector(".candidate");
+    assert.match(await page.locator(".candidate").first().textContent(), /(Zwykły|Rzadki|Epicki)/, "candidate shows rarity");
+    await page.screenshot({ path: `work/combat3d/${tag}-candidates.png` });
+    await page.locator(".candidate").first().click();
+    assert.equal((await snap()).campaign.characters.length, 2);
+    assert.equal((await snap()).campaign.offers.length, 0);
+    await page.getByLabel("Tix w ofercie").fill("1");
+    await page.getByRole("button", { name: "Wystaw", exact: true }).click();
+    await page.evaluate(() => window.__combat3d.advanceOffers(1));
+    await page
+      .getByRole("heading", { name: "Brak zgłoszeń", exact: true })
+      .waitFor();
+    assert.deepEqual((await snap()).campaign.offers[0].candidates, []);
+    await page
+      .getByRole("button", { name: "Odbierz ofertę", exact: true })
+      .click();
+    assert.equal((await snap()).campaign.offers.length, 0);
+    assert.equal((await snap()).campaign.bank, 1);
+    await page.click("#panel-close");
+    // The portrait switches characters; the old "Wędrowiec ▾" button is gone.
+    assert.equal(await page.locator("#expedition-tools #characters").count(), 0);
+    await page.click(".vitals #characters");
+    await page.locator(".character-choice").nth(1).click();
+    assert.equal(
+      (await snap()).campaign.activeId,
+      (await snap()).campaign.characters[1].id,
+    );
+    console.log(
+      `PASS ${tag}: inventory, equipment, escrow, recruitment and character switch`,
+    );
     await fixture("death");
     await gameWait(1.3);
     const restored = await snap();
@@ -239,7 +434,7 @@ try {
     );
     assert.equal(restored.player.coins, 0);
     assert(restored.player.hp > 0);
-    await page.click('[data-weapon="magic"]');
+    await page.evaluate(() => window.__combat3d.equipTemplate(1)); // staff: the hero attacks with magic
     const saved = (await snap()).player;
     await page.reload();
     await page.waitForSelector("#start:not([hidden])");

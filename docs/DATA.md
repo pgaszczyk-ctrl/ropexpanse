@@ -26,3 +26,26 @@ Importer ma ustalony origin i promień lokalnej próby; nie jest jeszcze generat
 Wybrane pliki prototypu pochodzą z pgaszczyk-ctrl/erpeg, commit 97cdb24; skopiowano kod, nie historię repo. Modele w models.ts są proceduralne. Projekt nie otrzymuje w tym etapie licencji open source. Three.js, Vite, TypeScript i Playwright mają własne licencje dystrybuowane z pakietami npm.
 
 CSS korzysta opcjonalnie z Google Fonts. Eksport jednoplikowy usuwa import zewnętrznych fontów. Do docelowej wersji prywatnej lub offline można dołączyć font lokalnie wraz z jego licencją.
+
+## Strumieniowanie świata
+
+Źródło główne (od 07.11.2026, decyzja właściciela): mapa świata Protomaps — jeden niezmienny plik PMTiles z kaflami wektorowymi OpenStreetMap, ten sam, którego używa erpeg. `src/combat3d/osmTiles.ts` czyta z niego zapytaniami HTTP Range tylko kafle zoom 15 pod kaflem gry, przycina je do granic kafla (bez podwójnych dachów na styku) i zamienia na elementy, które rozumie `convertElements`. Odczytane kafle trzymamy w pamięci (48 ostatnich) i w IndexedDB (96 kafli gry, tylko elementy sięgające danego kafla).
+
+Adres pliku: parametr `?world=<url>` (testy), zmienna `VITE_WORLD_URL` przy budowaniu, w przeciwnym razie archiwum erpeg (`world-20261103.pmtiles`). Gra tylko czyta; nazwa archiwum jest przypięta, więc podmiana pliku przez nowy build nie zmienia mapy w trakcie gry.
+
+Bezpieczeństwo i ograniczenia:
+
+- Hosting gry musi być dopuszczony w ustawieniach CORS kubełka R2 (dziś ustawionym dla exp-lore.app). Bez tego przeglądarka odrzuci odczyt i gra przejdzie na Overpass.
+- Overpass (`https://overpass.private.coffee/api/interpreter`, https://wiki.openstreetmap.org/wiki/Overpass_API) zostaje wyłącznie jako zapas przy błędzie archiwum: zapytania sekwencyjne, co najmniej 3 s odstępu, odrzucanie częściowych odpowiedzi.
+- Zmiana źródła podniosła `WORLD_VERSION` do 2: stare kafle z Overpass w IndexedDB są pobierane ponownie (inne identyfikatory obiektów).
+- Testy: `scripts/tests/osm-tiles.mjs` i `browser-world.mjs` na próbce `scripts/tests/fixtures/lublin.pmtiles` (Protomaps 4.15, wycinek Lublina z erpeg, build 20261011, ~3,9 MB). Nie wymagają sieci.
+
+Cała Ziemia nie jest dołączana do repo. Dane nadal podlegają ODbL i wymagają widocznej atrybucji (© OpenStreetMap contributors; Protomaps).
+
+## Wysokość terenu
+
+`src/combat3d/terrain.ts` pobiera kafle Terrarium (zoom 12, ~24 m na piksel) z AWS Terrain Tiles: https://registry.opendata.aws/terrain-tiles/ — darmowe, cały świat, bez klucza. Atrybucja w stopce gry: „Mapzen / AWS Terrain Tiles” (źródła: SRTM, GMTED, ETOPO1 i inne, lista w dokumentacji rejestru). Kafle trzymamy w pamięci; bez danych świat jest płaski.
+
+Gra zamienia metry na tarasy: `round(5·asinh(Δh/12 m))` stopni po 0,6 jednostki (mocniej na nizinach, słabiej w górach), sąsiednie pola (2 jednostki ≈ 11 m) różnią się najwyżej o 1 stopień, woda płaska. Budynek stoi na najniższym punkcie obrysu z cokołem. Wartości do strojenia.
+
+Testy: `scripts/tests/terrain.mjs` na 9 kaflach Lublina w `scripts/tests/fixtures/terrarium/12/` (~0,9 MB, pobrane z tego samego rejestru).
