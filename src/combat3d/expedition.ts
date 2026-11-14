@@ -2,7 +2,7 @@ import * as T from "three";
 import { territoryModel } from "./territory";
 import { completedRoutes, invalidateTerritory } from "./territory-rules";
 import { recruitmentProfile } from "./recruitment";
-import { person, material, type Rig } from "./models";
+import { person, material, lookOf, type Rig } from "./models";
 import {
   BALANCE,
   activeCharacter,
@@ -1128,10 +1128,7 @@ export class Expedition {
     this.waiting.clear();
     for (const c of this.h.state.characters) {
       if (partyOf(this.h.state).includes(c.id) || !this.h.contains(c)) continue;
-      const rig = person(
-        c.role === "warrior" ? "hero" : "archer",
-        c.appearance,
-      );
+      const rig = person(c.role === "archer" ? "archer" : "hero", c.appearance, lookOf(c));
       rig.root.position.set(c.x + 2.4, this.h.ground(c.x + 2.4, c.z), c.z);
       rig.sword.visible = c.weapon === "sword";
       rig.wand.visible = c.weapon === "magic";

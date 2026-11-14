@@ -93,7 +93,7 @@ import { lootFor, coinSplit, isValuable, type ItemRarity } from "./loot";
 void reloadIfStale();
 mountHud();
 import * as T from "three";
-import { animate, material, person, sector, wolf, type Rig } from "./models";
+import { animate, material, person, lookOf, sector, wolf, type Rig } from "./models";
 import {
   RULES as R,
   clamp,
@@ -272,10 +272,7 @@ function checkDrawingBuffer() {
 }
 const camera = new T.OrthographicCamera(-25, 25, 25, -25, 0.1, 220);
 let player = activeCharacter(campaign);
-let hero = person(
-  player.role === "archer" ? "archer" : "hero",
-  player.appearance,
-);
+let hero = person(player.role === "archer" ? "archer" : "hero", player.appearance, lookOf(player));
 const maxHp = () => maxHealth(player);
 let weapon: "sword" | "magic" = "sword",
   map: MapData,
@@ -1643,7 +1640,7 @@ async function switchCharacter(c: Character) {
   hero.root.traverse((o) => {
     if (o instanceof T.Mesh) o.geometry.dispose();
   });
-  hero = person(c.role === "archer" ? "archer" : "hero", c.appearance);
+  hero = person(c.role === "archer" ? "archer" : "hero", c.appearance, lookOf(c));
   scene.add(hero.root);
   addBlobShadow(hero);
   addXray(hero);
@@ -2233,7 +2230,7 @@ function syncCompanions() {
     if (companions.some((m) => m.c.id === id)) return;
     const c = campaign.characters.find((v) => v.id === id)!;
     if (distance(c, player) > 12) Object.assign(c, formation(slot));
-    const rig = person(c.role === "archer" ? "archer" : "hero", c.appearance);
+    const rig = person(c.role === "archer" ? "archer" : "hero", c.appearance, lookOf(c));
     rig.sword.visible = !ranged(c);
     rig.wand.visible = ranged(c);
     rig.root.position.set(c.x, 0, c.z);

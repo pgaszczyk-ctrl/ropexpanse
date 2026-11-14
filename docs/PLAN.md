@@ -120,7 +120,7 @@ Właściciel: „scal wszystko”.
 
 ## Etap 6e — Ekwipunek, sklep, czary — wykonane 14.11.2026
 
-Zlecenie właściciela z 14.11: okno Plecak/Skarbiec/Sklep (jeden układ, plecak w środku), sklep w obozie (sprzedaż za tix, drewno, linę lub mikstury; mikstury policzalne), 6 czarów magów i 4 sztuki leczenia z efektami. Szczegóły w docs/STATE.md. Czeka: podmiana modeli według referencji low-poly właściciela (pliki na jego komputerze, niedostępne w sesji).
+Zlecenie właściciela z 14.11: okno Plecak/Skarbiec/Sklep (jeden układ, plecak w środku), sklep w obozie (sprzedaż za tix, drewno, linę lub mikstury; mikstury policzalne), 6 czarów magów i 4 sztuki leczenia z efektami. Szczegóły w docs/STATE.md. Modele postaci przerobione w kodzie według 4 plansz referencji low-poly (zielarz, łucznik, mag, wojownik).
 
 ## Etap 7 — AFK
 
