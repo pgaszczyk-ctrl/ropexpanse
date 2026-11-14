@@ -118,6 +118,10 @@ Właściciel: „scal wszystko”.
   - wrogowie pojawiają się i odradzają tylko poza kadrem;
   - nie przeniesiono: źródła map OpenFreeMap (gra ma archiwum PMTiles erpeg), innego obozu (obecna gra ma obozy z liną), usunięcia przycisku pauzy, osobnej diagnostyki `?diag=1` (jest „Zgłoś błąd” w menu).
 
+## Etap 6e — Ekwipunek, sklep, czary — wykonane 14.11.2026
+
+Zlecenie właściciela z 14.11: okno Plecak/Skarbiec/Sklep (jeden układ, plecak w środku), sklep w obozie (sprzedaż za tix, drewno, linę lub mikstury; mikstury policzalne), 6 czarów magów i 4 sztuki leczenia z efektami. Szczegóły w docs/STATE.md. Czeka: podmiana modeli według referencji low-poly właściciela (pliki na jego komputerze, niedostępne w sesji).
+
 ## Etap 7 — AFK
 
 1. Zajęcia Wędrowców w obozie (jedno tapnięcie): trening (powolne XP) albo wyprawa 1/4/8 h. Wyprawa wraca z lootem i surowcami z biomu obozu, nie da się na niej zginąć, najlepszy loot zostaje dla aktywnej walki.

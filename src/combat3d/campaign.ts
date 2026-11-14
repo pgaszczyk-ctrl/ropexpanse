@@ -8,6 +8,7 @@ import { candidatesFor } from "./recruitment.ts";
 export { candidatesFor } from "./recruitment.ts";
 import { distance, type Point } from "./rules.ts";
 import { unproject } from "./world.ts";
+import { spellOf } from "./spells.ts";
 import { regionAt, type Rarity, type Region, type Sex } from "./wayfarers.ts";
 export const BALANCE = {
   slots: 24,
@@ -136,7 +137,47 @@ export type Item = {
   power: number;
   value: number;
   icon: string;
+  /** Materials stack: how many lie in this one place (1 when absent). */
+  count?: number;
 };
+/** How many pieces an entry holds (materials stack, gear is always one). */
+export const countOf = (i: Item) => i.count ?? 1;
+const sameStack = (a: Item, b: Item) =>
+  a.slot === "material" && b.slot === "material" && a.kind === b.kind && (a.level ?? 1) === (b.level ?? 1);
+/** Puts an item into a bag or the Vault: a material joins a matching stack (no new place).
+ * Returns false when it needs a place and there is none. */
+export function addItem(list: Item[], item: Item, limit = Infinity) {
+  const stack = list.find((v) => v !== item && sameStack(v, item));
+  if (stack) {
+    stack.count = countOf(stack) + countOf(item);
+    return true;
+  }
+  if (list.length >= limit) return false;
+  list.push(item);
+  return true;
+}
+/** Merges loose materials into stacks (older saves kept every hide apart). */
+export function stackAll(list: Item[]) {
+  const out: Item[] = [];
+  for (const i of list) addItem(out, i);
+  return out;
+}
+const SORT_SLOT = ["weapon", "offhand", "armor", "helmet", "boots", "material"];
+const SORT_RARITY = ["legendary", "epic", "rare", "uncommon", "common"];
+/** Tidy order: gear by place (weapon first), best first; materials at the end. */
+export function sortItems(list: Item[]) {
+  list.sort(
+    (a, b) =>
+      SORT_SLOT.indexOf(a.slot) - SORT_SLOT.indexOf(b.slot) ||
+      SORT_RARITY.indexOf(a.rarity ?? "common") - SORT_RARITY.indexOf(b.rarity ?? "common") ||
+      b.power - a.power ||
+      a.name.localeCompare(b.name, "pl"),
+  );
+  return list;
+}
+/** Potions a character carries (older saves start with the default). */
+export const POTIONS_START = 3;
+export const potionsOf = (c: Character) => c.potions ?? 0;
 /** Who a Wayfarer is (owner's design doc): rarity frame, passive trait, local name,
  * a title for legends. Optional so older saves stay valid. */
 export type WayfarerInfo = {
@@ -162,6 +203,10 @@ export type Character = Point & WayfarerInfo & {
   weapon: "sword" | "magic";
   sweepReady?: number;
   potionReady?: number;
+  /** Healing potions carried (the potion button uses one). */
+  potions?: number;
+  /** A caster's own spell (mage) or healing art (herbalist); spells.ts picks one when absent. */
+  spell?: string;
 };
 export type Camp = Point & {
   id: string;
@@ -332,6 +377,7 @@ export function newCampaign(
     bag: [],
     equipment: {},
     weapon: "sword",
+    potions: POTIONS_START,
   };
   const s: Campaign = {
     v: 2,
@@ -443,6 +489,23 @@ export function equip(c: Character, id: string) {
   c.hp = Math.min(c.hp, maxHealth(c));
   return true;
 }
+/** Takes a worn piece off into the bag; false when the bag is full. */
+export function unequip(c: Character, slot: Slot) {
+  const item = c.equipment[slot];
+  if (!item || c.bag.length >= BALANCE.slots) return false;
+  delete c.equipment[slot];
+  c.bag.push(item);
+  if (slot === "weapon") c.weapon = c.role === "warrior" ? "sword" : "magic";
+  c.hp = Math.min(c.hp, maxHealth(c));
+  return true;
+}
+/** How much better (+) or worse (−) a piece is than what the character wears in its place. */
+export function compareWorn(c: Character, item: Item) {
+  if (item.slot === "material") return null;
+  const worn = c.equipment[item.slot];
+  if (worn?.id === item.id) return null;
+  return { worn, delta: item.power - (worn?.power ?? 0) };
+}
 export function transfer(
   from: Item[],
   to: Item[],
@@ -450,8 +513,8 @@ export function transfer(
   limit = Infinity,
 ) {
   const i = from.findIndex((v) => v.id === id);
-  if (i < 0 || to.length >= limit) return false;
-  to.push(...from.splice(i, 1));
+  if (i < 0 || !addItem(to, from[i], limit)) return false;
+  from.splice(i, 1);
   return true;
 }
 export function postOffer(
@@ -566,6 +629,9 @@ export function addWayfarer(s: Campaign, v: Candidate, at: Point, campId: string
     bag: [],
     equipment: {},
     weapon: v.role === "warrior" ? "sword" : "magic",
+    potions: 1,
+    // The spell the candidate showed in the notice stays theirs.
+    spell: spellOf(v) ?? undefined,
   };
   c.equipment.weapon = makeItem(s, v.role === "warrior" ? 0 : 1);
   s.characters.push(c);
@@ -707,6 +773,7 @@ export function parseCampaign(raw: string): Campaign | null {
         !ROLES.includes(i.affinity)
       )
         throw Error();
+      if (i.count !== undefined && (!Number.isSafeInteger(i.count) || i.count < 1)) throw Error();
       items.add(i.id);
     };
     const point = (p: Point) => Number.isFinite(p.x) && Number.isFinite(p.z);
@@ -765,13 +832,18 @@ export function parseCampaign(raw: string): Campaign | null {
       )
         return null;
       ids.add(c.id);
+      c.potions ??= POTIONS_START;
+      if (!Number.isSafeInteger(c.potions) || c.potions < 0) return null;
+      if (c.spell !== undefined && typeof c.spell !== "string") return null;
       c.bag.forEach(item);
+      c.bag = stackAll(c.bag);
       Object.entries(c.equipment).forEach(([slot, i]) => {
         if (i.slot !== slot || i.slot === "material") throw Error();
         item(i);
       });
     }
     s.vault.forEach(item);
+    s.vault = stackAll(s.vault);
     for (const o of s.offers) {
       if (
         !ids.has(o.campId) ||

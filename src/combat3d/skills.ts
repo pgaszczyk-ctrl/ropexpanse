@@ -1,23 +1,25 @@
 // Skills come from equipment (owner's design doc, Rozwój + Arsenał): the weapon gives
 // one skill, the second hand another; a level only raises statistics.
 import type { Character } from "./campaign.ts";
+import { SPELLS, spellOf, type HealId, type SpellId } from "./spells.ts";
 
-export type SkillId = "sweep" | "charge" | "whirl" | "quake" | "fireball" | "volley" | "heal" | "taunt" | "manaShield";
+export type SkillId = "sweep" | "charge" | "whirl" | "quake" | "volley" | "taunt" | "manaShield" | SpellId | HealId;
 export const SKILLS: Record<SkillId, { name: string; cooldown: number; text: string }> = {
+  ...SPELLS,
   sweep: { name: "Cięcie", cooldown: 6, text: "szerokie cięcie przed sobą" },
   charge: { name: "Szarża", cooldown: 6, text: "pęd naprzód, rani i odrzuca wszystkich na drodze" },
   whirl: { name: "Wir", cooldown: 7, text: "obrót z bronią, rani wszystkich dookoła" },
   quake: { name: "Wstrząs", cooldown: 8, text: "uderzenie w ziemię, rani i ogłusza w kręgu" },
-  fireball: { name: "Kula ognia", cooldown: 6, text: "pocisk wybuchający przy trafieniu" },
   volley: { name: "Salwa", cooldown: 6, text: "pięć pocisków wachlarzem przed siebie" },
-  heal: { name: "Leczenie", cooldown: 6, text: "leczy całą drużynę w pobliżu" },
   taunt: { name: "Prowokacja", cooldown: 12, text: "wrogowie atakują Ciebie, a Ty przyjmujesz mniej" },
   manaShield: { name: "Tarcza many", cooldown: 14, text: "pochłania kolejne ciosy" },
 };
-/** The weapon's skill (button Q). A herbalist heals, an archer shoots a volley. */
-export function weaponSkill(c: Pick<Character, "role" | "equipment">): SkillId {
-  if (c.role === "herbalist") return "heal";
+/** The weapon's skill (button Q). A herbalist uses their healing art, a mage their own
+ * spell (spells.ts), an archer shoots a volley. */
+export function weaponSkill(c: Pick<Character, "id" | "role" | "equipment" | "spell">): SkillId {
   if (c.role === "archer") return "volley";
+  const own = spellOf(c);
+  if (own && (c.role === "herbalist" || !c.equipment.weapon || c.equipment.weapon.icon === "staff")) return own;
   switch (c.equipment.weapon?.icon) {
     case "sword":
       return "charge";

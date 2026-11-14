@@ -8,10 +8,7 @@ import {
   activeCharacter,
   nearCamp,
   levelOf,
-  maxHealth,
   roleName,
-  equip,
-  transfer,
   postOffer,
   resolveOffers,
   offerCandidates,
@@ -26,15 +23,10 @@ import {
   PARTY_SIZE,
   ropeAvailable,
   spendRope,
-  twistRope,
-  collect,
-  STOCK_KEYS,
-  STOCK_NAMES,
   inSafeZone,
   type Campaign,
   type Camp,
   type Character,
-  type Item,
 } from "./campaign";
 import { updateRope, routeLength, type Obstacle } from "./rope";
 import {
@@ -49,6 +41,9 @@ import {
 import { distance, type Point } from "./rules";
 import { SCALE, type Geo } from "./world";
 import { RARITY_COLORS, RARITY_NAMES, fullName, traitOf } from "./wayfarers";
+import { itemIcon, itemStat, uiIcon } from "./icons";
+import { renderInventory, type InvTab, type Pick as InvPick } from "./inventory";
+import { SPELLS, spellOf } from "./spells";
 type Hooks = {
   scene: T.Scene;
   camera: T.Camera;
@@ -93,39 +88,8 @@ function button(text: string, click: () => void, cls = "") {
   b.onclick = click;
   return b;
 }
-const paths: Record<string, string> = {
-  sword:
-    '<path fill="#a8b5ba" d="m40 5 7 2-2 8-23 25-8-8Z"/><path stroke="#4c5b60" stroke-width="5" d="m10 29 17 15M17 36 8 47"/>',
-  staff:
-    '<path stroke="#8b5c31" stroke-width="7" stroke-linecap="round" d="m14 47 20-34 8-4"/><path fill="#70c9e3" d="m33 5 10 1 5 10-11 4-8-7Z"/>',
-  armor:
-    '<path fill="#668b94" stroke="#3e5860" stroke-width="2" d="m15 10 9 5h8l9-5 9 14-8 7-3-5v23H17V26l-3 5-8-7Z"/><path stroke="#d4b575" stroke-width="3" d="M17 36h22"/>',
-  helmet:
-    '<path fill="#99a8ab" stroke="#53696f" stroke-width="2" d="M11 38V27a17 17 0 0 1 34 0v11l-10 8V29H21v17Z"/><path stroke="#d0aa63" stroke-width="4" d="M9 28h38"/>',
-  axe:
-    '<path stroke="#8b5c31" stroke-width="5" stroke-linecap="round" d="M14 48 38 12"/><path fill="#b9c3c6" stroke="#4c5b60" stroke-width="2" d="M33 8c9 0 15 6 15 15l-9 1-8-8Z"/>',
-  hammer:
-    '<path stroke="#8b5c31" stroke-width="5" stroke-linecap="round" d="M16 48 34 18"/><path fill="#9aa5a8" stroke="#4c5b60" stroke-width="2" d="m24 10 16-6 8 14-16 6Z"/>',
-  shield:
-    '<path fill="#9a6a3c" stroke="#5d452f" stroke-width="2" d="M28 6c8 4 14 5 20 5 0 19-6 31-20 39C14 42 8 30 8 11c6 0 12-1 20-5Z"/><path stroke="#c9ccc6" stroke-width="4" d="M28 9v38M12 22h32"/><circle cx="28" cy="22" r="5" fill="#d4b575"/>',
-  hide: '<path fill="#9a6b45" stroke="#5c3d26" stroke-width="2" d="M14 12 22 8l6 4 6-4 8 4-2 9 5 8-5 6 2 9-8 3-6-4-6 4-8-3 2-9-5-6 5-8Z"/><path stroke="#c99a6c" stroke-width="2" d="M22 20q6 4 12 0M21 32q7 4 14 0"/>',
-  fang: '<path fill="#f1e8d2" stroke="#7d6b55" stroke-width="2" d="M20 8q14 2 16 14-2 14-10 28-2-14-9-24Q14 14 20 8Z"/><path stroke="#c9b894" stroke-width="2" d="M24 16q6 3 7 10"/>',
-  orb: '<circle cx="28" cy="25" r="15" fill="#70c9e3" stroke="#2f6f85" stroke-width="2"/><circle cx="23" cy="20" r="4" fill="#e9fbff"/><path fill="#8b5c31" stroke="#5d452f" stroke-width="2" d="M17 40h22l-4 9H21Z"/>',
-  boots:
-    '<path fill="#8e643f" stroke="#5d452f" stroke-width="2" d="m15 8 17 2-3 22 14 9v8H10V34Z"/><path stroke="#d4b575" stroke-width="3" d="M14 18h17"/>',
-};
-const STOCK_ICONS: Record<string, string> = {
-  wood: '<path fill="#8b5c31" stroke="#4a3220" stroke-width="2" d="M4 12h20v10H4z"/><ellipse cx="24" cy="17" rx="4" ry="5" fill="#d9a86a" stroke="#4a3220" stroke-width="2"/>',
-  ore: '<path fill="#8f9aa0" stroke="#3e474c" stroke-width="2" d="m6 22 4-11 9-4 8 8-3 10H9Z"/><path fill="#d27a4a" d="m13 13 4-2 2 4-4 2Z"/>',
-  fiber: '<path fill="none" stroke="#c9d36a" stroke-width="2.5" stroke-linecap="round" d="M16 28V8M16 20c-4-3-7-8-8-12M16 18c4-3 7-7 8-11"/>',
-  herbs: '<path fill="#6fcf7a" stroke="#2f6b3a" stroke-width="1.5" d="M16 28c0-10 2-15 9-19-1 8-4 13-9 14M16 28C14 19 11 15 6 13c1 7 4 11 10 12"/><circle cx="16" cy="9" r="3" fill="#e98fc6"/>',
-  rope: '<circle cx="16" cy="17" r="9" fill="none" stroke="#e8c27a" stroke-width="3"/><circle cx="16" cy="17" r="4" fill="none" stroke="#b0793c" stroke-width="2.5"/>',
-};
-/** Small picture of a gathered good (Vault and HUD). */
-export function stockIcon(key: string) {
-  return `<svg viewBox="0 0 32 32" aria-hidden="true">${STOCK_ICONS[key] ?? ""}</svg>`;
-}
 const CAMP_ICONS = {
+  shop: '<path fill="#b0793c" stroke="#4a3220" stroke-width="2" d="M4 13 7 5h18l3 8Z"/><path fill="#8b5c31" stroke="#4a3220" stroke-width="2" d="M6 13h20v14H6z"/><path fill="#e7b13c" d="M13 18h6v9h-6z"/><path stroke="#e8c27a" stroke-width="2" d="M10 5 9 13M16 5v8M22 5l1 8"/>',
   rope: '<path fill="none" stroke="#e8c27a" stroke-width="3" stroke-linecap="round" d="M5 25c4-9 8-9 11-3s7 6 11-5"/><path fill="#8b5c31" d="M3 23h5v7H3zM24 13h5v7h-5z"/><circle cx="26.5" cy="10" r="2.5" fill="#ffd27a"/>',
   vault:
     '<path fill="#8b5c31" stroke="#4a3220" stroke-width="2" d="M4 13h24v14H4z"/><path fill="#b0793c" stroke="#4a3220" stroke-width="2" d="M4 13c0-6 4-8 12-8s12 2 12 8z"/><path fill="#e8c27a" d="M13 15h6v6h-6z"/><path stroke="#e8c27a" stroke-width="2" d="M4 18h24"/>',
@@ -139,11 +103,12 @@ function wayfarerLabel(
   action = "",
 ) {
   const trait = traitOf(v.role, v.trait);
+  const spell = "id" in v && typeof v.id === "string" ? spellOf({ id: v.id, role: v.role, spell: (v as { spell?: string }).spell }) : null;
   return [
     node("strong", fullName(v)),
     node(
       "span",
-      ` · ${roleName(v.role)} · poz. ${level} · ${RARITY_NAMES[v.rarity ?? "common"]}${action ? ` — ${action}` : ""}`,
+      ` · ${roleName(v.role)}${spell ? ` (${SPELLS[spell].name})` : ""} · poz. ${level} · ${RARITY_NAMES[v.rarity ?? "common"]}${action ? ` — ${action}` : ""}`,
     ),
     ...(trait ? [node("small", `${trait.name}: ${trait.text}`, "trait-line")] : []),
   ];
@@ -158,30 +123,12 @@ function withLabel(
   b.style.setProperty("--rarity", RARITY_COLORS[v.rarity ?? "common"]);
   return b;
 }
-/** What an item gives, in a few words. */
-export function itemStat(item: Item) {
-  return item.slot === "material"
-    ? "materiał"
-    : `${item.slot === "weapon" ? "Atak" : "Obrona"} ${item.power}`;
-}
 /** How far an offer's waiting time has gone, 0–100. */
 function offerShare(o: { readyAt: number }) {
   return Math.max(
     0,
     Math.min(100, 100 - ((o.readyAt - Date.now()) / BALANCE.recruitmentMs) * 100),
   );
-}
-/** Faint outline in an empty slot of the figure. */
-const SLOT_GHOST = { weapon: "sword", offhand: "shield", armor: "armor", helmet: "helmet", boots: "boots" } as const;
-/** The figure behind the equipment slots (simple, readable at phone size). */
-const DOLL_FIGURE = `<svg class="doll-figure" viewBox="0 0 180 300" aria-hidden="true"><g fill="#7c8b79" opacity=".28"><circle cx="90" cy="42" r="27"/><path d="M57 80 24 104 5 190 25 198 51 137 51 205 60 296 81 296 89 221 98 296 122 296 130 204 130 135 156 198 175 190 154 104 123 80Z"/></g></svg>`;
-function itemBadge(item: Item) {
-  return item.slot === "material"
-    ? ""
-    : `<span class="item-power" aria-hidden="true">${item.power}</span>`;
-}
-export function itemIcon(item: Item) {
-  return `<svg viewBox="0 0 56 56" aria-hidden="true">${paths[item.icon] ?? paths.sword}</svg>`;
 }
 function mesh(
   group: T.Group,
@@ -330,7 +277,7 @@ export class Expedition {
   private body: HTMLElement;
   private title: HTMLElement;
   private previousFocus: HTMLElement | null = null;
-  private selectedItem: string | null = null;
+  private pick2: InvPick = null;
   private view = "";
   private offerItems = new Set<string>();
   private offerGold = 0;
@@ -371,7 +318,7 @@ export class Expedition {
     this.marker.visible = false;
     document.body.insertAdjacentHTML(
       "beforeend",
-      `<button id="action" class="context-action" aria-label="Akcja"><span>⚑</span><small id="action-label">Akcja</small></button><nav id="camp-menu" hidden aria-label="Obóz"></nav><dialog id="expedition-panel"><div class="panel-heading"><h2 id="panel-title"></h2><button id="panel-close" aria-label="Zamknij">×</button></div><div id="panel-body"></div></dialog><nav id="expedition-tools" aria-label="Wyprawa"><button id="inventory" aria-label="Plecak" title="Plecak">▦</button></nav><button id="world-state" hidden></button><div id="rope-travel" hidden><button id="rope-go" type="button"><span aria-hidden="true">➜</span><b id="rope-dist"></b><small id="rope-cost"></small></button><button id="rope-flip" type="button" aria-label="Odwróć kierunek" title="Odwróć kierunek">⇄</button></div><div id="travel-veil" hidden><div><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="17" r="9" fill="none" stroke="#e8c27a" stroke-width="3"/><circle cx="16" cy="17" r="4" fill="none" stroke="#b0793c" stroke-width="2.5"/></svg><b id="travel-veil-text">Podróż liną…</b></div></div>`,
+      `<button id="action" class="context-action" aria-label="Akcja"><span>⚑</span><small id="action-label">Akcja</small></button><nav id="camp-menu" hidden aria-label="Obóz"></nav><dialog id="expedition-panel"><div class="panel-heading"><h2 id="panel-title"></h2><button id="panel-close" aria-label="Zamknij">×</button></div><div id="panel-body"></div></dialog><nav id="expedition-tools" aria-label="Wyprawa"><button id="inventory" aria-label="Plecak" title="Plecak (I)">${uiIcon("bag")}</button></nav><button id="world-state" hidden></button><div id="rope-travel" hidden><button id="rope-go" type="button"><span aria-hidden="true">➜</span><b id="rope-dist"></b><small id="rope-cost"></small></button><button id="rope-flip" type="button" aria-label="Odwróć kierunek" title="Odwróć kierunek">⇄</button></div><div id="travel-veil" hidden><div><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="17" r="9" fill="none" stroke="#e8c27a" stroke-width="3"/><circle cx="16" cy="17" r="4" fill="none" stroke="#b0793c" stroke-width="2.5"/></svg><b id="travel-veil-text">Podróż liną…</b></div></div>`,
     );
     this.dialog = el<HTMLDialogElement>("expedition-panel");
     this.body = el("panel-body");
@@ -443,14 +390,14 @@ export class Expedition {
     this.h.panel(false);
     this.previousFocus?.focus();
     this.view = "";
-    this.selectedItem = null;
+    this.pick2 = null;
     this.h.save();
   }
   private open(view: string) {
     if (!this.h.canAct() && !this.dialog.open) return;
     this.hideMenu();
     this.view = view;
-    this.selectedItem = null;
+    this.pick2 = null;
     if (!this.dialog.open) {
       this.previousFocus = document.activeElement as HTMLElement;
       this.dialog.showModal();
@@ -460,6 +407,7 @@ export class Expedition {
   }
   private render() {
     this.body.replaceChildren();
+    this.dialog.classList.remove("inv-dialog");
     const s = this.h.state,
       c = activeCharacter(s);
     el("characters").setAttribute("aria-label", `Wędrowcy · ${c.name}`);
@@ -547,197 +495,29 @@ export class Expedition {
       this.recruit();
       return;
     }
-    const vault = this.view === "vault";
-    this.title.textContent = vault ? "Skarbiec" : "Ekwipunek";
-    const layout = node("div", "", "inventory-layout");
-    const col = node("div", "", "inventory-column");
-    const count = node(
-      "span",
-      `${vault ? s.vault.length : c.bag.length} / ${vault ? "∞" : BALANCE.slots}`,
-      "slot-count",
-    );
-    this.title.append(count);
-    const gold = node("div", `${vault ? s.bank : c.coins} tix`, "gold-line");
-    if (vault) {
-      gold.append(
-        button("Wpłać", () => {
-          s.bank += c.coins;
-          c.coins = 0;
-          this.h.save();
-          this.render();
-        }),
-        button("Wypłać", () => {
-          c.coins += s.bank;
-          s.bank = 0;
-          this.h.save();
-          this.render();
-        }),
-      );
-    }
-    col.append(gold);
-    if (vault) {
-      // Shared goods of the whole rope network.
-      const goods = node("div", "", "stock-row");
-      for (const k of STOCK_KEYS) {
-        const cell = node("span", "", "stock-cell");
-        cell.innerHTML = `${stockIcon(k)}<b>${s.stock[k]}${k === "rope" ? " m" : ""}</b>`;
-        cell.title = STOCK_NAMES[k];
-        cell.setAttribute("aria-label", `${STOCK_NAMES[k]}: ${s.stock[k]}`);
-        goods.append(cell);
-      }
-      col.append(goods);
-      const twist = button(
-        `Skręć linę: 10 włókna → ${10 * BALANCE.ropePerFiber} m`,
-        () => {
-          twistRope(s, 10);
-          this.h.save();
-          this.render();
-        },
-      );
-      twist.disabled = s.stock.fiber < 10;
-      col.append(twist);
-      // What the closed circles produced (also while you were away).
-      const rates = s.rates;
-      if (rates && Object.values(rates).some((v) => (v ?? 0) > 0)) {
-        const made = node("div", "", "stock-row production");
-        for (const k of STOCK_KEYS) {
-          const rate = rates[k] ?? 0;
-          if (rate <= 0) continue;
-          const cell = node("span", "", "stock-cell");
-          const unit = k === "rope" ? " m" : "";
-          cell.innerHTML = `${stockIcon(k)}<b>+${Math.floor(s.pending?.[k] ?? 0)}${unit}</b><small>${rate.toFixed(1)}/h</small>`;
-          cell.setAttribute("aria-label", `${STOCK_NAMES[k]}: ${Math.floor(s.pending?.[k] ?? 0)} czeka, ${rate.toFixed(1)} na godzinę`);
-          made.append(cell);
-        }
-        const take = button("Zbierz z kręgów", () => {
-          collect(s);
-          this.h.save();
-          this.render();
-        });
-        take.disabled = !Object.values(s.pending ?? {}).some((v) => (v ?? 0) >= 1);
-        col.append(made, take);
-      }
-    }
-    const items = vault ? s.vault : c.bag,
-      grid = node("div", "", "item-grid");
-    const slots = vault
-      ? Math.max(24, Math.ceil((items.length + 1) / 4) * 4)
-      : BALANCE.slots;
-    for (let i = 0; i < slots; i++) {
-      const item = items[i],
-        b = button(
-          "",
-          () => {
-            this.selectedItem = item?.id ?? null;
-            this.render();
-          },
-          "item-slot",
-        );
-      if (item) {
-        b.innerHTML = itemIcon(item) + itemBadge(item);
-        b.style.setProperty("--item-rarity", RARITY_COLORS[(item.rarity as keyof typeof RARITY_COLORS) ?? "common"] ?? RARITY_COLORS.common);
-        b.setAttribute("aria-label", `${item.name}, ${itemStat(item)}`);
-        b.title = `${item.name} · ${itemStat(item)}`;
-        b.classList.toggle("selected", this.selectedItem === item.id);
-      } else {
-        b.disabled = true;
-        b.setAttribute("aria-label", "Puste pole");
-      }
-      grid.append(b);
-    }
-    col.append(grid);
-    layout.append(col);
-    const side = node("aside", "", "equipment");
-    // The hero with what they wear: helmet on the head, armour on the body, weapon and
-    // second hand at the sides, boots at the feet. A tap picks the piece (details below).
-    if (!vault) {
-      const doll = node("div", "", "doll");
-      doll.innerHTML = DOLL_FIGURE;
-      for (const [slot, label] of [
-        ["helmet", "Hełm"],
-        ["weapon", "Broń"],
-        ["armor", "Zbroja"],
-        ["offhand", "Druga ręka"],
-        ["boots", "Buty"],
-      ] as const) {
-        const item = c.equipment[slot];
-        const b = button(
-          "",
-          () => {
-            if (!item) return;
-            this.selectedItem = item.id;
-            this.render();
-          },
-          `doll-slot doll-${slot}`,
-        );
-        if (item) {
-          b.innerHTML = itemIcon(item) + itemBadge(item);
-          b.style.setProperty("--item-rarity", RARITY_COLORS[(item.rarity as keyof typeof RARITY_COLORS) ?? "common"] ?? RARITY_COLORS.common);
-          b.setAttribute("aria-label", `${label}: ${item.name}, ${itemStat(item)}`);
-          b.title = `${item.name} · ${itemStat(item)}`;
-          b.classList.add("filled");
-          b.classList.toggle("selected", this.selectedItem === item.id);
-        } else {
-          b.innerHTML = `<svg viewBox="0 0 56 56" aria-hidden="true">${paths[SLOT_GHOST[slot]]}</svg><small>${label}</small>`;
-          b.setAttribute("aria-label", `${label}: puste`);
-        }
-        doll.append(b);
-      }
-      side.append(doll);
-    }
-    const worn = vault ? undefined : Object.entries(c.equipment).find(([, i]) => i?.id === this.selectedItem);
-    const item = items.find((i) => i.id === this.selectedItem) ?? worn?.[1];
-    if (item) {
-      side.append(
-        node("h3", item.name),
-        node(
-          "p",
-          itemStat(item),
-        ),
-      );
-      if (worn)
-        side.append(
-          button("Zdejmij", () => {
-            if (c.bag.length >= BALANCE.slots) {
-              this.h.notify("Plecak jest pełny");
-              return;
-            }
-            delete c.equipment[worn[0] as keyof typeof c.equipment];
-            c.bag.push(item);
-            c.hp = Math.min(c.hp, maxHealth(c));
-            this.h.switch(c);
-            this.h.save();
-            this.render();
-          }),
-        );
-      else if (!vault && item.slot !== "material")
-        side.append(
-          button("Załóż", () => {
-            equip(c, item.id);
-            this.h.switch(c);
-            this.h.save();
-            this.render();
-          }),
-        );
-      if (nearCamp(s, c) && !worn)
-        side.append(
-          button(vault ? "Do plecaka" : "Do skarbca", () => {
-            if (
-              !transfer(
-                items,
-                vault ? c.bag : s.vault,
-                item.id,
-                vault ? BALANCE.slots : Infinity,
-              )
-            )
-              this.h.notify("Plecak jest pełny");
-            this.h.save();
-            this.render();
-          }),
-        );
-    }
-    layout.append(side);
-    this.body.append(layout);
+    // Backpack, Vault and Shop: one window with tabs (inventory.ts).
+    const tab = (this.view === "vault" || this.view === "shop" ? this.view : "inventory") as InvTab;
+    this.dialog.classList.add("inv-dialog");
+    renderInventory(this.body, this.title, {
+      state: s,
+      hero: c,
+      tab,
+      atCamp: !!nearCamp(s, c),
+      pick: this.pick2,
+      setPick: (p) => (this.pick2 = p),
+      setTab: (t) => {
+        this.view = t;
+        this.pick2 = null;
+        this.render();
+      },
+      rerender: () => this.render(),
+      changed: (gear) => {
+        if (gear) void this.h.switch(c);
+        this.h.save();
+        this.render();
+      },
+      notify: (t) => this.h.notify(t),
+    });
   }
   private async travel(geo: Geo) {
     if (
@@ -873,9 +653,10 @@ export class Expedition {
           else this.offerItems.add(item.id);
           this.render();
         },
-        "item-slot",
+        "inv-cell",
       );
-      b.innerHTML = itemIcon(item) + itemBadge(item);
+      b.innerHTML = itemIcon(item) + (item.slot === "material" ? (item.count ?? 1) > 1 ? `<span class="inv-count">×${item.count}</span>` : "" : `<span class="inv-power">${item.power}</span>`);
+      b.style.setProperty("--rarity", RARITY_COLORS[(item.rarity === "uncommon" ? "rare" : (item.rarity ?? "common")) as keyof typeof RARITY_COLORS]);
       b.setAttribute("aria-label", `${item.name}, ${itemStat(item)}`);
       b.title = `${item.name} · ${itemStat(item)}`;
       b.setAttribute("aria-pressed", String(this.offerItems.has(item.id)));
@@ -974,6 +755,7 @@ export class Expedition {
         this.hideMenu();
       }),
       item("Skarbiec", CAMP_ICONS.vault, () => this.open("vault")),
+      item("Sklep", CAMP_ICONS.shop, () => this.open("shop")),
       item("Rekrutuj", CAMP_ICONS.recruit, () => {
         this.offerGold = 0;
         this.offerItems.clear();

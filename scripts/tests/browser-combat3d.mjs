@@ -268,9 +268,9 @@ try {
     await page.evaluate(() => window.__combat3d.camp());
     await gameWait(0.3);
     await page.click("#inventory");
-    assert.equal(await page.locator(".item-slot").count(), 24);
+    assert.equal(await page.locator(".inv-grid-bag .inv-cell").count(), 24);
     assert.equal(
-      await page.locator(".doll .doll-slot").count(),
+      await page.locator(".inv-doll .inv-cell").count(),
       5,
       "weapon, second hand, armour, helmet, boots",
     );
@@ -278,17 +278,17 @@ try {
     const holder = (await snap()).campaign.characters[0];
     const itemCount = holder.bag.length;
     const replaced = holder.bag[0] && holder.equipment?.[holder.bag[0].slot] ? 1 : 0; // the old item goes back to the bag
-    await page.locator(".item-slot:not(:disabled)").first().click();
+    await page.locator(".inv-grid-bag .inv-cell:not(:disabled)").first().click();
     await page.getByRole("button", { name: "Załóż", exact: true }).click();
     assert.equal(
       (await snap()).campaign.characters[0].bag.length,
       itemCount - 1 + replaced,
     );
     // What the hero wears shows on the figure as items, and comes off from there.
-    assert.ok(await page.locator(".doll-slot.filled svg").count() >= 1, "worn item drawn on the figure");
+    assert.ok(await page.locator(".inv-doll .inv-cell:not(:disabled) svg").count() >= 1, "worn item drawn on the figure");
     await page.screenshot({ path: `work/combat3d/${tag}-inventory-worn.png` });
     const bagBefore = (await snap()).campaign.characters[0].bag.length;
-    await page.locator(".doll-slot.filled").first().click();
+    await page.locator(".inv-doll .inv-cell:not(:disabled)").first().click();
     await page.getByRole("button", { name: "Zdejmij", exact: true }).click();
     assert.equal((await snap()).campaign.characters[0].bag.length, bagBefore + 1, "taken off into the bag");
     await page.click("#panel-close");
@@ -301,8 +301,23 @@ try {
     const woodStock = (await snap()).campaign.stock.wood;
     await page.getByRole("button", { name: "Zbierz z kręgów", exact: true }).click();
     assert.equal((await snap()).campaign.stock.wood, woodStock + 40, "10 hours of 4 wood/h");
-    assert.equal(await page.locator(".stock-row:not(.production) .stock-cell").count(), 5, "wood, ore, fibre, herbs, rope");
+    assert.equal(await page.locator(".inv-vault .inv-goods .inv-chip").count(), 5, "wood, ore, fibre, herbs, rope");
     await page.screenshot({ path: `work/combat3d/${tag}-vault.png` });
+    // The camp shop: a potion for tix, an item sold for wood (owner, 14 Nov 2026).
+    await page.getByRole("tab", { name: "Sklep" }).click();
+    const potions = (await snap()).campaign.characters[0].potions;
+    await page.getByRole("button", { name: "Kup miksturę" }).click();
+    assert.equal((await snap()).campaign.characters[0].potions, potions + 1, "potion bought");
+    const sellable = await page.locator(".inv-grid-bag .inv-cell:not(:disabled)").count();
+    if (sellable) {
+      const shopWood = (await snap()).campaign.stock.wood;
+      await page.locator(".inv-grid-bag .inv-cell:not(:disabled)").first().click();
+      await page.locator(".inv-pay").nth(1).click(); // wood
+      assert.ok((await snap()).campaign.stock.wood > shopWood, "sold for wood");
+      assert.equal(await page.locator(".inv-grid-bag .inv-cell:not(:disabled)").count(), sellable - 1);
+    }
+    await page.screenshot({ path: `work/combat3d/${tag}-shop.png` });
+    await page.evaluate(() => window.__combat3d.grantGold(1000)); // the offer below counts from 1000
     // A blow gathers a spot: wood to the Vault, the spot waits to grow back.
     await page.click("#panel-close");
     await page.evaluate(() => window.__combat3d.equipTemplate(0)); // sword back
@@ -384,9 +399,9 @@ try {
     await page.getByRole("button", { name: "+50", exact: true }).click();
     assert.equal(await page.locator(".gold-readout").textContent(), "50 tix");
     await page.getByLabel("Tix w ofercie").fill("500");
-    await page.locator(".offer-grid .item-slot").first().click();
+    await page.locator(".offer-grid .inv-cell").first().click();
     assert.match(await page.locator(".offer-items").textContent(), /(Atak|Obrona) \d+/);
-    await page.locator(".offer-grid .item-slot").first().click();
+    await page.locator(".offer-grid .inv-cell").first().click();
     await page.screenshot({ path: `work/combat3d/${tag}-offer.png` });
     await page.getByRole("button", { name: "Wystaw", exact: true }).click();
     assert.equal((await snap()).campaign.offers.length, 1);

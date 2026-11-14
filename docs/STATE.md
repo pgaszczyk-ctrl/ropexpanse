@@ -1,6 +1,6 @@
 # ROPExpanse — stan projektu
 
-Aktualizacja: 11.11.2026 (poprawki płynności po raporcie właściciela). Ta sekcja jest aktualna; niżej („Historia”) zostają starsze notatki, częściowo nieaktualne.
+Aktualizacja: 14.11.2026 (ekwipunek, sklep, czary). Ta sekcja jest aktualna; niżej („Historia”) zostają starsze notatki, częściowo nieaktualne.
 
 ## Przekazanie do nowego wątku
 
@@ -12,6 +12,18 @@ Aktualizacja: 11.11.2026 (poprawki płynności po raporcie właściciela). Ta se
 - **Podgląd gry:** https://pgaszczyk-ctrl.github.io/ropexpanse/ — workflow `.github/workflows/pages.yml` publikuje każdy push do `main` i `feat/camps-world` na gałąź `gh-pages`. Właściciel musi raz włączyć Settings → Pages → Deploy from a branch → `gh-pages` / root (nie potwierdzono, czy włączył).
 - **Do sprawdzenia przez właściciela:** CORS kubełka R2 erpeg musi dopuszczać `https://pgaszczyk-ctrl.github.io` (inaczej mapa spoza Lublina idzie wolnym Overpass); listy imion regionów (szkic) do weryfikacji przez osoby z regionów; test na fizycznym telefonie.
 - **Grafika:** właściciel zamawia modele voxel chibi u grafika. Uwagi do pierwszej próbki (ciało bazowe): głowa ~40% wysokości, poza w gotowości, rzuty ortograficzne w jednej skali, 5–6 kolorów, potem pełny wojownik jako wzorzec. Wszystkie obecne modele (postacie, wrogowie, broń, zasoby, wyziewy) są tymczasowe z kodu — do podmiany na GLB, gdy przyjdą.
+
+## Ekwipunek, sklep i czary (14.11.2026)
+
+Zlecenie właściciela: uporządkować plecak/skarbiec (wygodnie, bez zastanawiania się), dodać sklep w obozie, urozmaicić czary magów i leczenie. Gałąź `claude/affectionate-clarke-x4b6cg` (od `feat/camps-world` 75decec).
+
+- **Jedno okno, trzy zakładki** (`inventory.ts`): Plecak / Skarbiec / Sklep. Plecak zawsze w środku, z lewej kontekst (postać z 5 miejscami i statystykami / Skarbiec z surowcami, tix i przedmiotami / Kupiec), z prawej szczegóły wybranego przedmiotu. Skarbiec i Sklep widać tylko przy obozie. Wzorce z innych gier: szczegóły po dotknięciu zamiast dymków (telefon), główna akcja jako pierwszy, wyróżniony przycisk, porównanie z założonym (▲/▼ liczbowo, ▲ na ikonie lepszego), skarbiec obok plecaka, materiały w stosach (×5 na jednym polu), sortowanie jednym przyciskiem, „Materiały do skarbca”. Dwa dotknięcia = główna akcja (załóż/zdejmij, przenieś). Klawisz I otwiera plecak.
+- **CSS:** stare reguły ekwipunku były nadpisywane 4–5 razy w różnych miejscach `style.css`; usunięte (66 martwych reguł), nowy wygląd w jednym bloku na końcu pliku.
+- **Sklep** (`shop.ts`): sprzedaż przedmiotu (z plecaka) za połowę wartości, do wyboru w tix, drewnie (5 tix/szt.), linie (2 m/tix) lub miksturach (40 tix/szt.); „Sprzedaj materiały” jednym przyciskiem; „Kup miksturę” za 40 tix.
+- **Mikstury są policzalne:** przycisk mikstury pokazuje licznik i zużywa jedną. Nowa postać ma 3, stare zapisy dostają 3, zatrudniony Wędrowiec 1, skrzynia z wyziewu +1. Wcześniej mikstura była nieograniczona (tylko czas odnowienia) — bez tego sprzedaż za mikstury nie miałaby sensu.
+- **Czary** (`spells.ts`, efekty `vfx.ts`): każdy mag ma jeden z 6 czarów — Kula ognia, Meteor (czerwony krąg ostrzeżenia, spada po 0,8 s, podpala), Zamieć (lodowy deszcz, obrażenia co 0,5 s, spowolnienie), Stożek ognia (wachlarz płomieni, podpalenie), Łańcuch piorunów (skacze po 5 wrogach, krótkie ogłuszenie), Fala mrozu (pierścień lodu, zamrożenie w bryle). Zielarz ma jedną z 4 sztuk: Leczenie (słup światła, liście), Krąg odnowy (krąg na ziemi leczy 5 s), Deszcz płatków (więcej dla rannych), Kora (leczy najbardziej rannego i osłania tarczą 6 s). Czar wynika z identyfikatora postaci (stały, także w starych zapisach); kandydat w ogłoszeniu zachowuje czar po zatrudnieniu. Nazwa czaru widnieje przy profesji w drużynie i rekrutacji. Towarzysze rzucają swój czar, gdy jest gotowy (odnowienie ×1,6), między czarami zwykłe pociski w kolorze swojej szkoły (ogień/lód/burza/życie). Bohater-mag: przycisk specjalny = jego czar. Wojownik z kosturem nadal ma Kulę ognia. Bossowie są zamrażani krócej (×0,4), elitarni ×0,7.
+- **Modele GLB:** referencje właściciela leżą na jego komputerze (`C:\Users\Lenovo\Documents\ChatGPT\ROPEXPANSE\referencje-low-poly-20261114-173529`); sesja w chmurze nie miała do nich dostępu (brak podłączonego komputera), a gra nadal nie ma żadnych GLB (wszystko z kodu). Do zrobienia, gdy referencje trafią do repozytorium lub sesji.
+- Testy: `npm test` (16 plików, nowy `shop.mjs`), `npm run test:browser` (sklep w `browser-combat3d.mjs`). Zrzuty: `work/inv/`, `work/spells/`. Testowano emulację; brak testu na telefonie fizycznym. Wartości (ceny, obrażenia czarów, czasy) startowe do strojenia.
 
 ## Poprawki po raporcie z 11 listopada (żabkowanie)
 

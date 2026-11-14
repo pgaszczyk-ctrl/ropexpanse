@@ -22,13 +22,17 @@ import {
   addWayfarer,
   roleName,
   PARTY_SIZE,
+  potionsOf,
+  addItem,
   type Character,
   type Camp,
   type Item,
 } from "./campaign";
 import { enclosedAreas } from "./territory-rules";
 import { circleRates, workerRates } from "./production";
-import { weaponSkill, offhandSkill, weaponMode, SKILLS } from "./skills";
+import { weaponSkill, offhandSkill, weaponMode, SKILLS, type SkillId } from "./skills";
+import { SPELLS, ELEMENT_COLOR, spellOf, boltElement } from "./spells";
+import { Vfx, type Handle } from "./vfx";
 import { timeOfDayAt, LIGHT } from "./sky";
 import { Elevation, HeightField, waterTest, CELL } from "./terrain";
 import { markSeen, cellOf, greyed, DESATURATE } from "./explore";
@@ -131,6 +135,13 @@ type Enemy = {
   fill: T.Mesh;
   warning: T.Mesh;
   respawn: number;
+  /** Spell effects: slowed (Zamieć), frozen (Fala mrozu), burning (ogień), until game time. */
+  slowUntil?: number;
+  frozenUntil?: number;
+  burnUntil?: number;
+  burnNext?: number;
+  burnDmg?: number;
+  burnBy?: Character;
 };
 type Shot = {
   node: T.Mesh;
@@ -143,6 +154,8 @@ type Shot = {
   by?: Character;
   /** Fireball: bursts and hurts everyone within this radius. */
   explode?: number;
+  /** Colour of the sparks it leaves behind (casters' bolts). */
+  trail?: number;
 };
 type Particle = {
   node: T.Mesh;
@@ -1645,6 +1658,8 @@ async function switchCharacter(c: Character) {
     (s.node.material as T.Material).dispose();
   }
   shots.length = 0;
+  timers.length = 0;
+  vfx().clear();
   invincibleUntil = time + 1;
   lastCombat = time - 10;
   cameraTarget.set(c.x, 0, c.z);
@@ -1810,7 +1825,7 @@ let whirl = false,
   tauntUntil = 0,
   manaShield = 0,
   manaShieldUntil = 0;
-function useSkill(id: "charge" | "quake" | "fireball") {
+function useSkill(id: "charge" | "quake") {
   const power = attackPower(player);
   if (id === "charge") {
     // A dash along the heading: everyone on the way is hurt and thrown aside.
@@ -1842,13 +1857,6 @@ function useSkill(id: "charge" | "quake" | "fireball") {
         }
       }
     sound(90, 0.25, "triangle", 0.05);
-  } else {
-    fire({ x: player.x + Math.sin(heading) * 0.65, z: player.z + Math.cos(heading) * 0.65 }, heading, false);
-    const shot = shots[shots.length - 1];
-    shot.damage = 26 + power;
-    shot.explode = 2.5;
-    (shot.node.material as T.MeshBasicMaterial).color.set(0xff8a3d);
-    shot.node.scale.setScalar(1.6);
   }
 }
 /** Second-hand skill (button R): shield taunt or mana shield. */
@@ -1868,6 +1876,269 @@ function useSkill2() {
     burst(player, 0x2e9bff, 14);
   }
   sound(440, 0.15, "sine");
+}
+
+// ---- Spells (spells.ts): each mage and herbalist has their own, with its own effect ----
+let vfxLayer: Vfx | null = null;
+function vfx() {
+  if (!vfxLayer) {
+    vfxLayer = new Vfx(scene, (x, z) => groundY(x, z));
+    // Hidden far below: their shaders compile with the rest, not at the first spell.
+    for (const o of vfxLayer.warmObjects()) {
+      o.position.y = -1000;
+      scene.add(o);
+    }
+  }
+  return vfxLayer;
+}
+/** Things that happen a moment later (meteor impact, blizzard ticks), in game time. */
+const timers: { at: number; fn: () => void }[] = [];
+function later(delay: number, fn: () => void) {
+  timers.push({ at: time + delay, fn });
+}
+function runTimers() {
+  for (let i = timers.length - 1; i >= 0; i--)
+    if (timers[i].at <= time) {
+      const t = timers.splice(i, 1)[0];
+      t.fn();
+    }
+}
+const alive = (e: Enemy) => e.state !== "dead";
+const foesNear = (p: Point, r: number) =>
+  enemies.filter((e) => alive(e) && distance(e.rig.root.position, p) < r);
+function nearestFoe(p: Point, r: number, skip?: Set<Enemy>) {
+  let best: Enemy | undefined,
+    bd = r;
+  for (const e of enemies) {
+    if (!alive(e) || skip?.has(e) || e.hidden) continue;
+    const d = distance(e.rig.root.position, p);
+    if (d < bd && lineClear(p, e.rig.root.position)) {
+      bd = d;
+      best = e;
+    }
+  }
+  return best;
+}
+const spot = (e: Enemy): Point => ({ x: e.rig.root.position.x, z: e.rig.root.position.z });
+function burn(e: Enemy, dmg: number, by: Character, secs: number) {
+  if (!alive(e)) return;
+  const burning = (e.burnUntil ?? 0) > time;
+  if (!burning) e.burnNext = time + 0.5;
+  e.burnDmg = Math.max(burning ? (e.burnDmg ?? 0) : 0, Math.round(dmg));
+  e.burnUntil = time + secs;
+  e.burnBy = by;
+}
+function chill(e: Enemy, secs: number) {
+  if (alive(e)) e.slowUntil = Math.max(e.slowUntil ?? 0, time + secs);
+}
+function stun(e: Enemy, secs: number) {
+  if (!alive(e)) return;
+  e.state = "recover";
+  e.timer = Math.max(e.timer, secs);
+  e.warning.visible = false;
+}
+function freeze(e: Enemy, secs: number) {
+  if (!alive(e)) return;
+  const was = (e.frozenUntil ?? 0) > time;
+  const k = e.boss ? 0.4 : e.elite ? 0.7 : 1;
+  e.frozenUntil = time + secs * k;
+  stun(e, secs * k);
+  if (!was)
+    vfx().iceBlock(() => (alive(e) && (e.frozenUntil ?? 0) > time ? e.rig.root.position : null), secs * k + 0.2, enemyScale(e));
+}
+/** Burning, chill and frost on an enemy. True when it cannot act this frame. */
+function enemyStatus(e: Enemy) {
+  const p = e.rig.root.position;
+  if ((e.burnUntil ?? 0) > time) {
+    if (Math.random() < 0.35) vfx().burst(p, Math.random() < 0.5 ? 0xff7a2a : 0xffc04a, 1, { up: 2.2, gravity: -1.5, speed: 0.4, size: 0.12, life: 0.45, spread: 0.35 });
+    if (time >= (e.burnNext ?? 0)) {
+      e.burnNext = time + 0.5;
+      hurtEnemy(e, e.burnDmg ?? 3, e.burnBy, true);
+      if (!alive(e)) return true;
+    }
+  }
+  if ((e.slowUntil ?? 0) > time && Math.random() < 0.12)
+    vfx().burst(p, 0xd8f6ff, 1, { shape: "shard", up: 0.6, gravity: 2, speed: 0.6, size: 0.08, spread: 0.4 });
+  if ((e.frozenUntil ?? 0) > time) {
+    e.state = "recover";
+    e.timer = Math.max(e.timer, 0.1);
+    e.warning.visible = false;
+    e.bar.position.set(p.x, e.kind === "wolf" ? 1.8 : 2.8, p.z);
+    e.bar.quaternion.copy(camera.quaternion);
+    e.fill.scale.x = clamp(e.hp / e.maxHp, 0, 1);
+    return true;
+  }
+  return false;
+}
+/** Shields of bark (herbalist's Kora), by character id. */
+const barriers = new Map<string, { amount: number; until: number; fx: Handle }>();
+function absorb(c: Character, damage: number) {
+  const b = barriers.get(c.id);
+  if (!b) return damage;
+  if (time > b.until || b.amount <= 0) {
+    b.fx.end();
+    barriers.delete(c.id);
+    return damage;
+  }
+  const taken = Math.min(b.amount, damage);
+  b.amount -= taken;
+  if (taken) floatingText(`−${taken}`, c, "#d8c27a");
+  if (b.amount <= 0) {
+    b.fx.end();
+    barriers.delete(c.id);
+    vfx().burst(c, 0x9b7a45, 10, { shape: "cube", additive: false, speed: 3, up: 3, gravity: 10, size: 0.1 });
+  }
+  return damage - taken;
+}
+function partyAround(p: Point, r: number) {
+  return [player, ...companions.map((m) => m.c)].filter((v) => v.hp > 0 && distance(v, p) < r);
+}
+/** A caster's spell or healing art, from `from` facing `h`. False when it found nothing to do. */
+function castSpell(c: Character, id: SkillId, from: Point, h: number): boolean {
+  const power = attackPower(c),
+    lvl = levelOf(c.exp),
+    fx = vfx();
+  const ahead = (d: number) => ({ x: from.x + Math.sin(h) * d, z: from.z + Math.cos(h) * d });
+  switch (id) {
+    case "fireball": {
+      fire(ahead(0.65), h, false, c);
+      const shot = shots[shots.length - 1];
+      shot.damage = 26 + power;
+      shot.explode = 2.5;
+      shot.trail = 0xff8a3d;
+      (shot.node.material as T.MeshBasicMaterial).color.set(0xffb060);
+      shot.node.scale.setScalar(1.6);
+      sound(240, 0.18, "sawtooth", 0.03);
+      return true;
+    }
+    case "meteor": {
+      const target = nearestFoe(from, 14);
+      const at = target ? spot(target) : ahead(6);
+      sound(160, 0.5, "sine", 0.03);
+      fx.meteor(at, 0.8, () => {
+        shake = Math.max(shake, 0.32);
+        sound(70, 0.35, "sawtooth", 0.06);
+        fx.ring(at, 0xff6a2a, 0.4, 3.6, 0.55);
+        fx.ring(at, 0xffd27a, 0.2, 2.2, 0.35);
+        fx.burst(at, 0xff7a2a, 22, { speed: 6, up: 5, size: 0.15, life: 0.6 });
+        fx.burst(at, 0x4a3426, 12, { shape: "cube", additive: false, speed: 5, up: 6, gravity: 14, size: 0.16, life: 0.8 });
+        fx.disc(at, 0xff4a12, 3, 2.2, 0.22);
+        for (const e of foesNear(at, 3)) {
+          hurtEnemy(e, dealtBy(c, 34 + Math.round(power * 1.3), e, true), c);
+          burn(e, 4 + power * 0.25, c, 2.5);
+        }
+      });
+      return true;
+    }
+    case "blizzard": {
+      const target = nearestFoe(from, 13);
+      const at = target ? spot(target) : ahead(5);
+      const r = 3.2,
+        dur = 3;
+      fx.disc(at, 0x8fd8ff, r, dur, 0.22, 0.7);
+      fx.rain(at, r, "ice", dur);
+      sound(900, 0.4, "sine", 0.015);
+      for (let i = 1; i <= 6; i++)
+        later(i * 0.5, () => {
+          for (const e of foesNear(at, r)) {
+            hurtEnemy(e, dealtBy(c, 5 + Math.round(power * 0.35), e, true), c, true);
+            chill(e, 1.1);
+          }
+        });
+      return true;
+    }
+    case "flameCone": {
+      const range = 5.5,
+        half = 0.55;
+      fx.cone(from, h, range, half, 0xff7a2a, 0.45);
+      sound(140, 0.3, "sawtooth", 0.04);
+      for (const e of foesNear(from, range)) {
+        const q = e.rig.root.position;
+        let da = Math.atan2(q.x - from.x, q.z - from.z) - h;
+        da = Math.atan2(Math.sin(da), Math.cos(da));
+        if (Math.abs(da) > half + 0.15 || !lineClear(from, q)) continue;
+        hurtEnemy(e, dealtBy(c, 18 + power, e, false), c);
+        burn(e, 4 + power * 0.2, c, 3);
+      }
+      return true;
+    }
+    case "chainLightning": {
+      const hit = new Set<Enemy>();
+      const points: Point[] = [ahead(0.5)];
+      let next = nearestFoe(from, 12),
+        dmg = 22 + power;
+      if (!next) points.push(ahead(5));
+      while (next && hit.size < 5) {
+        hit.add(next);
+        const q = spot(next);
+        points.push(q);
+        hurtEnemy(next, dealtBy(c, Math.round(dmg), next, true), c);
+        stun(next, 0.5);
+        fx.burst(q, 0xfff27a, 6, { speed: 3, up: 2, size: 0.07, life: 0.3 });
+        dmg *= 0.82;
+        next = nearestFoe(q, 4.5, hit);
+      }
+      fx.bolt(points, 0xfff27a, 0.35);
+      sound(1200, 0.12, "sawtooth", 0.035);
+      flashUntil = Math.max(flashUntil, time + 0.04);
+      return true;
+    }
+    case "frostNova": {
+      fx.ring(from, 0xbfefff, 0.3, 4.4, 0.5);
+      fx.disc(from, 0x9fe4ff, 4.2, 1.2, 0.2);
+      fx.burst(from, 0xd8f6ff, 30, { shape: "shard", speed: 7, up: 1.2, gravity: 2, life: 0.5, size: 0.15 });
+      sound(1400, 0.25, "triangle", 0.02);
+      for (const e of foesNear(from, 4.3)) {
+        hurtEnemy(e, dealtBy(c, 14 + power, e, false), c);
+        freeze(e, 1.6);
+      }
+      return true;
+    }
+    case "heal": {
+      const near = partyAround(from, 8);
+      healParty(c, near);
+      return true;
+    }
+    case "renewal": {
+      const at = { x: from.x, z: from.z },
+        r = 4,
+        ticks = 5;
+      fx.disc(at, 0x7cf28a, r, ticks + 0.3, 0.22, 0.8);
+      fx.ring(at, 0xb8ffbf, 0.5, r, 0.6);
+      sound(620, 0.3, "sine", 0.025);
+      for (let i = 1; i <= ticks; i++)
+        later(i, () => {
+          fx.burst(at, 0xb8ffbf, 6, { spread: r * 0.8, up: 1.6, gravity: -1.2, speed: 0.2, life: 0.9, size: 0.1 });
+          healParty(c, partyAround(at, r), Math.round(5 + lvl * 0.9), true);
+        });
+      return true;
+    }
+    case "petals": {
+      const near = partyAround(from, 9);
+      fx.rain(from, 3.6, "petal", 1.6);
+      for (const v of near)
+        healParty(c, [v], Math.round((10 + lvl * 1.6) * (1 + (1 - v.hp / maxHealth(v)) * 0.8)));
+      return true;
+    }
+    case "bark": {
+      const near = partyAround(from, 9).sort((a, b) => a.hp / maxHealth(a) - b.hp / maxHealth(b));
+      const v = near[0];
+      if (!v) return false;
+      healParty(c, [v], Math.round(8 + lvl * 1.5));
+      barriers.get(v.id)?.fx.end();
+      const amount = 25 + lvl * 3;
+      barriers.set(v.id, {
+        amount,
+        until: time + 6,
+        fx: fx.bubble(() => (v.hp > 0 ? v : null), 0xa8d36a, 6),
+      });
+      fx.burst(v, 0x8b6b45, 10, { shape: "cube", additive: false, speed: 1.5, up: 2.5, gravity: 6, size: 0.1, spread: 0.6 });
+      floatingText("Kora", v, "#d8e8a0", "xp");
+      return true;
+    }
+    default:
+      return false;
+  }
 }
 // ---- Passive traits (owner's design doc, Cecha): work alone, for the hero and companions ----
 const traitRuntime = new Map<string, { hits: number; lastHit: number; saved: boolean }>();
@@ -1925,6 +2196,8 @@ type Companion = {
   heading: number;
   swing: number;
   stuck: number;
+  /** Seconds until the companion's own spell or healing art is ready again. */
+  spellCool: number;
 };
 const companions: Companion[] = [];
 const ranged = (c: Character) => c.role !== "warrior";
@@ -1968,7 +2241,7 @@ function syncCompanions() {
     addBlobShadow(rig);
     const { group: bar, fill } = healthBar(1.3, 0x9bd27e);
     scene.add(bar);
-    companions.push({ c, rig, bar, fill, cool: 0, heading: 0, swing: 0, stuck: 0 });
+    companions.push({ c, rig, bar, fill, cool: 0, heading: 0, swing: 0, stuck: 0, spellCool: 2 + Math.random() * 2 });
   });
   expedition.refreshWorld();
 }
@@ -1987,7 +2260,7 @@ function hurtCompanion(m: Companion, damage: number, exact = false) {
   if (m.c.hp <= 0 || safe(m.c)) return;
   if (!exact) damage = roll(damage, m.c, ENEMY_MISS);
   if (!damage) return;
-  damage = takenBy(m.c, Math.max(1, Math.round(damage - armorPower(m.c) * 0.45)));
+  damage = absorb(m.c, takenBy(m.c, Math.max(1, Math.round(damage - armorPower(m.c) * 0.45))));
   if (!damage) return;
   m.c.hp = Math.max(0, m.c.hp - damage);
   floatingText(String(damage), m.c, "#ff9b8a");
@@ -2000,6 +2273,7 @@ function updateCompanions(dt: number) {
       p = m.rig.root.position;
     let moving = false;
     m.cool -= dt;
+    m.spellCool -= dt;
     m.swing = Math.max(0, m.swing - dt);
     if (c.hp <= 0) {
       // Downed: lies until the fight is over (8 s of calm) or the leader is in a camp.
@@ -2024,11 +2298,17 @@ function updateCompanions(dt: number) {
         p.set(f.x, 0, f.z);
       }
       // Herbalist: heal the most hurt party member within reach before fighting.
+      // Their own healing art when it is ready, a plain heal in between.
       if (c.role === "herbalist" && m.cool <= 0) {
         const hurt = [player, ...companions.map((o) => o.c)]
           .filter((v) => v.hp > 0 && v.hp < maxHealth(v) * 0.7 && distance(v, p) < 9)
           .sort((a, b) => a.hp / maxHealth(a) - b.hp / maxHealth(b));
-        if (hurt.length) {
+        const art = spellOf(c);
+        if (hurt.length && art && m.spellCool <= 0 && castSpell(c, art, p, m.heading)) {
+          m.spellCool = SPELLS[art].cooldown * 1.4;
+          m.cool = 1.5;
+          m.swing = 0.4;
+        } else if (hurt.length) {
           healParty(c, c.trait === "lifebloom" ? hurt : [hurt[0]]);
           m.cool = 2.2;
           m.swing = 0.3;
@@ -2053,11 +2333,16 @@ function updateCompanions(dt: number) {
           slideCompanion(p, Math.sin(m.heading) * v, Math.cos(m.heading) * v);
           moving = true;
         }
-        if (m.cool <= 0 && !safe(p) && (ranged(c) ? d < 11 : d < R.reach + 0.5)) {
+        const own = c.role === "mage" ? spellOf(c) : null;
+        if (own && m.spellCool <= 0 && !safe(p) && d < 11 && castSpell(c, own, p, m.heading)) {
+          m.spellCool = SPELLS[own].cooldown * 1.6;
+          m.cool = 1.1;
+          m.swing = 0.45;
+        } else if (m.cool <= 0 && !safe(p) && (ranged(c) ? d < 11 : d < R.reach + 0.5)) {
           m.cool = 1.1;
           m.swing = 0.3;
           if (ranged(c)) {
-            fire({ x: p.x + Math.sin(m.heading) * 0.6, z: p.z + Math.cos(m.heading) * 0.6 }, m.heading, false);
+            fire({ x: p.x + Math.sin(m.heading) * 0.6, z: p.z + Math.cos(m.heading) * 0.6 }, m.heading, false, c);
             shots[shots.length - 1].damage = 10 + attackPower(c);
             shots[shots.length - 1].by = c;
           } else hurtEnemy(foe, dealtBy(c, 12 + attackPower(c), foe, false), c);
@@ -2094,17 +2379,18 @@ function updateCompanions(dt: number) {
   });
 }
 /** A herbalist's healing: leaves spiral round each target, green numbers. */
-function healParty(by: Character, targets: Character[]) {
+function healParty(by: Character, targets: Character[], base?: number, quiet = false) {
   const amount = Math.round(
-    (12 + levelOf(by.exp) * 2) * (by.trait === "bloom" ? 1 + 0.3 * traitPower(by) : 1),
+    (base ?? 12 + levelOf(by.exp) * 2) * (by.trait === "bloom" ? 1 + 0.3 * traitPower(by) : 1),
   );
   for (const v of targets) {
     if (v.hp <= 0) continue;
     v.hp = Math.min(maxHealth(v), v.hp + amount);
     floatingText(`+${amount}`, v, "#9df29a");
-    burst(v, 0x8be05a, 8);
+    if (!quiet) vfx().pillar(v, 0x9df29a, 2.6, 0.5, 0.7);
+    vfx().burst(v, 0x8be05a, quiet ? 4 : 9, { shape: "petal", additive: false, up: 2.4, gravity: -1.2, speed: 0.9, size: 0.14, life: 0.9, spread: 0.5 });
   }
-  sound(720, 0.12, "sine");
+  if (!quiet) sound(720, 0.12, "sine");
 }
 /** Who an enemy goes for: the nearest of the party, a warrior counting as nearer (draws aggro). */
 function enemyTarget(p: Point): { at: Point; m?: Companion } {
@@ -2243,10 +2529,11 @@ function closeVentAt(hits: (p: Point) => boolean) {
     const gold = 20 + tier * 10,
       shards = 3 + Math.floor(tier / 2);
     player.fragments += shards;
+    player.potions = potionsOf(player) + 1;
     campaign.stock.ore += 2;
     spawnLoot(v.vent, gold, [makeItem(campaign, v.vent.seed % GEAR_KINDS, tier + 1, Math.random() < 0.3 ? "rare" : "common")]);
     burst(v.vent, 0xffd27a, 18);
-    floatingText(`+${gold} tix · +${shards} odł.`, v.vent, "#ffe5ab", "xp");
+    floatingText(`+${gold} tix · +${shards} odł. · +1 mikstura`, v.vent, "#ffe5ab", "xp");
     sound(520, 0.25, "sine");
     persist();
     return true;
@@ -2885,12 +3172,11 @@ function collect(d: Drop) {
     coinToCounter();
     sound(980, 0.04, "sine", 0.02);
   } else if (d.item) {
-    if (player.bag.length >= BALANCE.slots) {
+    if (!addItem(player.bag, d.item, BALANCE.slots)) {
       if (time - bagFullSaid > 6) notify("Plecak pełny");
       bagFullSaid = time;
       return false;
     }
-    player.bag.push(d.item);
     const r = rarityOf(d.item),
       hex = RARITY_HEX[r];
     burst(player, hex, r === "common" ? 4 : 14);
@@ -2957,9 +3243,9 @@ function updateDrops(dt: number) {
     }
   }
 }
-function hurtEnemy(e: Enemy, damage: number, by?: Character) {
+function hurtEnemy(e: Enemy, damage: number, by?: Character, exact = false) {
   if (e.state === "dead") return;
-  damage = roll(damage, e.rig.root.position);
+  if (!exact) damage = roll(damage, e.rig.root.position);
   if (!damage) {
     sound(420, 0.04, "triangle", 0.02);
     return;
@@ -3030,6 +3316,7 @@ function hurtPlayer(damage: number, exact = false) {
     damage -= absorbed;
     if (absorbed) floatingText(`−${absorbed}`, player, "#8fc8ff");
   }
+  damage = absorb(player, damage);
   if (!damage) return;
   player.hp = Math.max(0, player.hp - damage);
   invincibleUntil = time + 0.35;
@@ -3091,9 +3378,11 @@ function beginAttack(sweep = false, autoAim = false) {
   }
   const skill = sweep ? weaponSkill(player) : null;
   if (sweep) sweepReady = time + SKILLS[skill!].cooldown;
-  if (skill === "heal") {
-    healParty(player, [player, ...companions.map((m) => m.c)].filter((v) => distance(v, player) < 8));
+  if (skill && skill in SPELLS) {
+    castSpell(player, skill, player, heading);
+    hero.wand.visible = true;
     lastAttack = time;
+    if (SPELLS[skill as keyof typeof SPELLS].element !== "life") lastCombat = time;
     return;
   }
   if (skill === "volley") {
@@ -3105,7 +3394,7 @@ function beginAttack(sweep = false, autoAim = false) {
     lastCombat = time;
     return;
   }
-  if (skill === "charge" || skill === "quake" || skill === "fireball") {
+  if (skill === "charge" || skill === "quake") {
     useSkill(skill);
     lastAttack = time;
     lastCombat = time;
@@ -3127,10 +3416,13 @@ function beginAttack(sweep = false, autoAim = false) {
   hero.wand.visible = weapon === "magic" && !sweep;
   sound(sweep ? 330 : 260, 0.09, "triangle", 0.03);
 }
-function fire(p: Point, dir: number, fromEnemy: boolean) {
+function fire(p: Point, dir: number, fromEnemy: boolean, by: Character = player) {
+  // A caster's bolt takes the colour of their school (fire, frost, storm, life).
+  const element = fromEnemy ? null : boltElement(by);
+  const color = fromEnemy ? 0xea845a : element ? ELEMENT_COLOR[element] : 0x87edee;
   const node = new T.Mesh(
     new T.IcosahedronGeometry(fromEnemy ? 0.14 : 0.23, 1),
-    new T.MeshBasicMaterial({ color: fromEnemy ? 0xea845a : 0x87edee }),
+    new T.MeshBasicMaterial({ color }),
   );
   node.position.set(p.x, 1.1 + groundY(p.x, p.z), p.z);
   scene.add(node);
@@ -3141,8 +3433,9 @@ function fire(p: Point, dir: number, fromEnemy: boolean) {
     vx: Math.sin(dir) * speed,
     vz: Math.cos(dir) * speed,
     life: fromEnemy ? 2.2 : 1.1,
-    damage: fromEnemy ? 13 : 18 + attackPower(player),
-    by: fromEnemy ? undefined : player,
+    damage: fromEnemy ? 13 : 18 + attackPower(by),
+    by: fromEnemy ? undefined : by,
+    trail: fromEnemy ? undefined : color,
   });
 }
 function usePotion() {
@@ -3155,6 +3448,11 @@ function usePotion() {
     player.hp >= maxHp()
   )
     return;
+  if (potionsOf(player) <= 0) {
+    notify("Brak mikstur — kup je w obozie (Sklep)");
+    return;
+  }
+  player.potions = potionsOf(player) - 1;
   potionReady = time + R.potionCooldown;
   player.hp = Math.min(maxHp(), player.hp + 38);
   floatingText("+38", player, "#c8eea4");
@@ -3162,8 +3460,9 @@ function usePotion() {
   sound(540, 0.18, "sine");
   persist();
 }
-function updateEnemies(dt: number) {
+function updateEnemies(frameDt: number) {
   for (const e of enemies) {
+    let dt = frameDt;
     e.flash = Math.max(0, e.flash - dt);
     if (e.state === "dead") {
       e.timer += dt;
@@ -3187,9 +3486,12 @@ function updateEnemies(dt: number) {
         e.hidden = e.behavior === "ambush";
         e.rig.root.visible = !e.hidden;
         e.stolen = 0;
+        e.slowUntil = e.frozenUntil = e.burnUntil = 0;
       }
       continue;
     }
+    if (enemyStatus(e)) continue;
+    if ((e.slowUntil ?? 0) > time) dt *= 0.45;
     const p = e.rig.root.position,
       target = enemyTarget(p),
       tgt = target.at,
@@ -3458,6 +3760,8 @@ function updateShots(dt: number) {
     p.x += s.vx * dt;
     p.z += s.vz * dt;
     s.life -= dt;
+    if (s.trail !== undefined)
+      vfx().burst({ x: p.x, y: p.y, z: p.z }, s.trail, s.explode ? 2 : 1, { speed: 0.3, up: 0.3, gravity: 0, life: 0.25, size: s.explode ? 0.16 : 0.09 });
     let hit = false;
     if (!lineClear(before, p)) hit = true;
     if (!hit && s.fromEnemy && segmentHitsCircle(before, p, player, 0.6)) {
@@ -3484,7 +3788,9 @@ function updateShots(dt: number) {
           break;
         }
     if (hit && s.explode) {
-      burst(p, 0xff8a3d, 16);
+      vfx().ring(p, 0xff8a3d, 0.3, s.explode + 0.4, 0.4);
+      vfx().burst({ x: p.x, y: p.y, z: p.z }, 0xff8a3d, 18, { speed: 5, up: 3, size: 0.14 });
+      shake = Math.max(shake, 0.12);
       for (const e of enemies)
         if (e.state !== "dead" && distance(e.rig.root.position, p) < s.explode)
           hurtEnemy(e, Math.round(s.damage * 0.6), s.by);
@@ -3614,8 +3920,11 @@ function updateHud() {
   // Cooldown rings: --cd runs from 1 (just used) to 0 (ready).
   $("sweep").style.setProperty("--cd", Math.min(1, sweepLeft / SKILLS[skill1].cooldown).toFixed(3));
   $("heal").style.setProperty("--cd", Math.min(1, healLeft / R.potionCooldown).toFixed(3));
+  const potions = potionsOf(player);
   $<HTMLButtonElement>("heal").disabled =
-    healLeft > 0 || player.hp >= maxHp() || paused || helpOpen;
+    healLeft > 0 || player.hp >= maxHp() || paused || helpOpen || !potions;
+  if ($("potion-count").textContent !== String(potions)) $("potion-count").textContent = String(potions);
+  $("heal").classList.toggle("empty", !potions);
   $("heal-time").textContent = healLeft
     ? `${Math.ceil(healLeft)} s`
     : "MIKSTURA";
@@ -4002,6 +4311,8 @@ function tick() {
     updateDrops(dt);
     updateCompanions(dt);
     updateShots(dt);
+    runTimers();
+    vfx().update(dt);
     updateEffects(dt);
     if (worldStream && !qaFixtureActive) {
       updateVents(dt, time);
@@ -4381,6 +4692,8 @@ async function init() {
                 attack = null;
                 shots.forEach((s) => scene.remove(s.node));
                 shots.length = 0;
+                timers.length = 0;
+                vfx().clear();
                 for (const e of enemies) {
                   e.state = "dead";
                   e.hp = 0;
@@ -4598,6 +4911,23 @@ async function init() {
               setHp: (hp: number) => {
                 player.hp = hp;
                 lastCombat = time + 30;
+              },
+              // Casts a spell or healing art as the leader, facing the nearest enemy.
+              cast: (id: string) => {
+                const e = nearestFoe(player, 16);
+                if (e) heading = Math.atan2(e.rig.root.position.x - player.x, e.rig.root.position.z - player.z);
+                lastCombat = time;
+                return castSpell(player, id as SkillId, player, heading);
+              },
+              enemyStatus: () =>
+                enemies.filter(alive).map((e) => ({ hp: e.hp, slowed: (e.slowUntil ?? 0) > time, frozen: (e.frozenUntil ?? 0) > time, burning: (e.burnUntil ?? 0) > time })),
+              // A bag with gear of every rarity and stacks of materials (inventory screenshots).
+              fillBag: () => {
+                const rar: ItemRarity[] = ["common", "rare", "epic", "legendary"];
+                for (let i = 0; i < 9; i++) addItem(player.bag, makeItem(campaign, i + 2, 1 + (i % 3), rar[i % 4]), BALANCE.slots);
+                for (let i = 0; i < 5; i++) addItem(player.bag, makeMaterial(campaign, "skora"), BALANCE.slots);
+                for (let i = 0; i < 3; i++) addItem(player.bag, makeMaterial(campaign, "kiel"), BALANCE.slots);
+                return player.bag.length;
               },
               grantGold: (n: number) => {
                 player.coins = n;
