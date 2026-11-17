@@ -93,7 +93,12 @@ import { lootFor, coinSplit, isValuable, type ItemRarity } from "./loot";
 void reloadIfStale();
 mountHud();
 import * as T from "three";
-import { animate, material, person, lookOf, sector, wolf, type Rig } from "./models";
+import { animate, material, person, lookOf, sector, wolf, loadCharacterParts, hasCharacterParts, type Rig } from "./models";
+// Character parts start downloading at once; the start waits for them a few seconds at most.
+const characterParts = loadCharacterParts(`${import.meta.env.BASE_URL}models/characters.glb`).catch((e) => {
+  console.warn("characters.glb not loaded, using built-in figures", e);
+  return 0;
+});
 import {
   RULES as R,
   clamp,
@@ -4511,6 +4516,8 @@ async function init() {
       }
     }
     loadStage = "budowanie świata";
+    await Promise.race([characterParts, new Promise((r) => setTimeout(r, 6000))]);
+    if (hasCharacterParts()) hero = person(player.role === "archer" ? "archer" : "hero", player.appearance, lookOf(player));
     buildWorld();
     expedition = new Expedition({
       scene,

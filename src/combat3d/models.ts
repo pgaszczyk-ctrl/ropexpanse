@@ -2,6 +2,35 @@ import * as T from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { Character } from "./campaign";
 import { boltElement } from "./spells";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+// ---- Character parts from public/models/characters.glb (tools/blender/characters.py) ----
+// Each mesh is named "<part>__<joint>" and stored relative to its joint. When the file
+// is not there (offline export, failed download), figures are built from boxes below.
+let parts: Map<string, T.Mesh[]> | null = null;
+export async function loadCharacterParts(url: string) {
+  const gltf = await new GLTFLoader().loadAsync(url);
+  const map = new Map<string, T.Mesh[]>();
+  gltf.scene.updateMatrixWorld(true);
+  for (const node of gltf.scene.children) {
+    const meshes: T.Mesh[] = [];
+    node.traverse((o) => {
+      if (!(o instanceof T.Mesh)) return;
+      const g = o.geometry as T.BufferGeometry;
+      if (!g.getAttribute("normal")) g.computeVertexNormals();
+      g.userData.shared = true;
+      meshes.push(o);
+    });
+    if (meshes.length) map.set(partKey(node.name), meshes);
+  }
+  if (!map.has(partKey("head__head"))) throw Error("characters.glb without parts");
+  parts = map;
+  return map.size;
+}
+export const hasCharacterParts = () => !!parts;
+/** Three.js drops dots from node names ("outfit.mage.1" → "outfitmage1"); compare without them. */
+const partKey = (name: string) => name.replace(/[.\s]/g, "");
+const GLB_BODY = 1.1;
 
 const rigMaterial = new T.MeshStandardMaterial({
   vertexColors: true,
@@ -40,7 +69,8 @@ function batchRig(root: T.Group) {
     if (merged) {
       for (const m of meshes) {
         group.remove(m);
-        m.geometry.dispose();
+        // Parts from the GLB share their geometry between figures: keep it.
+        if (!m.geometry.userData.shared) m.geometry.dispose();
       }
       const mesh = new T.Mesh(merged, rigMaterial);
       mesh.receiveShadow = true;
@@ -99,6 +129,8 @@ export type Rig = {
   head: T.Group;
   kind: "hero" | "wolf" | "archer";
   phase: number;
+  /** Standing height of the body joint (figures from the GLB stand taller). */
+  baseY?: number;
 };
 /** Who the figure is, so the outfit and weapon fit (party characters pass it; enemies do not). */
 export type Look = {
@@ -259,6 +291,77 @@ function bow(g: T.Group, color: number) {
   box(g, 0xe0d4b4, [0.02, 1.7, 0.02], [0, 0, 0.08]);
 }
 export function person(kind: "hero" | "archer" = "hero", appearance = 0, look: Look = {}): Rig {
+  if (parts) return glbPerson(kind, appearance, look, parts);
+  return boxPerson(kind, appearance, look);
+}
+/** A figure assembled from the GLB parts: outfit, head, hair, beard, weapon, second hand. */
+function glbPerson(kind: "hero" | "archer", appearance: number, look: Look, lib: Map<string, T.Mesh[]>): Rig {
+  const root = new T.Group(),
+    body = new T.Group(),
+    head = new T.Group(),
+    leftLeg = new T.Group(),
+    rightLeg = new T.Group(),
+    leftArm = new T.Group(),
+    rightArm = new T.Group(),
+    sword = new T.Group(),
+    wand = new T.Group();
+  root.add(body, leftLeg, rightLeg);
+  body.add(head, leftArm, rightArm);
+  body.position.y = GLB_BODY;
+  head.position.y = 0.34;
+  leftArm.position.set(-0.5, 0.24, 0);
+  rightArm.position.set(0.5, 0.24, 0);
+  leftLeg.position.set(-0.2, 0.78, 0);
+  rightLeg.position.set(0.2, 0.78, 0);
+  rightArm.add(sword, wand);
+  sword.position.set(0, -0.6, 0.06);
+  wand.position.copy(sword.position);
+  const a = Math.abs(Math.floor(appearance));
+  const camp = look.role === "woodcutter" || look.role === "miner" || look.role === "ropemaker";
+  const role = camp ? "folk" : look.role ?? (kind === "archer" ? "archer" : "folk");
+  const female = look.sex ? look.sex === "f" : a % 2 === 1;
+  const variant =
+    role === "mage" && look.element ? { storm: 0, frost: 1, fire: 2, life: 0 }[look.element] : Math.floor(a / 2) % 3;
+  const skin = material(SKINS[Math.floor(a / 6) % SKINS.length]);
+  const hair = material(HAIRS[Math.floor(a / 3) % HAIRS.length]);
+  const put = (name: string, joint: T.Object3D) => {
+    for (const m of lib.get(partKey(name)) ?? []) {
+      const mat = m.material as T.MeshStandardMaterial;
+      const piece = new T.Mesh(m.geometry, mat.name === "skin" ? skin : mat.name === "hair" ? hair : mat);
+      piece.castShadow = true;
+      joint.add(piece);
+    }
+    return lib.has(partKey(name));
+  };
+  const outfit = `outfit.${role}.${variant}`;
+  put(`${outfit}__body`, body);
+  put(`${outfit}__arm_L`, leftArm);
+  put(`${outfit}__arm_R`, rightArm);
+  put(`${outfit}__leg_L`, leftLeg);
+  put(`${outfit}__leg_R`, rightLeg);
+  put("head__head", head);
+  const hood = put(`${outfit}__head`, head);
+  const style = hood
+    ? "hood"
+    : female
+      ? ["bob", "bun", "ponytail"][Math.floor(a / 4) % 3]
+      : ["short", "tousled", "flat"][Math.floor(a / 4) % 3];
+  put(`hair.${style}__head`, head);
+  const beard = !female && !hood && (role === "archer" || role === "herbalist" ? a % 3 !== 2 : a % 3 === 0);
+  if (beard) put("beard__head", head);
+  put(`weapon.${look.weapon === "axe" || look.weapon === "hammer" ? look.weapon : "sword"}__hand`, sword);
+  if (role === "archer") {
+    put(`bow.${variant}__hand`, wand);
+    put(`quiver.${variant}__body`, body);
+  } else if (role === "herbalist") put(`staff.life.${a % 2}__hand`, wand);
+  else put(`staff.${look.element && look.element !== "life" ? look.element : "plain"}__hand`, wand);
+  if (look.offhand === "shield") put("offhand.shield__offhand", leftArm);
+  else if (look.offhand === "orb") put("offhand.orb__offhand", leftArm);
+  wand.visible = false;
+  batchRig(root);
+  return { root, body, head, leftLeg, rightLeg, leftArm, rightArm, sword, wand, kind, phase: 0, baseY: GLB_BODY };
+}
+function boxPerson(kind: "hero" | "archer", appearance: number, look: Look): Rig {
   const root = new T.Group(),
     body = new T.Group(),
     head = new T.Group(),
@@ -505,7 +608,7 @@ export function animate(
   rig.leftLeg.rotation.x = Math.sin(p) * step;
   rig.rightLeg.rotation.x = -Math.sin(p) * step;
   rig.body.position.y =
-    (rig.kind === "wolf" ? 0.6 : BODY_Y) +
+    (rig.kind === "wolf" ? 0.6 : (rig.baseY ?? BODY_Y)) +
     (moving ? Math.abs(Math.sin(p)) * 0.06 : Math.sin(p) * 0.018);
   if (rig.kind === "wolf") {
     rig.leftArm.rotation.x = -Math.sin(p) * step;
