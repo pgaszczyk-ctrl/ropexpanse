@@ -34,7 +34,7 @@ function Find-Blender {
 
 $blender = Find-Blender
 if (-not $blender) {
-  Write-Host "Nie znaleziono blender.exe. Wpisz w PowerShell: & "SCIEZKA\blender.exe" -b -P tools\blender\warrior.py -- public\models\warrior.glb" -ForegroundColor Red
+  Write-Host 'Nie znaleziono blender.exe. Uruchom recznie: & "SCIEZKA\blender.exe" -b -P tools\blender\warrior.py -- public\models\warrior.glb' -ForegroundColor Red
   exit 1
 }
 Write-Host "Blender: $blender"
