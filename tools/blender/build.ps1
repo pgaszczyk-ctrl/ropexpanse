@@ -2,6 +2,7 @@
 # Run from anywhere:
 #   powershell -ExecutionPolicy Bypass -File E:\ai\ropexpanse\tools\blender\build.ps1
 # Finds Blender through its Start Menu shortcut, Program Files or AppData\Local\Programs.
+param([string]$Blender = "")
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo = Resolve-Path (Join-Path $here "..\..")
@@ -9,6 +10,12 @@ $out = Join-Path $repo "public\models"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 
 function Find-Blender {
+  if ($Blender) {
+    # Accepts blender.exe, blender-launcher.exe or the folder with them.
+    if (Test-Path $Blender -PathType Container) { $Blender = Join-Path $Blender "blender.exe" }
+    $exe = Join-Path (Split-Path $Blender) "blender.exe"
+    if (Test-Path $exe) { return $exe }
+  }
   $cmd = Get-Command blender.exe -ErrorAction SilentlyContinue
   if ($cmd) { return $cmd.Source }
   $menus = @("$env:APPDATA\Microsoft\Windows\Start Menu\Programs", "$env:ProgramData\Microsoft\Windows\Start Menu\Programs")
@@ -24,7 +31,7 @@ function Find-Blender {
       }
     }
   }
-  foreach ($root in @("$env:ProgramFiles\Blender Foundation", "$env:LOCALAPPDATA\Programs\Blender Foundation", "$env:LOCALAPPDATA\Programs")) {
+  foreach ($root in @("E:\PROGRAM FILES NEW", "$env:ProgramFiles\Blender Foundation", "$env:LOCALAPPDATA\Programs\Blender Foundation", "$env:LOCALAPPDATA\Programs")) {
     if (-not (Test-Path $root)) { continue }
     $exe = Get-ChildItem $root -Recurse -Filter blender.exe -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
     if ($exe) { return $exe.FullName }
