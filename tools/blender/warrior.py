@@ -17,7 +17,8 @@ mats = {}
 def mat(hexc):
     if hexc in mats: return mats[hexc]
     m = bpy.data.materials.new(f"c{hexc:06x}")
-    m.use_nodes = True
+    if bpy.app.version < (5, 0, 0):  # Blender 5 always uses nodes and warns about the flag
+        m.use_nodes = True
     r, g, b = ((hexc >> 16) & 255) / 255, ((hexc >> 8) & 255) / 255, (hexc & 255) / 255
     # glTF wants linear colour; the hex values are sRGB.
     lin = lambda c: c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
@@ -191,6 +192,10 @@ sobj = [slab(GOLD, outline, 0.07, (shx, shy, 0.06), "x", 0.02),
         cube(GOLD, (0.06, 0.16, 0.16), (shx - 0.06, shy + 0.05, 0.06), 0.03, 2)]
 attach(sobj, sh)
 
-bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", export_apply=True, export_yup=True,
-                          export_materials="EXPORT", export_normals=True)
+try:
+    bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", export_apply=True, export_yup=True,
+                              export_materials="EXPORT", export_normals=True)
+except TypeError:
+    # Newer Blender versions renamed some options; the defaults are fine.
+    bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", export_apply=True)
 print("WROTE", out)

@@ -45,9 +45,11 @@ if (-not $blender) {
   exit 1
 }
 Write-Host "Blender: $blender"
+# Blender prints warnings on stderr; they must not stop the build.
+$ErrorActionPreference = "Continue"
 foreach ($script in Get-ChildItem $here -Filter *.py) {
   $glb = Join-Path $out ($script.BaseName + ".glb")
   Write-Host "Buduje $($script.Name) -> $glb"
-  & $blender -b --factory-startup -P $script.FullName -- $glb 2>&1 | Where-Object { $_ -match "WROTE|Error|Traceback" }
+  & $blender -b --factory-startup -P $script.FullName -- $glb 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match "WROTE|Error|Traceback|line [0-9]" }
 }
 Write-Host "Gotowe. Modele w $out" -ForegroundColor Green
