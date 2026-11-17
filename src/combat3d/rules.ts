@@ -81,3 +81,11 @@ export function deathExperience(exp: number) {
   const base = Math.floor(exp / 60) * 60;
   return base + Math.floor((exp - base) * 0.9);
 }
+/** Blows are not all the same (owner, 8 Nov 2026): ±30% around the base, and a chance
+ * to miss altogether. Returns 0 for a miss; a hit is always at least 1. */
+export const HIT_SPREAD = 0.3;
+export const MISS_CHANCE = 0.1;
+export function rollDamage(base: number, missChance = MISS_CHANCE, rand: () => number = Math.random) {
+  if (rand() < missChance) return 0;
+  return Math.max(1, Math.round(base * (1 - HIT_SPREAD + rand() * 2 * HIT_SPREAD)));
+}

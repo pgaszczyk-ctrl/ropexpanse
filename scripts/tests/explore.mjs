@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+import { cellOf, markSeen, greyed, SIGHT_METERS } from "../../src/combat3d/explore.ts";
+const seen = new Set();
+const lublin = { lat: 51.2482, lon: 22.5681 };
+const n = markSeen(seen, lublin);
+assert.ok(n > 20, `cells seen ${n}`);
+assert.equal(markSeen(seen, lublin), 0, "nothing new standing still");
+assert.ok(seen.has(cellOf(lublin)));
+assert.ok(seen.has(cellOf({ lat: lublin.lat + (SIGHT_METERS * 0.8) / 111320, lon: lublin.lon })), "within sight");
+assert.ok(!seen.has(cellOf({ lat: lublin.lat + (SIGHT_METERS * 3) / 111320, lon: lublin.lon })), "beyond sight stays unknown");
+assert.equal(cellOf({ lat: 0, lon: 179.99999 }) !== undefined, true);
+const [r, g, b] = greyed(1, 0, 0);
+assert.ok(r < 1 && g > 0 && Math.abs(r - g) < 0.35, "greyed");
+console.log(`PASS: fog of war → ${n} cells seen around a point, sight radius, greyed colours`);
